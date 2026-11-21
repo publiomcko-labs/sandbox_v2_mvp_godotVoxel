@@ -18,6 +18,7 @@ param(
     [switch] $ResourceTelemetry,
     [string] $PresentMonExe = '',
     [switch] $PresentMonNoGpu,
+    [switch] $EvidenceOnlyPresentMon,
     [ValidateRange(0,600)] [double] $PresentMonStartDelaySeconds = 0,
     [ValidateRange(0,600)] [double] $PresentMonCaptureSeconds = 0
 )
@@ -32,6 +33,9 @@ if (-not (Test-Path $exe) -or -not (Test-Path $dll)) {
 }
 if ($PresentMonExe -and (-not (Test-Path -LiteralPath $PresentMonExe))) { throw "A7 PresentMon executable missing: $PresentMonExe" }
 if ($PresentMonNoGpu -and -not $PresentMonExe) { throw 'A7_NO_GPU_ETW_REQUIRES_PRESENTMON' }
+if ($EvidenceOnlyPresentMon -and (-not $PresentMonExe -or -not $Capture -or $Scenario -notin @('edit_idle_100','edit_moving_100','boundary_edit_100'))) {
+    throw 'A7_EDIT_PRESENTMON_REQUIRES_EXPLICIT_CAPTURE_AND_EDIT_SCENARIO'
+}
 if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
     if (-not $PresentMonExe -or -not $ResourceTelemetry -or $PresentMonStartDelaySeconds -le 0 -or $PresentMonCaptureSeconds -le 0) {
         throw 'A7_ETW_SLICE_REQUIRES_PRESENTMON_RESOURCE_TELEMETRY_DELAY_AND_CAPTURE_DURATION'
@@ -40,8 +44,8 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
         throw 'A7_ETW_SLICE_OUTSIDE_REQUESTED_GAME_RUNTIME'
     }
 }
-if ($PresentMonExe -and ($CiSmoke -or $Full -or $Capture -or $VoxelThreads -ne 0)) {
-    throw 'A7 PresentMon ETW is restricted to non-headless isolated timed routes with automatic voxel threads and no screenshot readback'
+if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
+    throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
 }
 if ($Capture -and $Full) {
     throw 'A7 refuses screenshot overhead inside comparable full performance campaign; use a separate -Capture evidence run'
@@ -105,6 +109,7 @@ $manifest = [ordered]@{
     voxel_threads_requested=$VoxelThreads
     process_cpu_sampling=[bool]$ResourceTelemetry
     presentmon_requested=[bool]$PresentMonExe
+    evidence_only_presentmon=[bool]$EvidenceOnlyPresentMon
     presentmon_gpu_tracking_requested=[bool]($PresentMonExe -and -not $PresentMonNoGpu)
     presentmon_start_delay_s=$PresentMonStartDelaySeconds
     presentmon_capture_duration_s=$PresentMonCaptureSeconds
@@ -227,6 +232,10 @@ foreach ($name in $scenarios) {
                     # if --terminate_on_proc_exit did not close the collector immediately.
                     $pmTimedSeconds = if ($PresentMonCaptureSeconds -gt 0) {
                         [int][Math]::Ceiling($PresentMonCaptureSeconds)
+                    } elseif ($isEdit -and $EvidenceOnlyPresentMon) {
+                        # 100 scripted edits at 10Hz plus startup. PresentMon
+                        # will terminate early on game PID exit if appropriate.
+                        [int][Math]::Ceiling($Warmup + 30.0)
                     } else {
                         [int][Math]::Ceiling($Warmup + $Duration + 8.0)
                     }
