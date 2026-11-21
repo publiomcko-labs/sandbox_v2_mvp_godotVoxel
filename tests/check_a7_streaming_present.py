@@ -39,6 +39,21 @@ assert "[switch] $PresentMonNoGpu" in source and "--no_track_gpu" in source
 assert "etw_events_lost" in source
 assert "[switch] $EtwStressProbe" in campaign and "[switch] $DisplayOnly" in campaign
 assert "A7_ETW_CAPTURE_FAILED_FAST" in campaign and "A7_ETW_EVENTS_LOST" in campaign
+# Regression: stale A7 ETW sessions must be detected before the first Godot run,
+# and the exact session must be checked after each child exits, even on failure.
+guard = (root / "scripts/a7-etw-session-guard.ps1").read_text(encoding="utf-8")
+assert "A7_ETW_GUARD_ACTIVE_COLLECTOR" in guard
+assert "A7_ETW_GUARD_RECOVERED" in guard
+assert "A7_ETW_GUARD_SESSION_PERSISTED" in guard
+assert "A7_[0-9]+_[a-fA-F0-9]{32}" in guard
+assert "Get-Process -Name PresentMon" in guard
+assert "--terminate_existing_session" in guard
+assert "-Mode Preflight -PresentMonExe" in campaign
+assert "-Mode Postflight -PresentMonExe" in campaign
+assert campaign.index("-Mode Preflight -PresentMonExe") < campaign.index("& $runner @params")
+assert campaign.index("-Mode Postflight -PresentMonExe") > campaign.index("& $runner @params")
+assert "if ($etwAuthorized)" in campaign
+
 assert "duration=90" in campaign
 assert "[switch] $EtwWindowProbe" in campaign
 assert "PresentMonStartDelaySeconds" in source and "PresentMonCaptureSeconds" in source
