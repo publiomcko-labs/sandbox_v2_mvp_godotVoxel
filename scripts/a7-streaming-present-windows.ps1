@@ -111,7 +111,7 @@ try {
                 ResourceTelemetry=$true
                 VoxelThreads=0
                 PresentMonExe=$(if ($etwAuthorized) { $PresentMonExe } else { '' })
-                PresentMonNoGpu=$DisplayOnly
+                PresentMonNoGpu=($DisplayOnly -and $etwAuthorized)
             }
             & $runner @params
             if (-not $?) { throw "A7_STREAMING_CHILD_FAILED $label" }
