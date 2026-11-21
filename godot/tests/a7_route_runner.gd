@@ -45,6 +45,10 @@ func _start() -> void:
         _fail("A7 must use untouched A5 GL Compatibility renderer")
         return
     if not headless:
+        if capture:
+            # Evidence-only desktop recorder needs exact pixel coverage.
+            DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS,true)
+            DisplayServer.window_set_position(Vector2i.ZERO)
         DisplayServer.window_set_size(Vector2i(1920,1080))
         root.size=Vector2i(1920,1080)
         if vsync_off:
