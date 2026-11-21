@@ -16,7 +16,8 @@ param(
     [switch] $VsyncOff,
     [ValidateRange(0,48)] [int] $VoxelThreads = 0,
     [switch] $ResourceTelemetry,
-    [string] $PresentMonExe = ''
+    [string] $PresentMonExe = '',
+    [switch] $PresentMonNoGpu
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -28,6 +29,7 @@ if (-not (Test-Path $exe) -or -not (Test-Path $dll)) {
     throw 'A7 requires pinned Godot + A3 native DLL (bootstrap-windows.ps1 -SkipDownload)'
 }
 if ($PresentMonExe -and (-not (Test-Path -LiteralPath $PresentMonExe))) { throw "A7 PresentMon executable missing: $PresentMonExe" }
+if ($PresentMonNoGpu -and -not $PresentMonExe) { throw 'A7_NO_GPU_ETW_REQUIRES_PRESENTMON' }
 if ($PresentMonExe -and ($CiSmoke -or $Full -or $Capture -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to non-headless isolated timed routes with automatic voxel threads and no screenshot readback'
 }
@@ -93,6 +95,7 @@ $manifest = [ordered]@{
     voxel_threads_requested=$VoxelThreads
     process_cpu_sampling=[bool]$ResourceTelemetry
     presentmon_requested=[bool]$PresentMonExe
+    presentmon_gpu_tracking_requested=[bool]($PresentMonExe -and -not $PresentMonNoGpu)
     target_resolution='1920x1080'; target_speed_mps=18.0
     requested_view_distance_m=192; visual_radius_target_m=130
     mesh_block_voxels=16; lod_count=4; lod_distance=48
@@ -183,6 +186,9 @@ foreach ($name in $scenarios) {
                 process_id=$p.Id
                 etw_session_name=$null
                 presentmon_csv_format='v2_metrics'
+                gpu_tracking_requested=(-not [bool]$PresentMonNoGpu)
+                etw_events_lost=$null
+                etw_buffers_lost=$null
                 stderr_path=(Join-Path $folder 'a7_presentmon_stderr.txt')
                 collection_started=$false
                 exit_code=$null
@@ -205,6 +211,10 @@ foreach ($name in $scenarios) {
                     $pmTimedSeconds = [int][Math]::Ceiling($Warmup + $Duration + 8.0)
                     $pmStatus.collector_timeout_s = $pmTimedSeconds
                     $pmArgs = '--session_name ' + $pmSession + ' --process_id ' + $p.Id + ' --v2_metrics --date_time --output_file "' + $pmCsv + '" --no_console_stats --terminate_on_proc_exit --terminate_after_timed --timed ' + $pmTimedSeconds
+                    # Diagnostic arm only: compare ETW display capture without
+                    # verbose per-frame GPU tracking. Never represent missing
+                    # GPUTime as GPU performance qualification.
+                    if ($PresentMonNoGpu) { $pmArgs += ' --no_track_gpu' }
                     $pmStart = New-Object System.Diagnostics.ProcessStartInfo
                     $pmStart.FileName = $PresentMonExe
                     $pmStart.Arguments = $pmArgs
@@ -304,6 +314,10 @@ foreach ($name in $scenarios) {
                         $pmStatus.exit_code=$pmProcess.ExitCode
                         $stderrText = $pmProcess.StandardError.ReadToEnd()
                         [System.IO.File]::WriteAllText([string]$pmStatus.stderr_path,$stderrText)
+                        $lostEvents = [regex]::Match($stderrText, 'warning:\s*(\d+)\s+ETW events were lost', 'IgnoreCase')
+                        if ($lostEvents.Success) { $pmStatus.etw_events_lost = [long]$lostEvents.Groups[1].Value }
+                        $lostBuffers = [regex]::Match($stderrText, 'warning:\s*(\d+)\s+ETW buffers were lost', 'IgnoreCase')
+                        if ($lostBuffers.Success) { $pmStatus.etw_buffers_lost = [long]$lostBuffers.Groups[1].Value }
                         if (-not [string]::IsNullOrWhiteSpace($stderrText)) {
                             Write-Warning "A7_PRESENTMON_STDERR: $($stderrText.Trim())"
                         }
@@ -319,7 +333,7 @@ foreach ($name in $scenarios) {
                 }
                 $pmStatus | ConvertTo-Json -Depth 5 |
                     Set-Content -LiteralPath $pmStatusPath -Encoding UTF8
-                Write-Host "A7_PRESENTMON_STATUS exit=$($pmStatus.exit_code) csv_bytes=$($pmStatus.csv_bytes)"
+                Write-Host "A7_PRESENTMON_STATUS exit=$($pmStatus.exit_code) csv_bytes=$($pmStatus.csv_bytes) gpu_tracking=$($pmStatus.gpu_tracking_requested) etw_events_lost=$($pmStatus.etw_events_lost)"
             }
             $p.Refresh()
             $exitCode = $p.ExitCode
