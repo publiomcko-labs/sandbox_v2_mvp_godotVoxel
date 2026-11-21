@@ -78,6 +78,10 @@ func _run() -> void:
         _fail("A7_OUTPUT_DIR must be an isolated directory")
         return
     if DisplayServer.get_name()!="headless":
+        if evidence:
+            # Evidence-only mode: borderless primary 1080p for desktop video.
+            DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS,true)
+            DisplayServer.window_set_position(Vector2i.ZERO)
         DisplayServer.window_set_size(Vector2i(1920,1080))
         root.size=Vector2i(1920,1080)
 
