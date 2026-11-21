@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runner = Join-Path $root 'scripts/a7-run-windows.ps1'
 $reporter = Join-Path $root 'scripts/a7_streaming_present_report.py'
+$etwGuard = Join-Path $root 'scripts/a7-etw-session-guard.ps1'
 $presentMonHash = 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
 if (([int][bool]$FastSmoke + [int][bool]$EtwStressProbe + [int][bool]$EtwWindowProbe) -gt 1) {
     throw 'A7_ETW_DIAGNOSTIC_MODES_MUTUALLY_EXCLUSIVE'
@@ -34,6 +35,10 @@ $etwAuthorized = [bool]($principal.IsInRole($perfLogUsersSid) -or
     $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))
 if (-not $etwAuthorized) {
     Write-Warning 'A7_ETW_ACCESS_UNAVAILABLE: runner token lacks Performance Log Users; presentation metrics will be NOT_MEASURED (no implicit elevation).'
+} else {
+    # Validate/recover stale A7 sessions BEFORE launching Godot. Never touch
+    # other ETW namespaces and never stop a live PresentMon collector.
+    & $etwGuard -Mode Preflight -PresentMonExe $PresentMonExe
 }
 $gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object Name)
 if ($env:COMPUTERNAME -ne 'DESKTOP-SAFGO15' -or -not ($gpu -contains 'NVIDIA GeForce GTX 1050 Ti')) {
@@ -125,8 +130,25 @@ try {
                 PresentMonStartDelaySeconds=$(if ($EtwWindowProbe -and $etwAuthorized) {60} else {0})
                 PresentMonCaptureSeconds=$(if ($EtwWindowProbe -and $etwAuthorized) {30} else {0})
             }
-            & $runner @params
-            if (-not $?) { throw "A7_STREAMING_CHILD_FAILED $label" }
+            $childSucceeded = $false
+            try {
+                & $runner @params
+                $childSucceeded = $?
+            } finally {
+                if ($etwAuthorized) {
+                    # Clean only the session recorded by this child's status;
+                    # an exception in the runner must not leave ETW active.
+                    $ownedStatus = Get-ChildItem -LiteralPath $target -Recurse -File -Filter 'a7_presentmon_status.json' |
+                        Select-Object -First 1
+                    if ($null -ne $ownedStatus) {
+                        $owned = Get-Content -LiteralPath $ownedStatus.FullName -Raw | ConvertFrom-Json
+                        if ($owned.etw_session_name) {
+                            & $etwGuard -Mode Postflight -PresentMonExe $PresentMonExe -SessionName $owned.etw_session_name
+                        }
+                    }
+                }
+            }
+            if (-not $childSucceeded) { throw "A7_STREAMING_CHILD_FAILED $label" }
             $pmStatusPath = Get-ChildItem -LiteralPath $target -Recurse -File -Filter 'a7_presentmon_status.json' |
                 Select-Object -First 1
             if ($null -eq $pmStatusPath) {
