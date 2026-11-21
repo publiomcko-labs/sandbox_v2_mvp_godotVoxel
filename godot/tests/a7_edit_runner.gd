@@ -158,7 +158,6 @@ func _run() -> void:
             "first_submitted_frame_proxy_ms":null,
             "first_correct_presented_pixel_ms":null,
             "pixel_gate":"NOT_QUALIFIED",
-            "first_correct_presented_pixel_ms":null,
             "external_video_required":true
         }
         if not center.is_finite():
