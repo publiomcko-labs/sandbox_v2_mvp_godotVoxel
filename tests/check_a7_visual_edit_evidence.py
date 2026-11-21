@@ -31,7 +31,13 @@ assert "gdigrab" in recorder and "-framerate 60" in recorder
 assert "video_actual_fps_verified = $false" in recorder
 assert "terrain_pixels_correct_verified = $false" in recorder
 assert "strict_gates = 'NOT_QUALIFIED'" in recorder
-assert "Capture = $true" in recorder and "PresentMonExe" not in recorder
+assert "Capture = $true" in recorder
+assert "PresentMonExe" in recorder and "EvidenceOnlyPresentMon" in recorder
+assert "-Mode Preflight" in recorder and "-Mode Postflight" in recorder
+runner = (root / "scripts/a7-run-windows.ps1").read_text(encoding="utf-8")
+assert "[switch] $EvidenceOnlyPresentMon" in runner
+assert "A7_EDIT_PRESENTMON_REQUIRES_EXPLICIT_CAPTURE_AND_EDIT_SCENARIO" in runner
+assert "($Capture -and -not $EvidenceOnlyPresentMon)" in runner
 
 def write_json(path, x):
     path.write_text(json.dumps(x), encoding="utf-8")
