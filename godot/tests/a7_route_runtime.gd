@@ -146,14 +146,26 @@ func _set_path(t: float) -> void:
 func _capture(t: float) -> void:
     var img: Image = get_viewport().get_texture().get_image()
     if img==null or img.is_empty():
-        _emit({"type":"screenshot_failed","t_s":t})
+        _emit({"type":"screenshot_failed","t_s":t,"reason":"empty_viewport_image"})
         return
-    var name := "a7_%s_s%04d.png" % [route,int(t)]
+    var name := "a7_%s_ms%08d.png" % [route,int(round(t*1000.0))]
+    var captured_epoch_s := Time.get_unix_time_from_system()
+    var captured_ticks_us := Time.get_ticks_usec()
     var err := img.save_png(_outdir.path_join(name))
     if err == OK:
         _captures += 1
-        _emit({"type":"screenshot","t_s":t,"name":name,
-               "note":"GPU readback imposes overhead; evidence-only run, never use for PERF-60"})
+        _emit({
+            "type":"screenshot","t_s":t,"name":name,
+            "capture_epoch_s":captured_epoch_s,
+            "capture_ticks_us":captured_ticks_us,
+            "player_xyz":[_player.global_position.x,_player.global_position.y,_player.global_position.z],
+            "camera_yaw_rad":_player.rotation.y,
+            "camera_pitch_rad":_camera.rotation.x,
+            "view_130_geometric_probe_hits":_probes(),
+            "screen_size_px":[img.get_width(),img.get_height()],
+            "pixel_depth_verified":false,
+            "note":"Viewport readback is sampled and may perturb frame timings. External 60fps desktop video + depth review is required for strict STREAM-18 and VIEW-130."
+        })
     else:
         _emit({"type":"screenshot_failed","t_s":t,"error":err})
 
@@ -198,7 +210,10 @@ func _process(_delta: float) -> void:
         _next_sample_s+=1.0
     if capture and not ci_smoke and t>=_next_screenshot_s:
         _capture(t)
-        _next_screenshot_s+=30.0
+        # One 1080p still per second for review. A separate external desktop
+        # recorder is responsible for continuous video and present-side gaps.
+        # Screenshots are NEVER collected in the comparable PERF-60 run.
+        _next_screenshot_s+=1.0
     if t>=duration_s:
         _finish()
 
