@@ -1,12 +1,15 @@
 """A7 experimental ETW presentation analysis; NEVER auto-qualifies strict gates."""
 from __future__ import annotations
 import csv
+import contextlib
 import datetime as dt
+import io
 import json
 import math
 import re
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 # PresentMon 2.6.0 --v2_metrics --date_time columns; do not mix v1 names.
@@ -51,6 +54,65 @@ def epoch(value):
         except (ValueError, OverflowError):
             return None
 
+
+@contextlib.contextmanager
+def open_presentmon_csv(folder: Path):
+    """Read raw CSV, or the lossless .csv.zip left by campaign cleanup."""
+    csv_file = folder / "a7_presentmon.csv"
+    zipped = folder / "a7_presentmon.csv.zip"
+    if csv_file.is_file():
+        with csv_file.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+            yield f
+    elif zipped.is_file():
+        with zipfile.ZipFile(zipped) as archive:
+            names = [name for name in archive.namelist() if name.endswith("a7_presentmon.csv")]
+            if len(names) != 1:
+                raise ValueError(f"Expected exactly one PresentMon CSV in {zipped}")
+            with archive.open(names[0]) as binary:
+                with io.TextIOWrapper(binary, encoding="utf-8-sig", errors="replace", newline="") as f:
+                    yield f
+    else:
+        raise FileNotFoundError(f"Missing PresentMon CSV at {csv_file} or {zipped}")
+
+
+def choose_clock_alignment(raw_min: float, raw_max: float, start: float, end: float,
+                           utc_offset_s: float | None = None) -> dict:
+    """Align PresentMon's timezone-naive date with Godot's Unix epoch.
+
+    Only consider no shift or the host's known UTC offset in either direction.
+    Require >=85% interval overlap, and reject ambiguous interpretations;
+    never infer arbitrary shifts or silently declare ETW aligned.
+    """
+    if utc_offset_s is None:
+        offset = dt.datetime.fromtimestamp(start).astimezone().utcoffset()
+        utc_offset_s = offset.total_seconds() if offset is not None else 0.0
+    duration = end - start
+    candidates = [(0.0, "native_local")]
+    if utc_offset_s:
+        candidates += [
+            (-utc_offset_s, "local_utc_offset_correction"),
+            (utc_offset_s, "reverse_local_utc_offset"),
+        ]
+    seen = set()
+    scored = []
+    for shift, method in candidates:
+        if shift in seen:
+            continue
+        seen.add(shift)
+        overlap = max(0.0, min(end, raw_max + shift) - max(start, raw_min + shift))
+        scored.append({"offset_s": shift, "method": method, "overlap_s": round(overlap, 4)})
+    ranked = sorted(scored, key=lambda item: item["overlap_s"], reverse=True)
+    best = ranked[0]
+    ambiguous = len(ranked) > 1 and ranked[1]["overlap_s"] >= duration * .85
+    verified = best["overlap_s"] >= duration * .85 and not ambiguous
+    return {
+        "verified": verified,
+        "offset_s": best["offset_s"] if verified else None,
+        "method": best["method"] if verified else "unresolved",
+        "host_utc_offset_s": utc_offset_s,
+        "candidates": scored,
+    }
+
 def analyze_run(folder: Path) -> dict:
     summary_path = folder / "a7_route.json"
     if not summary_path.exists():
@@ -88,12 +150,17 @@ def analyze_run(folder: Path) -> dict:
         "cpu_frame_time_p99_ms": None,
         "displayed_time_p99_ms": None,
         "etw_csv_schema": "v2_metrics",
+        "timestamp_adjustment_seconds": None,
+        "timestamp_alignment_method": "unresolved",
+        "timestamp_alignment_candidates": [],
+        "timestamp_rows_parseable": 0,
         "reason": None,
         "strict_acceptance": "NOT_QUALIFIED",
     }
     status_file = folder / "a7_presentmon_status.json"
     csv_file = folder / "a7_presentmon.csv"
-    if not status_file.exists() or not csv_file.exists():
+    zipped_file = folder / "a7_presentmon.csv.zip"
+    if not status_file.exists() or not (csv_file.exists() or zipped_file.exists()):
         result["reason"] = "PresentMon status or CSV missing"
         return result
     status = json.loads(status_file.read_text(encoding="utf-8-sig"))
@@ -103,17 +170,11 @@ def analyze_run(folder: Path) -> dict:
     if start is None or end is None or start >= end:
         result["reason"] = "Missing reliable Godot measurement time-window"
         return result
-    samples = {k: [] for k in NUMERIC_COLUMNS}
-    first = last = None
-    seen_time = False
-    previous_display_epoch_by_swapchain = {}
-    displayed_gaps_ms = []
-    with csv_file.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+    # First pass: determine the possible clock interpretation from capture bounds.
+    raw_min = raw_max = None
+    with open_presentmon_csv(folder) as f:
         reader = csv.DictReader(f)
         headers = set(reader.fieldnames or [])
-        if "CPUStartDateTime" not in headers:
-            result["reason"] = "PresentMon CSV lacks CPUStartDateTime; cannot align measurement window"
-            return result
         required = {"CPUStartDateTime", "DisplayLatency", "DisplayedTime", "FrameTime", "GPUTime"}
         if not required.issubset(headers):
             result["reason"] = "PresentMon --v2_metrics CSV headers missing: " + ", ".join(sorted(required - headers))
@@ -123,7 +184,32 @@ def analyze_run(folder: Path) -> dict:
             stamp = epoch(row.get("CPUStartDateTime"))
             if stamp is None:
                 continue
-            seen_time = True
+            result["timestamp_rows_parseable"] += 1
+            raw_min = stamp if raw_min is None else min(raw_min, stamp)
+            raw_max = stamp if raw_max is None else max(raw_max, stamp)
+    if raw_min is None or raw_max is None:
+        result["reason"] = "PresentMon date-time values could not be parsed"
+        return result
+    clock = choose_clock_alignment(raw_min, raw_max, start, end)
+    result["timestamp_alignment_candidates"] = clock["candidates"]
+    result["timestamp_alignment_method"] = clock["method"]
+    result["timestamp_adjustment_seconds"] = clock["offset_s"]
+    if not clock["verified"]:
+        result["presentation_status"] = "ETW_INCOMPLETE"
+        result["reason"] = "ETW time not aligned: none or ambiguous among local/UTC offset interpretations"
+        return result
+    offset_s = clock["offset_s"]
+    samples = {k: [] for k in NUMERIC_COLUMNS}
+    first = last = None
+    previous_display_epoch_by_swapchain = {}
+    displayed_gaps_ms = []
+    with open_presentmon_csv(folder) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            stamp = epoch(row.get("CPUStartDateTime"))
+            if stamp is None:
+                continue
+            stamp += offset_s
             if stamp < start or stamp > end:
                 continue
             result["presentmon_rows_in_window"] += 1
@@ -144,9 +230,7 @@ def analyze_run(folder: Path) -> dict:
                 v = number(row.get(key))
                 if v is not None and v >= 0:
                     samples[key].append(v)
-    if not seen_time:
-        result["reason"] = "PresentMon date-time values could not be parsed"
-        return result
+    # Parseability was established in the full first pass.
     result["window_coverage_s"] = round((last-first) if first is not None and last is not None else 0, 3)
     result["display_latency_p99_ms"] = percentile(samples["DisplayLatency"], .99)
     # Derive actual display-change cadence from CPU start + measured display latency,
@@ -162,7 +246,7 @@ def analyze_run(folder: Path) -> dict:
         result["reason"] = "Insufficient displayed frames or under 85% timestamp coverage"
         return result
     result["presentation_status"] = "ETW_ALIGNED"
-    result["reason"] = "Per-process ETW displayed frame metrics aligned to Godot measurement window"
+    result["reason"] = "Per-process ETW presentation metrics aligned to Godot Unix epoch; clock adjustment recorded"
     return result
 
 def summarize(campaign: Path):

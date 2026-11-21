@@ -18,6 +18,7 @@ spec.loader.exec_module(module)
 for path in [
     "scripts/a7-streaming-present-windows.ps1",
     "scripts/a7_streaming_present_report.py",
+    "scripts/a7_etw_diagnose.py",
     ".github/workflows/a7-streaming-present-interactive.yml",
 ]:
     assert (root / path).is_file(), path
@@ -28,6 +29,11 @@ campaign = (root / "scripts/a7-streaming-present-windows.ps1").read_text(encodin
 workflow = (root / ".github/workflows/a7-streaming-present-interactive.yml").read_text(encoding="utf-8")
 assert "PresentMonExe" in source and "a7_presentmon_status.json" in source
 assert "--session_name " in source and "--v2_metrics" in source
+# A7 must not kill the collector before --timed reaches its own bounded stop.
+assert "Ceiling($Warmup + $Duration + 8.0)" in source
+assert "$pmProcess.WaitForExit(30000)" in source
+assert "Ceiling($Warmup+$Duration+45)" not in source
+assert "$pmProcess.WaitForExit(15000)" not in source
 assert "a7_presentmon_stderr.txt" in source
 assert "measurement_epoch_begin_s" in runtime and "measurement_epoch_end_s" in runtime
 assert "voxel_threads_requested=0" in campaign and "ResourceTelemetry=$true" in campaign
@@ -36,6 +42,32 @@ assert "B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF" in cam
 assert "strict_acceptance" in parser_file.read_text(encoding="utf-8")
 assert module.epoch("2026-11-1 9:02:03.123456789") is not None
 assert module.epoch("not-a-presentmon-time") is None
+# Regression from live local 2026-11-21 capture: PresentMon CSV clocks ran
+# exactly three hours behind Godot's Unix measurement epoch.
+clock = module.choose_clock_alignment(
+    raw_min=1_700_000_000.0-10800-20,
+    raw_max=1_700_000_000.0-10800+30,
+    start=1_700_000_000.0,
+    end=1_700_000_030.0,
+    utc_offset_s=-10800.0,
+)
+assert clock["verified"] and clock["offset_s"] == 10800, clock
+assert clock["method"] == "local_utc_offset_correction", clock
+assert not module.choose_clock_alignment(
+    raw_min=1_700_000_000.0-3600,
+    raw_max=1_700_000_000.0-3550,
+    start=1_700_000_000.0,
+    end=1_700_000_030.0,
+    utc_offset_s=-10800.0,
+)["verified"]
+# Never invent shifts from arbitrary 1-hour offsets.
+assert not module.choose_clock_alignment(
+    raw_min=1_700_000_000.0-7200-20,
+    raw_max=1_700_000_000.0-7200+30,
+    start=1_700_000_000.0,
+    end=1_700_000_030.0,
+    utc_offset_s=-10800.0,
+)["verified"]
 
 with tempfile.TemporaryDirectory() as t:
     folder = Path(t)
@@ -75,7 +107,20 @@ with tempfile.TemporaryDirectory() as t:
     assert out["cpu_frame_time_p99_ms"] == 75.0
     assert abs(out["display_change_p99_ms"]-75.0)<0.01
     assert out["etw_csv_schema"] == "v2_metrics"
+    assert out["timestamp_alignment_method"] == "native_local"
+    # Archived CSV must remain analyzable after runner cleanup.
+    import zipfile
+    with zipfile.ZipFile(folder/"a7_presentmon.csv.zip", "w") as z:
+        z.write(folder/"a7_presentmon.csv", arcname="a7_presentmon.csv")
+    (folder/"a7_presentmon.csv").unlink()
+    archived_out=module.analyze_run(folder)
+    assert archived_out["presentation_status"] == "ETW_ALIGNED",archived_out
+    assert archived_out["presentmon_rows_in_window"] == 125
     assert out["strict_acceptance"] == "NOT_QUALIFIED"
+    # Keep plain CSV for existing nested-layout diagnostic regression.
+    with zipfile.ZipFile(folder/"a7_presentmon.csv.zip") as z:
+        z.extract("a7_presentmon.csv", folder)
+    (folder/"a7_presentmon.csv.zip").unlink()
     data["measurement_epoch_begin_s"] = start + 3600
     data["measurement_epoch_end_s"] = start + 3610
     (folder/"a7_route.json").write_text(json.dumps(data),encoding="utf-8")
@@ -88,4 +133,14 @@ with tempfile.TemporaryDirectory() as t:
         shutil.move(str(folder/filename),str(nested/filename))
     nested_out=module.analyze_run(folder)
     assert nested_out["presentation_status"] == "ETW_INCOMPLETE",nested_out
+    import subprocess
+    probe=subprocess.run(
+        [os.sys.executable, str(root/"scripts/a7_etw_diagnose.py"), str(folder)],
+        text=True, capture_output=True, check=True
+    )
+    diagnostic=json.loads(probe.stdout)
+    assert diagnostic["csv_rows"] == 125, diagnostic
+    assert diagnostic["rows_in_measurement_window"] == 0, diagnostic
+    assert diagnostic["rows_with_parseable_timestamp"] == 125, diagnostic
+    assert diagnostic["presentmon_exit_code"] == 0, diagnostic
 print("A7_STREAMING_ETW_FAIL_CLOSED_CONTRACT_PASS")
