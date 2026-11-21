@@ -197,7 +197,14 @@ foreach ($name in $scenarios) {
                     # Each capture owns a unique session and must never stop an unrelated session.
                     $pmSession = ('A7_' + $p.Id + '_' + [guid]::NewGuid().ToString('N'))
                     $pmStatus.etw_session_name = $pmSession
-                    $pmArgs = '--session_name ' + $pmSession + ' --process_id ' + $p.Id + ' --v2_metrics --date_time --output_file "' + $pmCsv + '" --no_console_stats --terminate_on_proc_exit --terminate_after_timed --timed ' + ([int][Math]::Ceiling($Warmup+$Duration+45))
+                    # --timed starts when PresentMon begins recording, soon after the game.
+                    # Godot runs for warmup+duration. A small bounded drain window lets
+                    # PresentMon finish and flush ETW rather than killing it prematurely.
+                    # The previous +45s timer with a 15s join always killed valid captures
+                    # if --terminate_on_proc_exit did not close the collector immediately.
+                    $pmTimedSeconds = [int][Math]::Ceiling($Warmup + $Duration + 8.0)
+                    $pmStatus.collector_timeout_s = $pmTimedSeconds
+                    $pmArgs = '--session_name ' + $pmSession + ' --process_id ' + $p.Id + ' --v2_metrics --date_time --output_file "' + $pmCsv + '" --no_console_stats --terminate_on_proc_exit --terminate_after_timed --timed ' + $pmTimedSeconds
                     $pmStart = New-Object System.Diagnostics.ProcessStartInfo
                     $pmStart.FileName = $PresentMonExe
                     $pmStart.Arguments = $pmArgs
@@ -285,11 +292,13 @@ foreach ($name in $scenarios) {
             if ($PresentMonExe) {
                 if ($null -ne $pmProcess -and $pmStatus.collection_started) {
                     try {
-                        if (-not $pmProcess.WaitForExit(15000)) {
+                        # Allow the finite PresentMon timer to expire and ETW output to flush.
+                        # Retain fail-closed behavior if even the bounded deadline fails.
+                        if (-not $pmProcess.WaitForExit(30000)) {
                             # Stop only this child collector, not unrelated ETW sessions.
                             $pmProcess.Kill()
                             $pmProcess.WaitForExit()
-                            $pmStatus.capture_error='PRESENTMON_TIMED_OUT_AFTER_GODOT_EXIT'
+                            $pmStatus.capture_error='PRESENTMON_GRACEFUL_TIMEOUT_AFTER_30S'
                         }
                         $pmProcess.Refresh()
                         $pmStatus.exit_code=$pmProcess.ExitCode
