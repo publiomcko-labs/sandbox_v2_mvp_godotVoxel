@@ -187,8 +187,15 @@ func _run() -> void:
             var target_px: Vector2=camera.unproject_position(center)
             row["target_screen_xy_px"]=[target_px.x,target_px.y]
             row["camera_frame_epoch_s"]=Time.get_unix_time_from_system()
-            if do_capture and _capture(folder,"edit_%03d_before"%i):
-                previews+=1
+            if do_capture:
+                var before_name: String="edit_%03d_before.png"%i
+                if _capture(folder,before_name.trim_suffix(".png")):
+                    previews+=1
+                    row["visual_before_sample"]={
+                        "file":before_name,
+                        "capture_epoch_s":Time.get_unix_time_from_system(),
+                        "pixel_gate":"REVIEW_REQUIRED"
+                    }
         # Input-equivalent accepted call begins here, NOT from OS device.
         var begun:=Time.get_ticks_usec()
         row["brush_call_epoch_s"]=Time.get_unix_time_from_system()
