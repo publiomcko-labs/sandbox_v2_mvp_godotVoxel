@@ -28,8 +28,9 @@ if ([System.Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
 }
 Add-Type -AssemblyName System.Windows.Forms
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-if ($screen.Width -ne 1920 -or $screen.Height -ne 1080) {
-    throw "A7_EVIDENCE_REQUIRES_EXACT_PRIMARY_1920X1080 current=$($screen.Width)x$($screen.Height)"
+if ($screen.Width -ne 1920 -or $screen.Height -ne 1080 -or
+    $screen.X -ne 0 -or $screen.Y -ne 0) {
+    throw "A7_EVIDENCE_REQUIRES_PRIMARY_1920X1080_AT_ORIGIN current=$($screen.X),$($screen.Y),$($screen.Width)x$($screen.Height)"
 }
 
 $ff = $null
