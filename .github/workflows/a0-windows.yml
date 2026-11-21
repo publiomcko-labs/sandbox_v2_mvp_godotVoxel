@@ -79,6 +79,23 @@ jobs:
       - name: A7 strict acceptance source contract and matrix fail-closed test
         shell: powershell
         run: python tests/check_a7_contract.py
+      - name: A7 ETW presentation parser, clock, loss and probe regression contracts
+        shell: powershell
+        run: python tests/check_a7_streaming_present.py
+      - name: A7 PowerShell syntax validation (all diagnostic scripts)
+        shell: powershell
+        run: |
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1')
+          foreach ($name in $names) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $name).Path, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Error "A7_POWERSHELL_PARSE_FAIL $name $($parseError.Message)" }
+              throw "A7_POWERSHELL_PARSE_FAILED $name"
+            }
+            Write-Host "A7_POWERSHELL_PARSE_PASS $name"
+          }
       - name: Restore compiled native binary from approved A3 CI
         uses: actions/download-artifact@v4
         with:

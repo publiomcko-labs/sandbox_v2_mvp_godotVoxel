@@ -35,6 +35,30 @@ assert "$pmProcess.WaitForExit(30000)" in source
 assert "Ceiling($Warmup+$Duration+45)" not in source
 assert "$pmProcess.WaitForExit(15000)" not in source
 assert "a7_presentmon_stderr.txt" in source
+assert "[switch] $PresentMonNoGpu" in source and "--no_track_gpu" in source
+assert "etw_events_lost" in source
+assert "[switch] $EtwStressProbe" in campaign and "[switch] $DisplayOnly" in campaign
+assert "A7_ETW_CAPTURE_FAILED_FAST" in campaign and "A7_ETW_EVENTS_LOST" in campaign
+# Regression: stale A7 ETW sessions must be detected before the first Godot run,
+# and the exact session must be checked after each child exits, even on failure.
+guard = (root / "scripts/a7-etw-session-guard.ps1").read_text(encoding="utf-8")
+assert "A7_ETW_GUARD_ACTIVE_COLLECTOR" in guard
+assert "A7_ETW_GUARD_RECOVERED" in guard
+assert "A7_ETW_GUARD_SESSION_PERSISTED" in guard
+assert "A7_[0-9]+_[a-fA-F0-9]{32}" in guard
+assert "Get-Process -Name PresentMon" in guard
+assert "--terminate_existing_session" in guard
+assert "-Mode Preflight -PresentMonExe" in campaign
+assert "-Mode Postflight -PresentMonExe" in campaign
+assert campaign.index("-Mode Preflight -PresentMonExe") < campaign.index("& $runner @params")
+assert campaign.index("-Mode Postflight -PresentMonExe") > campaign.index("& $runner @params")
+assert "if ($etwAuthorized)" in campaign
+
+assert "duration=90" in campaign
+assert "[switch] $EtwWindowProbe" in campaign
+assert "PresentMonStartDelaySeconds" in source and "PresentMonCaptureSeconds" in source
+assert "A7_ETW_WINDOW_VALIDATED_PARTIAL" in campaign
+assert "ETW_PARTIAL_ALIGNED" in parser_file.read_text(encoding="utf-8")
 assert "measurement_epoch_begin_s" in runtime and "measurement_epoch_end_s" in runtime
 assert "voxel_threads_requested=0" in campaign and "ResourceTelemetry=$true" in campaign
 assert "interactive-gpu" in workflow
@@ -116,6 +140,43 @@ with tempfile.TemporaryDirectory() as t:
     archived_out=module.analyze_run(folder)
     assert archived_out["presentation_status"] == "ETW_ALIGNED",archived_out
     assert archived_out["presentmon_rows_in_window"] == 125
+    # A bounded ETW trace within a longer run is eligible only as PARTIAL.
+    slice_status = {
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 0,
+        "capture_start_delay_s": 1.0,
+        "capture_requested_duration_s": 8.0,
+        "capture_started_epoch_s": start + 1.0,
+        "capture_window_end_epoch_s": start + 9.0,
+    }
+    (folder/"a7_presentmon_status.json").write_text(json.dumps(slice_status), encoding="utf-8")
+    sliced = module.analyze_run(folder)
+    assert sliced["presentation_status"] == "ETW_PARTIAL_ALIGNED", sliced
+    assert sliced["etw_scope"] == "sampled_subwindow_only", sliced
+    assert sliced["etw_capture_target_duration_s"] == 8.0, sliced
+    assert sliced["gpu_work_p99_ms"] is None, sliced
+    bad_slice = dict(slice_status)
+    bad_slice["capture_started_epoch_s"] = start + 31.0
+    bad_slice["capture_window_end_epoch_s"] = start + 39.0
+    (folder/"a7_presentmon_status.json").write_text(json.dumps(bad_slice), encoding="utf-8")
+    assert module.analyze_run(folder)["presentation_status"] != "ETW_PARTIAL_ALIGNED"
+
+    # A clean exit and CSV are insufficient when PresentMon reports ETW loss.
+    (folder/"a7_presentmon_status.json").write_text(json.dumps({
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 860404,
+    }), encoding="utf-8")
+    lossy=module.analyze_run(folder)
+    assert lossy["presentation_status"] == "ETW_INCOMPLETE", lossy
+    assert lossy["etw_events_lost"] == 860404
+    assert "lost ETW events" in lossy["reason"]
+    (folder/"a7_presentmon_status.json").write_text(json.dumps({
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 0,
+    }), encoding="utf-8")
+    clean=module.analyze_run(folder)
+    assert clean["presentation_status"] == "ETW_ALIGNED"
+    assert clean["gpu_tracking_requested"] is False
     assert out["strict_acceptance"] == "NOT_QUALIFIED"
     # Keep plain CSV for existing nested-layout diagnostic regression.
     with zipfile.ZipFile(folder/"a7_presentmon.csv.zip") as z:

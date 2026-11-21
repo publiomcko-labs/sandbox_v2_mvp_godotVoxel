@@ -16,7 +16,10 @@ param(
     [switch] $VsyncOff,
     [ValidateRange(0,48)] [int] $VoxelThreads = 0,
     [switch] $ResourceTelemetry,
-    [string] $PresentMonExe = ''
+    [string] $PresentMonExe = '',
+    [switch] $PresentMonNoGpu,
+    [ValidateRange(0,600)] [double] $PresentMonStartDelaySeconds = 0,
+    [ValidateRange(0,600)] [double] $PresentMonCaptureSeconds = 0
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -28,6 +31,15 @@ if (-not (Test-Path $exe) -or -not (Test-Path $dll)) {
     throw 'A7 requires pinned Godot + A3 native DLL (bootstrap-windows.ps1 -SkipDownload)'
 }
 if ($PresentMonExe -and (-not (Test-Path -LiteralPath $PresentMonExe))) { throw "A7 PresentMon executable missing: $PresentMonExe" }
+if ($PresentMonNoGpu -and -not $PresentMonExe) { throw 'A7_NO_GPU_ETW_REQUIRES_PRESENTMON' }
+if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
+    if (-not $PresentMonExe -or -not $ResourceTelemetry -or $PresentMonStartDelaySeconds -le 0 -or $PresentMonCaptureSeconds -le 0) {
+        throw 'A7_ETW_SLICE_REQUIRES_PRESENTMON_RESOURCE_TELEMETRY_DELAY_AND_CAPTURE_DURATION'
+    }
+    if ($PresentMonStartDelaySeconds + $PresentMonCaptureSeconds -gt $Warmup + $Duration - 5) {
+        throw 'A7_ETW_SLICE_OUTSIDE_REQUESTED_GAME_RUNTIME'
+    }
+}
 if ($PresentMonExe -and ($CiSmoke -or $Full -or $Capture -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to non-headless isolated timed routes with automatic voxel threads and no screenshot readback'
 }
@@ -93,6 +105,9 @@ $manifest = [ordered]@{
     voxel_threads_requested=$VoxelThreads
     process_cpu_sampling=[bool]$ResourceTelemetry
     presentmon_requested=[bool]$PresentMonExe
+    presentmon_gpu_tracking_requested=[bool]($PresentMonExe -and -not $PresentMonNoGpu)
+    presentmon_start_delay_s=$PresentMonStartDelaySeconds
+    presentmon_capture_duration_s=$PresentMonCaptureSeconds
     target_resolution='1920x1080'; target_speed_mps=18.0
     requested_view_distance_m=192; visual_radius_target_m=130
     mesh_block_voxels=16; lod_count=4; lod_distance=48
@@ -174,6 +189,7 @@ foreach ($name in $scenarios) {
             if (-not $p.Start()) {
                 throw "A7_RUN_START_FAIL scenario=$name seed=$seed rep=$r"
             }
+            $gameTimer = [System.Diagnostics.Stopwatch]::StartNew()
             $pmProcess = $null
             $pmCsv = Join-Path $folder 'a7_presentmon.csv'
             $pmStatusPath = Join-Path $folder 'a7_presentmon_status.json'
@@ -183,6 +199,13 @@ foreach ($name in $scenarios) {
                 process_id=$p.Id
                 etw_session_name=$null
                 presentmon_csv_format='v2_metrics'
+                gpu_tracking_requested=(-not [bool]$PresentMonNoGpu)
+                capture_start_delay_s=$PresentMonStartDelaySeconds
+                capture_requested_duration_s=$PresentMonCaptureSeconds
+                capture_started_epoch_s=$null
+                capture_window_end_epoch_s=$null
+                etw_events_lost=$null
+                etw_buffers_lost=$null
                 stderr_path=(Join-Path $folder 'a7_presentmon_stderr.txt')
                 collection_started=$false
                 exit_code=$null
@@ -202,9 +225,17 @@ foreach ($name in $scenarios) {
                     # PresentMon finish and flush ETW rather than killing it prematurely.
                     # The previous +45s timer with a 15s join always killed valid captures
                     # if --terminate_on_proc_exit did not close the collector immediately.
-                    $pmTimedSeconds = [int][Math]::Ceiling($Warmup + $Duration + 8.0)
+                    $pmTimedSeconds = if ($PresentMonCaptureSeconds -gt 0) {
+                        [int][Math]::Ceiling($PresentMonCaptureSeconds)
+                    } else {
+                        [int][Math]::Ceiling($Warmup + $Duration + 8.0)
+                    }
                     $pmStatus.collector_timeout_s = $pmTimedSeconds
                     $pmArgs = '--session_name ' + $pmSession + ' --process_id ' + $p.Id + ' --v2_metrics --date_time --output_file "' + $pmCsv + '" --no_console_stats --terminate_on_proc_exit --terminate_after_timed --timed ' + $pmTimedSeconds
+                    # Diagnostic arm only: compare ETW display capture without
+                    # verbose per-frame GPU tracking. Never represent missing
+                    # GPUTime as GPU performance qualification.
+                    if ($PresentMonNoGpu) { $pmArgs += ' --no_track_gpu' }
                     $pmStart = New-Object System.Diagnostics.ProcessStartInfo
                     $pmStart.FileName = $PresentMonExe
                     $pmStart.Arguments = $pmArgs
@@ -214,8 +245,16 @@ foreach ($name in $scenarios) {
                     $pmStart.RedirectStandardError = $true
                     $pmProcess = New-Object System.Diagnostics.Process
                     $pmProcess.StartInfo = $pmStart
-                    $pmStatus.collection_started = [bool]$pmProcess.Start()
-                    Write-Host "A7_PRESENTMON_START pid=$($p.Id) session=$pmSession started=$($pmStatus.collection_started) output=$pmCsv"
+                    if ($PresentMonStartDelaySeconds -le 0) {
+                        $pmStatus.collection_started = [bool]$pmProcess.Start()
+                        if ($pmStatus.collection_started) {
+                            $pmStatus.capture_started_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+                            $pmStatus.capture_window_end_epoch_s = $pmStatus.capture_started_epoch_s + $pmTimedSeconds
+                        }
+                        Write-Host "A7_PRESENTMON_START pid=$($p.Id) session=$pmSession started=$($pmStatus.collection_started) output=$pmCsv"
+                    } else {
+                        Write-Host "A7_PRESENTMON_DEFERRED pid=$($p.Id) delay_s=$PresentMonStartDelaySeconds duration_s=$pmTimedSeconds"
+                    }
                 } catch {
                     $pmStatus.capture_error=$_.Exception.Message
                     Write-Warning "A7_PRESENTMON_CAPTURE_WARNING: $($pmStatus.capture_error)"
@@ -228,6 +267,27 @@ foreach ($name in $scenarios) {
                 $prevCpu = 0.0
                 $logical = [Math]::Max(1, [Environment]::ProcessorCount)
                 while (-not $p.WaitForExit(1000)) {
+                    # Start a bounded ETW sample during an otherwise full-length
+                    # Godot route. PowerShell's monitoring loop continues to collect
+                    # the same process telemetry before, during and after the sample.
+                    if ($PresentMonExe -and $PresentMonStartDelaySeconds -gt 0 -and
+                        $null -ne $pmProcess -and -not $pmStatus.collection_started -and
+                        -not $pmStatus.capture_error -and
+                        $gameTimer.Elapsed.TotalSeconds -ge $PresentMonStartDelaySeconds) {
+                        try {
+                            $pmStatus.collection_started = [bool]$pmProcess.Start()
+                            if ($pmStatus.collection_started) {
+                                $pmStatus.capture_started_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+                                $pmStatus.capture_window_end_epoch_s = $pmStatus.capture_started_epoch_s + $pmTimedSeconds
+                            } else {
+                                $pmStatus.capture_error = 'PRESENTMON_DEFERRED_START_FALSE'
+                            }
+                            Write-Host "A7_PRESENTMON_SLICE_START pid=$($p.Id) started=$($pmStatus.collection_started) elapsed_s=$([Math]::Round($gameTimer.Elapsed.TotalSeconds,2)) duration_s=$pmTimedSeconds"
+                        } catch {
+                            $pmStatus.capture_error = $_.Exception.Message
+                            Write-Warning "A7_PRESENTMON_SLICE_START_WARNING $($pmStatus.capture_error)"
+                        }
+                    }
                     try {
                         $p.Refresh()
                         $nowUtc = [DateTime]::UtcNow
@@ -290,6 +350,10 @@ foreach ($name in $scenarios) {
                 $p.WaitForExit()
             }
             if ($PresentMonExe) {
+                if ($null -ne $pmProcess -and -not $pmStatus.collection_started) {
+                    if (-not $pmStatus.capture_error) { $pmStatus.capture_error = 'PRESENTMON_DEFERRED_NEVER_STARTED' }
+                    $pmProcess.Dispose()
+                }
                 if ($null -ne $pmProcess -and $pmStatus.collection_started) {
                     try {
                         # Allow the finite PresentMon timer to expire and ETW output to flush.
@@ -304,6 +368,10 @@ foreach ($name in $scenarios) {
                         $pmStatus.exit_code=$pmProcess.ExitCode
                         $stderrText = $pmProcess.StandardError.ReadToEnd()
                         [System.IO.File]::WriteAllText([string]$pmStatus.stderr_path,$stderrText)
+                        $lostEvents = [regex]::Match($stderrText, 'warning:\s*(\d+)\s+ETW events were lost', 'IgnoreCase')
+                        if ($lostEvents.Success) { $pmStatus.etw_events_lost = [long]$lostEvents.Groups[1].Value }
+                        $lostBuffers = [regex]::Match($stderrText, 'warning:\s*(\d+)\s+ETW buffers were lost', 'IgnoreCase')
+                        if ($lostBuffers.Success) { $pmStatus.etw_buffers_lost = [long]$lostBuffers.Groups[1].Value }
                         if (-not [string]::IsNullOrWhiteSpace($stderrText)) {
                             Write-Warning "A7_PRESENTMON_STDERR: $($stderrText.Trim())"
                         }
@@ -319,7 +387,7 @@ foreach ($name in $scenarios) {
                 }
                 $pmStatus | ConvertTo-Json -Depth 5 |
                     Set-Content -LiteralPath $pmStatusPath -Encoding UTF8
-                Write-Host "A7_PRESENTMON_STATUS exit=$($pmStatus.exit_code) csv_bytes=$($pmStatus.csv_bytes)"
+                Write-Host "A7_PRESENTMON_STATUS exit=$($pmStatus.exit_code) csv_bytes=$($pmStatus.csv_bytes) gpu_tracking=$($pmStatus.gpu_tracking_requested) etw_events_lost=$($pmStatus.etw_events_lost)"
             }
             $p.Refresh()
             $exitCode = $p.ExitCode
