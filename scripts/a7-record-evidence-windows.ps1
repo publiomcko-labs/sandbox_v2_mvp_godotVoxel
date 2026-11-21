@@ -10,12 +10,14 @@ param(
     [ValidateRange(0,180)] [double] $Warmup = 20,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
+    [string] $PresentMonExe = '',
     [switch] $SkipVideo
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runner = Join-Path $PSScriptRoot 'a7-run-windows.ps1'
+$etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
@@ -35,6 +37,21 @@ if ($screen.Width -ne 1920 -or $screen.Height -ne 1080 -or
 
 $ff = $null
 $ffhash = $null
+$presentMonPath = $null
+$presentMonHash = 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
+if ($PresentMonExe) {
+    if ($Mode -ne 'Edit') {
+        throw 'A7_EVIDENCE_ETW_ONLY_SUPPORTED_FOR_EDIT'
+    }
+    if (-not (Test-Path -LiteralPath $PresentMonExe -PathType Leaf)) {
+        throw 'A7_EVIDENCE_PRESENTMON_NOT_FOUND'
+    }
+    $presentMonPath = (Resolve-Path -LiteralPath $PresentMonExe).Path
+    if ((Get-FileHash -LiteralPath $presentMonPath -Algorithm SHA256).Hash -ne $presentMonHash) {
+        throw 'A7_EVIDENCE_PRESENTMON_HASH_MISMATCH'
+    }
+    & $etwGuard -Mode Preflight -PresentMonExe $presentMonPath
+}
 if (-not $SkipVideo) {
     if (-not $FfmpegExe) {
         throw 'A7_EVIDENCE_FFMPEG_REQUIRED: specify -FfmpegExe or explicitly -SkipVideo'
@@ -53,6 +70,7 @@ $video = Join-Path $campaign 'desktop-1080p-60fps.mkv'
 $recording = $null
 $recordingExitCode = $null
 $recordingError = $null
+$etwGuardError = $null
 $childSucceeded = $false
 $start = $null
 $end = $null
@@ -93,11 +111,32 @@ try {
         Capture = $true
     }
     if ($Mode -eq 'Route') { $params.Duration = $Duration }
+    if ($presentMonPath) {
+        # Distinct evidence-only arm: readback/video costs invalidate PERF-60.
+        $params.PresentMonExe = $presentMonPath
+        $params.EvidenceOnlyPresentMon = $true
+    }
     & $runner @params
     $childSucceeded = $?
 } finally {
     $end = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
     $env:A7_CAMPAIGN_DIR = $previous
+    if ($presentMonPath) {
+        try {
+            $pmStatusFile = Get-ChildItem -LiteralPath (Join-Path $campaign 'game') -Recurse -File -Filter 'a7_presentmon_status.json' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -ne $pmStatusFile) {
+                $status = Get-Content -LiteralPath $pmStatusFile.FullName -Raw | ConvertFrom-Json
+                if ($status.etw_session_name) {
+                    & $etwGuard -Mode Postflight -PresentMonExe $presentMonPath -SessionName $status.etw_session_name
+                }
+            } else {
+                $etwGuardError = 'A7_EVIDENCE_ETW_STATUS_MISSING'
+            }
+        } catch {
+            $etwGuardError = $_.Exception.Message
+        }
+    }
     if ($null -ne $recording) {
         try {
             if (-not $recording.HasExited) {
@@ -135,6 +174,9 @@ try {
         desktop_primary_px = '1920x1080'
         desktop_offset_xy = @($screen.X,$screen.Y)
         recorder_sha256 = $ffhash
+        presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
+        presentmon_requested = [bool]$presentMonPath
+        etw_cleanup_error = $etwGuardError
         video_bytes = $videoBytes
         video_exit_code = $recordingExitCode
         video_error = $recordingError
@@ -146,6 +188,7 @@ try {
         terrain_pixels_correct_verified = $false
         depth_130m_verified = $false
         first_correct_presented_pixel_verified = $false
+        presentmon_edit_trace_verified = $false
         strict_gates = 'NOT_QUALIFIED'
         review_required = @('Verify actual monitor/game window coverage',
             'Review full-rate video for missing terrain, water, rocks and seams',
@@ -156,6 +199,7 @@ try {
         Set-Content -LiteralPath $manifestPath -Encoding UTF8
     Write-Host "A7_EVIDENCE_MANIFEST=$manifestPath video_bytes=$videoBytes game_ok=$childSucceeded"
 }
+if ($etwGuardError) { throw "A7_EVIDENCE_ETW_CLEANUP_FAILED $etwGuardError" }
 if (-not $childSucceeded) { throw 'A7_EVIDENCE_GAME_RUN_FAILED' }
 if (-not $videoValid) { throw "A7_EVIDENCE_VIDEO_MISSING_OR_INVALID exit=$recordingExitCode bytes=$videoBytes error=$recordingError" }
 Write-Host "A7_EVIDENCE_RECORDED mode=$Mode scenario=$Scenario video_requested=$(-not [bool]$SkipVideo) strict=NOT_QUALIFIED"
