@@ -150,6 +150,9 @@ def analyze_run(folder: Path) -> dict:
         "cpu_frame_time_p99_ms": None,
         "displayed_time_p99_ms": None,
         "etw_csv_schema": "v2_metrics",
+        "gpu_tracking_requested": None,
+        "etw_events_lost": None,
+        "etw_buffers_lost": None,
         "timestamp_adjustment_seconds": None,
         "timestamp_alignment_method": "unresolved",
         "timestamp_alignment_candidates": [],
@@ -164,8 +167,19 @@ def analyze_run(folder: Path) -> dict:
         result["reason"] = "PresentMon status or CSV missing"
         return result
     status = json.loads(status_file.read_text(encoding="utf-8-sig"))
+    result["gpu_tracking_requested"] = status.get("gpu_tracking_requested")
+    result["etw_events_lost"] = status.get("etw_events_lost")
+    result["etw_buffers_lost"] = status.get("etw_buffers_lost")
     if not status.get("collection_started") or status.get("exit_code") != 0:
         result["reason"] = f"PresentMon collector error: {status.get('capture_error')}, exit={status.get('exit_code')}"
+        return result
+    if number(status.get("etw_events_lost")) is not None and number(status["etw_events_lost"]) > 0:
+        result["presentation_status"] = "ETW_INCOMPLETE"
+        result["reason"] = f"PresentMon reported lost ETW events: {status['etw_events_lost']}"
+        return result
+    if number(status.get("etw_buffers_lost")) is not None and number(status["etw_buffers_lost"]) > 0:
+        result["presentation_status"] = "ETW_INCOMPLETE"
+        result["reason"] = f"PresentMon reported lost ETW buffers: {status['etw_buffers_lost']}"
         return result
     if start is None or end is None or start >= end:
         result["reason"] = "Missing reliable Godot measurement time-window"
