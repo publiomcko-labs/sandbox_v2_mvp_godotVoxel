@@ -79,6 +79,9 @@ jobs:
       - name: A7 strict acceptance source contract and matrix fail-closed test
         shell: powershell
         run: python tests/check_a7_contract.py
+      - name: A7 ETW presentation parser, clock, loss and probe regression contracts
+        shell: powershell
+        run: python tests/check_a7_streaming_present.py
       - name: Restore compiled native binary from approved A3 CI
         uses: actions/download-artifact@v4
         with:
