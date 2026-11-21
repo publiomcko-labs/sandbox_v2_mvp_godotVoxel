@@ -92,6 +92,20 @@ func _run() -> void:
         return
     root.add_child(world)
     await process_frame
+    # The visible marker is an alignment cue for 60fps desktop recordings,
+    # NOT evidence that terrain geometry was correctly displayed.
+    var marker: ColorRect=ColorRect.new()
+    var marker_text: Label=Label.new()
+    if evidence:
+        marker.position=Vector2(1710,22)
+        marker.size=Vector2(192,40)
+        marker.color=Color(0.15,0.15,0.15,1.0)
+        marker.mouse_filter=Control.MOUSE_FILTER_IGNORE
+        marker_text.text="A7 EDIT PRE"
+        marker_text.position=Vector2(6,8)
+        marker_text.add_theme_color_override("font_color",Color.BLACK)
+        marker.add_child(marker_text)
+        world.get_node("HUD").add_child(marker)
     var player: Node3D=world.get_node("Player")
     var camera: Camera3D=world.get_node("Player/Camera3D")
     var tool: VoxelTool=terrain.get_voxel_tool()
@@ -113,7 +127,10 @@ func _run() -> void:
         "type":"metadata","schema":"a7_edit_v1","scenario":scenario,
         "seed":seed,"count":count,"rate_hz":10.0,
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
-        "input":"scripted accepted brush call, not raw HID timestamp",
+        "input":"scripted brush invocation; no raw OS HID timestamp",
+        "visual_evidence_marker":evidence,
+        "timestamp_clock":"Godot Time.get_unix_time_from_system() UTC epoch and monotonic Time.get_ticks_usec()",
+        "marker_gate":"ALIGNMENT_CUE_ONLY",
         "pixel_gate":"NOT_QUALIFIED"
     }))
     var accepted:=0
@@ -140,7 +157,9 @@ func _run() -> void:
             "accepted":false,"native_apply_ms":null,
             "first_submitted_frame_proxy_ms":null,
             "first_correct_presented_pixel_ms":null,
-            "pixel_gate":"NOT_QUALIFIED"
+            "pixel_gate":"NOT_QUALIFIED",
+            "first_correct_presented_pixel_ms":null,
+            "external_video_required":true
         }
         if not center.is_finite():
             row["reject_reason"]="no_ray_hit"
@@ -155,21 +174,41 @@ func _run() -> void:
             trace.store_line(JSON.stringify(row))
             continue
         var do_capture:=evidence and (i==0 or i==1 or i==count-1)
-        if do_capture:
+        if evidence:
+            # Diagnostic arm only: aim at every attempted edit so its actual
+            # terrain pixels can be reviewed in the full-frame desktop video.
             camera.look_at(center,Vector3.UP)
             await process_frame
-            if _capture(folder,"edit_%03d_before"%i):
+            row["camera_targeted_for_video"]=true
+            row["target_behind_camera"]=camera.is_position_behind(center)
+            var target_px: Vector2=camera.unproject_position(center)
+            row["target_screen_xy_px"]=[target_px.x,target_px.y]
+            row["camera_frame_epoch_s"]=Time.get_unix_time_from_system()
+            if do_capture and _capture(folder,"edit_%03d_before"%i):
                 previews+=1
         # Input-equivalent accepted call begins here, NOT from OS device.
         var begun:=Time.get_ticks_usec()
+        row["brush_call_epoch_s"]=Time.get_unix_time_from_system()
+        row["brush_call_ticks_us"]=begun
         var success: bool = bool(world.call("edit_sphere",center,add,RADIUS_M))
         var end_cpu:=Time.get_ticks_usec()
+        row["brush_return_epoch_s"]=Time.get_unix_time_from_system()
+        row["brush_return_ticks_us"]=end_cpu
         if not success:
             row["reject_reason"]="native_rejected"
             rejected+=1
             trace.store_line(JSON.stringify(row))
             continue
         accepted+=1
+        if evidence:
+            # Alternate highly distinguishable marker colors every accepted
+            # edit; never use the marker's visual appearance as proof of an
+            # actually changed terrain pixel.
+            marker.color=Color(0.0,1.0,0.0,1.0) if accepted%2==1 else Color(1.0,0.0,1.0,1.0)
+            marker_text.text="A7 EDIT %03d"%i
+            row["video_marker_index"]=i
+            row["video_marker_rgb"]="00ff00" if accepted%2==1 else "ff00ff"
+            row["video_marker_meaning"]="synchronization only, NOT correct terrain presentation"
         var elapsed_cpu:=float(end_cpu-begun)/1000.0
         max_apply=maxf(max_apply,elapsed_cpu)
         if elapsed_cpu>100.0:
@@ -188,8 +227,28 @@ func _run() -> void:
             var frame_proxy:=float(Time.get_ticks_usec()-begun)/1000.0
             row["first_submitted_frame_proxy_ms"]=frame_proxy
             max_submitted=maxf(max_submitted,frame_proxy)
-            if do_capture and _capture(folder,"edit_%03d_after"%i):
-                previews+=1
+            if do_capture:
+                row["visual_after_samples"]=[]
+                if _capture(folder,"edit_%03d_after_01"%i):
+                    previews+=1
+                    row["visual_after_samples"].append({
+                        "frame_number_after_edit":1,
+                        "capture_epoch_s":Time.get_unix_time_from_system(),
+                        "file":"edit_%03d_after_01.png"%i,
+                        "pixel_gate":"REVIEW_REQUIRED"
+                    })
+                for frame_idx in range(2,9):
+                    await RenderingServer.frame_post_draw
+                    if frame_idx==4 or frame_idx==8:
+                        var shot: String="edit_%03d_after_%02d.png"%[i,frame_idx]
+                        if _capture(folder,shot):
+                            previews+=1
+                            row["visual_after_samples"].append({
+                                "frame_number_after_edit":frame_idx,
+                                "capture_epoch_s":Time.get_unix_time_from_system(),
+                                "file":shot,
+                                "pixel_gate":"REVIEW_REQUIRED"
+                            })
         else:
             await process_frame
         trace.store_line(JSON.stringify(row))
@@ -224,7 +283,9 @@ func _run() -> void:
         "first_correct_presented_pixel_ms":null,
         "edit_100_gate":"NOT_QUALIFIED",
         "collider_response_gate":"NOT_QUALIFIED",
-        "note":"post_draw is not verified pixel or actual display presentation; capture runs include screenshot overhead"
+        "evidence_mode":evidence,
+        "video_marker_only":evidence,
+        "note":"EVIDENCE ONLY: scripted edits are not HID; marker and frame_post_draw are not correct presented pixels; screenshot readback changes timing; desktop video with per-pixel verification and ETW required for EDIT-100"
     }
     var file:=FileAccess.open(folder.path_join("a7_edits.json"),FileAccess.WRITE)
     if file==null:
