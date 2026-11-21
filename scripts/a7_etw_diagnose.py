@@ -75,6 +75,27 @@ def diagnostic(folder: Path):
                 present_modes[str(row.get("PresentMode"))] += 1
                 if len(sample_window_rows)<3:
                     sample_window_rows.append(row)
+    # A second streaming pass checks supported host-UTC offsets without touching
+    # the original file. Keep uncorrected and corrected counts separately.
+    clock = parser.choose_clock_alignment(earliest, latest, a, b) if earliest is not None else {
+        "verified":False, "offset_s":None, "method":"unresolved", "candidates":[]
+    }
+    corrected_rows=corrected_display=0
+    corrected_first=corrected_last=None
+    if clock["verified"]:
+        with parser.open_presentmon_csv(folder) as source:
+            for row in csv.DictReader(source):
+                stamp=parser.epoch(row.get("CPUStartDateTime"))
+                if stamp is None:
+                    continue
+                stamp += clock["offset_s"]
+                if a <= stamp <= b:
+                    corrected_rows += 1
+                    corrected_first=stamp if corrected_first is None else min(corrected_first,stamp)
+                    corrected_last=stamp if corrected_last is None else max(corrected_last,stamp)
+                    latency=parser.number(row.get("DisplayLatency"))
+                    if latency is not None and latency>=0:
+                        corrected_display+=1
     summary={
         "schema":"a7_etw_diagnostic_v1",
         "route":data["route"], "seed":data["seed"],
@@ -90,6 +111,12 @@ def diagnostic(folder: Path):
         "rows_with_parseable_timestamp":valid_times,
         "rows_in_measurement_window":window_rows,
         "rows_with_valid_display_latency_in_window":valid_window_display,
+        "timestamp_alignment_method":clock["method"],
+        "timestamp_adjustment_seconds":clock["offset_s"],
+        "timestamp_alignment_candidates":clock["candidates"],
+        "corrected_window_rows":corrected_rows,
+        "corrected_display_latency_rows":corrected_display,
+        "corrected_matched_window_local":[fmt_epoch(corrected_first),fmt_epoch(corrected_last)],
         "display_latency_values_in_window":dict(display_values.most_common(8)),
         "present_modes_in_window":dict(present_modes.most_common(8)),
         "unparseable_timestamp_examples":malformed_timestamps,
