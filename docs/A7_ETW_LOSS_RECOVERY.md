@@ -68,3 +68,43 @@ bounded ETW capture windows, provider scope, or an alternative GPU trace
 collector before pursuing the full campaign.
 
 The A5/CPU16 functional checkpoint and all strict gates remain unchanged.
+
+## Short timed ETW window inside a long gameplay route
+
+The 45s warmup + 90s shoreline `-EtwStressProbe -DisplayOnly` reproduced
+`csv_bytes=0` and **394015 ETW events lost**, although PresentMon exited 0.
+Therefore GPU tracking alone is not the explanation, and the previous
+fail-fast correctly prevented a larger invalid campaign.
+
+New isolation mode keeps the game and all Godot process/resource telemetry
+running for the full 45s warmup + 90s measured route, but starts PresentMon
+only after **60s of game process uptime**, and asks it to record **30s**.
+This is a genuine delayed start of the ETW session, not PresentMon's
+`--delay` (which would leave the ETW session active while not recording).
+
+```powershell
+cd C:\Dev\sandbox-a7-etw
+git fetch origin fix/a7-etw-loss-probe-20261121
+git switch --detach FETCH_HEAD
+python .\tests\check_a7_streaming_present.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a7-streaming-present-windows.ps1 -PresentMonExe .\PresentMon.exe -EtwWindowProbe -DisplayOnly
+```
+
+The capture has the same game route, seed, speed, VSync ON and workers as
+the previous failed 90s full-session test, but the GPUTime metric is
+unmeasured because this arm uses `--no_track_gpu`.
+
+Results must distinguish:
+
+- `ETW_PARTIAL_ALIGNED=1/1` **only** if collection exited successfully,
+  no ETW event or buffer loss was reported, CSV has sufficient valid displayed
+  rows, and at least 85% of the bounded 30s subwindow is covered. Full
+  `etw_aligned_count` remains `0`.
+- `A7_ETW_CAPTURE_FAILED_FAST` / `A7_ETW_EVENTS_LOST`: no valid ETW sample;
+  preserve logs and do not repeat the 8-route campaign.
+- `ETW_INCOMPLETE`: sample collected but timestamp/display coverage failed.
+
+The metric `gpu_work_p99_ms` is **null** for display-only captures. Strict
+A7 PERF-60/STREAM-18/VIEW-130/EDIT-100 gates remain `NOT_QUALIFIED`.
+A single subwindow can validate instrument viability, but it cannot
+characterize p99 for an entire multi-minute route.
