@@ -203,6 +203,28 @@ def analyze(folder: Path) -> dict:
     else:
         edits = [x for x in trace if x.get("type") == "edit"]
         accepted = [x for x in edits if x.get("accepted") is True]
+        for edited in accepted:
+            evidence_refs = []
+            before = edited.get("visual_before_sample")
+            if isinstance(before, dict):
+                evidence_refs.append(("before", before))
+            for after in edited.get("visual_after_samples", []):
+                evidence_refs.append(("after", after))
+            for phase, shot in evidence_refs:
+                name = shot.get("file")
+                if not isinstance(name, str) or Path(name).name != name or not name.endswith(".png"):
+                    problems.append("Edit screenshot has invalid filename")
+                    continue
+                dims = png_dimensions(runs[0].parent / name)
+                if dims != [1920, 1080]:
+                    problems.append("Invalid/missing 1080p edit screenshot: " + name)
+                screenshots.append({
+                    "name": name, "phase": phase, "edit_index": edited.get("index"),
+                    "utc_s": shot.get("capture_epoch_s"),
+                    "dimensions": dims,
+                    "pixel_depth_verified": False,
+                    "pixel_change_correct_verified": False,
+                })
         missing_call = [x.get("index") for x in accepted
                         if not isinstance(x.get("brush_call_epoch_s"), (int,float))
                         or not isinstance(x.get("brush_call_ticks_us"), int)]
@@ -220,6 +242,7 @@ def analyze(folder: Path) -> dict:
             "missing_call_timestamps": missing_call,
             "correct_presented_pixel_unverified": unqualified,
             "timestamped_calls": len(accepted)-len(missing_call),
+            "review_screenshot_count": len(screenshots),
             "marker_indices": [x.get("video_marker_index") for x in accepted
                                if x.get("video_marker_index") is not None],
             "time_origin": "scripted brush call; NOT OS HID input",
