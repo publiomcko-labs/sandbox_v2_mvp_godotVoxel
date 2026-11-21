@@ -4,6 +4,7 @@ param(
     [ValidateRange(20,120)] [int] $Warmup = 45,
     [switch] $FastSmoke,
     [switch] $EtwStressProbe,
+    [switch] $EtwWindowProbe,
     [switch] $DisplayOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -12,7 +13,9 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runner = Join-Path $root 'scripts/a7-run-windows.ps1'
 $reporter = Join-Path $root 'scripts/a7_streaming_present_report.py'
 $presentMonHash = 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
-if ($FastSmoke -and $EtwStressProbe) { throw 'A7_ETW_PROBE_AND_FAST_SMOKE_MUTUALLY_EXCLUSIVE' }
+if (([int][bool]$FastSmoke + [int][bool]$EtwStressProbe + [int][bool]$EtwWindowProbe) -gt 1) {
+    throw 'A7_ETW_DIAGNOSTIC_MODES_MUTUALLY_EXCLUSIVE'
+}
 if (-not $PresentMonExe -or -not (Test-Path -LiteralPath $PresentMonExe)) {
     throw 'A7_PRESENTMON_REQUIRED: verified Intel PresentMon 2.6.0 standalone exe is mandatory for the paired stress diagnostics'
 }
@@ -53,6 +56,12 @@ if ($FastSmoke) {
     # launch all eight routes until at least this display trace is usable.
     $routes = @([pscustomobject]@{name='shoreline_180s'; duration=90})
     $Warmup = 45
+} elseif ($EtwWindowProbe) {
+    # Full 90s route, but PresentMon starts 60s after Godot launch and
+    # captures just 30s during the measured motion; avoids 135s ETW sessions.
+    # This sample is PARTIAL; it must never qualify the full A7 acceptance gate.
+    $routes = @([pscustomobject]@{name='shoreline_180s'; duration=90})
+    $Warmup = 45
 }
 $campaign = Join-Path $root ('reports/generated/a7-streaming-present/campaign-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + "-$PID")
 New-Item -ItemType Directory -Force -Path $campaign | Out-Null
@@ -66,6 +75,7 @@ $manifest = [ordered]@{
     presentmon_etw_permission_available=$etwAuthorized
     presentmon_collection_requested=$etwAuthorized
     etw_stress_probe=[bool]$EtwStressProbe
+    etw_window_probe=[bool]$EtwWindowProbe
     display_only=[bool]$DisplayOnly
     presentmon_permission_note='No GitHub runner elevation; grant Performance Log Users membership manually and refresh logon token to enable ETW.'
     display_target='1920x1080 window'
@@ -84,7 +94,7 @@ $routeIndex=0
 try {
     foreach ($route in $routes) {
         # Alternate which arm runs first by route, without changing the game.
-        $arms = if ($FastSmoke -or $EtwStressProbe) { @('on') } elseif ($routeIndex % 2 -eq 0) { @('on','off') } else { @('off','on') }
+        $arms = if ($FastSmoke -or $EtwStressProbe -or $EtwWindowProbe) { @('on') } elseif ($routeIndex % 2 -eq 0) { @('on','off') } else { @('off','on') }
         $routeIndex++
         foreach ($arm in $arms) {
             $seq++
@@ -112,6 +122,8 @@ try {
                 VoxelThreads=0
                 PresentMonExe=$(if ($etwAuthorized) { $PresentMonExe } else { '' })
                 PresentMonNoGpu=($DisplayOnly -and $etwAuthorized)
+                PresentMonStartDelaySeconds=$(if ($EtwWindowProbe -and $etwAuthorized) {60} else {0})
+                PresentMonCaptureSeconds=$(if ($EtwWindowProbe -and $etwAuthorized) {30} else {0})
             }
             & $runner @params
             if (-not $?) { throw "A7_STREAMING_CHILD_FAILED $label" }
@@ -144,6 +156,12 @@ try {
     & python $reporter $campaign
     if ($LASTEXITCODE -ne 0) { throw 'A7_STREAMING_REPORT_FAILED' }
     $comparison = Get-Content -LiteralPath (Join-Path $campaign 'streaming_comparison.json') -Raw | ConvertFrom-Json
+    if ($EtwWindowProbe) {
+        if ($etwAuthorized -and $comparison.etw_partial_aligned_count -ne $comparison.route_count) {
+            throw "A7_ETW_WINDOW_PROBE_NOT_ALIGNED: partial=$($comparison.etw_partial_aligned_count)/$($comparison.route_count)"
+        }
+        Write-Host "A7_ETW_WINDOW_VALIDATED_PARTIAL=$($comparison.etw_partial_aligned_count)/$($comparison.route_count) full=$($comparison.etw_aligned_count)"
+    }
     if (($FastSmoke -or $EtwStressProbe) -and $comparison.etw_aligned_count -ne $comparison.route_count) {
         if ($etwAuthorized) {
             throw "A7_ETW_PROBE_NOT_ALIGNED: $($comparison.etw_aligned_count)/$($comparison.route_count); do not run full campaign"
@@ -151,7 +169,8 @@ try {
         Write-Warning "A7_PRESENTMON_PREFLIGHT_NOT_ALIGNED: $($comparison.etw_aligned_count)/$($comparison.route_count); streaming may proceed, but full presentation metric remains NOT_QUALIFIED"
     }
     foreach ($run in $comparison.runs) {
-        if ($run.presentation_status -ne 'ETW_ALIGNED') {
+        if ($run.presentation_status -ne 'ETW_ALIGNED' -and
+            -not ($EtwWindowProbe -and $run.presentation_status -eq 'ETW_PARTIAL_ALIGNED')) {
             Write-Warning "A7_ETW_NOT_QUALIFIED route=$($run.route) profile=$($run.profile) status=$($run.presentation_status) reason=$($run.reason)"
         }
     }
