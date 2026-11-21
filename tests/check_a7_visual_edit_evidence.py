@@ -2,8 +2,10 @@
 from __future__ import annotations
 import importlib.util
 import json
+import csv
 import struct
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
@@ -90,5 +92,36 @@ with tempfile.TemporaryDirectory() as tmp:
     assert result["edit"]["timestamped_calls"] == 1
     assert result["gates"]["EDIT-100"] == "NOT_QUALIFIED"
     assert not result["automatic_acceptance"]
+
+# Correlate an explicitly lossless ETW trace to the earliest display
+# opportunity, never to the first correct terrain pixel.
+with tempfile.TemporaryDirectory() as tmp:
+    folder = Path(tmp)
+    start = 1_700_000_000.0
+    status = {
+        "collection_started": True, "exit_code": 0,
+        "etw_events_lost": 0, "etw_buffers_lost": 0,
+        "capture_started_epoch_s": start,
+    }
+    write_json(folder / "a7_presentmon_status.json", status)
+    with (folder / "a7_presentmon.csv").open("w", newline="", encoding="utf-8") as output:
+        writer = csv.DictWriter(output, fieldnames=["CPUStartDateTime","DisplayLatency"])
+        writer.writeheader()
+        for i in range(125):
+            stamp = datetime.fromtimestamp(start + i * 0.016)
+            writer.writerow({"CPUStartDateTime":stamp.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                             "DisplayLatency":"20.0"})
+    brush = [{
+        "index": 0, "brush_call_epoch_s": start + 0.5,
+        "brush_return_epoch_s": start + 1.9,
+    }]
+    presented = module.parse_edit_presentmon(folder, brush)
+    assert presented["available"], presented
+    assert presented["clock_verified"], presented
+    assert len(presented["earliest_display_opportunity_ms"]) == 1, presented
+    assert "correct terrain pixel" in presented["note"], presented
+    status["etw_events_lost"] = 15
+    write_json(folder/"a7_presentmon_status.json", status)
+    assert not module.parse_edit_presentmon(folder, brush)["available"]
 
 print("A7_VISUAL_EDIT_EVIDENCE_FAIL_CLOSED_CONTRACT_PASS")
