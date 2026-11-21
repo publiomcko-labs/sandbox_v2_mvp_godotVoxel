@@ -35,6 +35,11 @@ assert "$pmProcess.WaitForExit(30000)" in source
 assert "Ceiling($Warmup+$Duration+45)" not in source
 assert "$pmProcess.WaitForExit(15000)" not in source
 assert "a7_presentmon_stderr.txt" in source
+assert "[switch] $PresentMonNoGpu" in source and "--no_track_gpu" in source
+assert "etw_events_lost" in source
+assert "[switch] $EtwStressProbe" in campaign and "[switch] $DisplayOnly" in campaign
+assert "A7_ETW_CAPTURE_FAILED_FAST" in campaign and "A7_ETW_EVENTS_LOST" in campaign
+assert "duration=90" in campaign
 assert "measurement_epoch_begin_s" in runtime and "measurement_epoch_end_s" in runtime
 assert "voxel_threads_requested=0" in campaign and "ResourceTelemetry=$true" in campaign
 assert "interactive-gpu" in workflow
@@ -116,6 +121,22 @@ with tempfile.TemporaryDirectory() as t:
     archived_out=module.analyze_run(folder)
     assert archived_out["presentation_status"] == "ETW_ALIGNED",archived_out
     assert archived_out["presentmon_rows_in_window"] == 125
+    # A clean exit and CSV are insufficient when PresentMon reports ETW loss.
+    (folder/"a7_presentmon_status.json").write_text(json.dumps({
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 860404,
+    }), encoding="utf-8")
+    lossy=module.analyze_run(folder)
+    assert lossy["presentation_status"] == "ETW_INCOMPLETE", lossy
+    assert lossy["etw_events_lost"] == 860404
+    assert "lost ETW events" in lossy["reason"]
+    (folder/"a7_presentmon_status.json").write_text(json.dumps({
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 0,
+    }), encoding="utf-8")
+    clean=module.analyze_run(folder)
+    assert clean["presentation_status"] == "ETW_ALIGNED"
+    assert clean["gpu_tracking_requested"] is False
     assert out["strict_acceptance"] == "NOT_QUALIFIED"
     # Keep plain CSV for existing nested-layout diagnostic regression.
     with zipfile.ZipFile(folder/"a7_presentmon.csv.zip") as z:
