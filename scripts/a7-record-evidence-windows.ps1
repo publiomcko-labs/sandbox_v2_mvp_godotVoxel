@@ -70,7 +70,11 @@ $video = Join-Path $campaign 'desktop-1080p-60fps.mkv'
 $recording = $null
 $recordingExitCode = $null
 $recordingError = $null
+$recordingStartedEpochS = $null
+$recordingStoppedEpochS = $null
 $etwGuardError = $null
+$etwCaptureError = $null
+$etwCaptureValid = $false
 $childSucceeded = $false
 $start = $null
 $end = $null
@@ -96,6 +100,7 @@ try {
         $recording = New-Object System.Diagnostics.Process
         $recording.StartInfo = $psi
         if (-not $recording.Start()) { throw 'A7_EVIDENCE_FFMPEG_START_FAILED' }
+        $recordingStartedEpochS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
         Write-Host "A7_EVIDENCE_VIDEO_STARTED pid=$($recording.Id) path=$video"
         Start-Sleep -Seconds 2
         if ($recording.HasExited) {
@@ -130,6 +135,14 @@ try {
                 if ($status.etw_session_name) {
                     & $etwGuard -Mode Postflight -PresentMonExe $presentMonPath -SessionName $status.etw_session_name
                 }
+                if ($status.collection_started -and $status.exit_code -eq 0 -and
+                    $status.csv_bytes -ge 1024 -and
+                    ($null -eq $status.etw_events_lost -or $status.etw_events_lost -eq 0) -and
+                    ($null -eq $status.etw_buffers_lost -or $status.etw_buffers_lost -eq 0)) {
+                    $etwCaptureValid = $true
+                } else {
+                    $etwCaptureError = "A7_EVIDENCE_ETW_CAPTURE_INVALID exit=$($status.exit_code) bytes=$($status.csv_bytes) lost=$($status.etw_events_lost)"
+                }
             } else {
                 $etwGuardError = 'A7_EVIDENCE_ETW_STATUS_MISSING'
             }
@@ -150,6 +163,7 @@ try {
                 }
             }
             $recordingExitCode = $recording.ExitCode
+            $recordingStoppedEpochS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
         } catch {
             $recordingError = $_.Exception.Message
         } finally {
@@ -167,8 +181,10 @@ try {
         warmup_s = $Warmup
         duration_override_s = $(if ($Mode -eq 'Route') { $Duration } else { $null })
         git_sha = (& git -C $root rev-parse HEAD).Trim()
-        recording_begin_epoch_s = $start
-        recording_end_epoch_s = $end
+        recording_process_started_epoch_s = $recordingStartedEpochS
+        recording_process_stopped_epoch_s = $recordingStoppedEpochS
+        game_invocation_begin_epoch_s = $start
+        game_invocation_end_epoch_s = $end
         video_path = $(if ($SkipVideo) { $null } else { $video })
         video_fps_requested = $(if ($SkipVideo) { 0 } else { 60 })
         desktop_primary_px = '1920x1080'
@@ -176,6 +192,8 @@ try {
         recorder_sha256 = $ffhash
         presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
         presentmon_requested = [bool]$presentMonPath
+        presentmon_capture_valid = [bool]$etwCaptureValid
+        presentmon_capture_error = $etwCaptureError
         etw_cleanup_error = $etwGuardError
         video_bytes = $videoBytes
         video_exit_code = $recordingExitCode
@@ -200,6 +218,9 @@ try {
     Write-Host "A7_EVIDENCE_MANIFEST=$manifestPath video_bytes=$videoBytes game_ok=$childSucceeded"
 }
 if ($etwGuardError) { throw "A7_EVIDENCE_ETW_CLEANUP_FAILED $etwGuardError" }
+if ($presentMonPath -and -not $etwCaptureValid) {
+    throw "A7_EVIDENCE_ETW_CAPTURE_FAILED $etwCaptureError"
+}
 if (-not $childSucceeded) { throw 'A7_EVIDENCE_GAME_RUN_FAILED' }
 if (-not $videoValid) { throw "A7_EVIDENCE_VIDEO_MISSING_OR_INVALID exit=$recordingExitCode bytes=$videoBytes error=$recordingError" }
 Write-Host "A7_EVIDENCE_RECORDED mode=$Mode scenario=$Scenario video_requested=$(-not [bool]$SkipVideo) strict=NOT_QUALIFIED"
