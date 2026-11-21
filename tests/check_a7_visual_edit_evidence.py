@@ -86,14 +86,20 @@ with tempfile.TemporaryDirectory() as tmp:
         "schema":"a7_edit_v1", "scenario":"edit_idle_100",
         "seed":20261119, "requested_count":2,
     })
+    write_png(game/"edit_000_before.png")
+    write_png(game/"edit_000_after_01.png")
     (game/"a7_edits.jsonl").write_text("\n".join(json.dumps(x) for x in [
         {"type":"edit","index":0,"accepted":True,"brush_call_epoch_s":1_700_000_000,
          "brush_call_ticks_us":2300000,"first_correct_presented_pixel_ms":None,
-         "video_marker_index":0},
+         "video_marker_index":0,
+         "visual_before_sample":{"file":"edit_000_before.png","capture_epoch_s":1_700_000_000},
+         "visual_after_samples":[{"file":"edit_000_after_01.png","capture_epoch_s":1_700_000_000.1}]},
         {"type":"edit","index":1,"accepted":False,"reject_reason":"no_ray_hit"},
     ])+"\n", encoding="utf-8")
     result=module.analyze(folder)
     assert result["edit"]["accepted"] == 1
+    assert result["edit"]["review_screenshot_count"] == 2
+    assert result["screenshot_count"] == 2
     assert result["edit"]["correct_presented_pixel_unverified"] == [0]
     assert result["edit"]["timestamped_calls"] == 1
     assert result["gates"]["EDIT-100"] == "NOT_QUALIFIED"
