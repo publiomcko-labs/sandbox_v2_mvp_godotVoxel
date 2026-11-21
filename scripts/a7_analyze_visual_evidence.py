@@ -2,9 +2,19 @@
 """Inspect A7.1/A7.2 visual evidence without inferring unobserved pixels."""
 from __future__ import annotations
 import argparse
+import bisect
+import csv
+import importlib.util
 import json
 import struct
+import zipfile
 from pathlib import Path
+
+_spec = importlib.util.spec_from_file_location(
+    "a7_present_report", Path(__file__).with_name("a7_streaming_present_report.py"))
+_pm = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(_pm)
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -23,6 +33,84 @@ def png_dimensions(path: Path):
         return [w, h] if 0 < w <= 32768 and 0 < h <= 32768 else None
     except OSError:
         return None
+
+
+def parse_edit_presentmon(folder: Path, accepted: list[dict]) -> dict:
+    """Find earliest measured display *opportunity* after each accepted brush.
+    This is NOT first visibly correct terrain pixel and cannot grant EDIT-100.
+    """
+    result = {
+        "available": False, "clock_verified": False,
+        "csv_rows": 0, "displayed_frame_rows": 0,
+        "etw_events_lost": None, "offset_seconds": None,
+        "earliest_display_opportunity_ms": {},
+        "note": "Earliest display after the scripted call is a lower bound only. It does not demonstrate a correct terrain pixel or raw HID latency.",
+    }
+    status_file = folder / "a7_presentmon_status.json"
+    if not status_file.is_file():
+        return result
+    status = read_json(status_file)
+    result["etw_events_lost"] = status.get("etw_events_lost")
+    if (not status.get("collection_started") or status.get("exit_code") != 0
+            or (status.get("etw_events_lost") or 0) > 0
+            or (status.get("etw_buffers_lost") or 0) > 0):
+        return result
+    raw_file = folder / "a7_presentmon.csv"
+    zipped = folder / "a7_presentmon.csv.zip"
+    if not raw_file.is_file() and not zipped.is_file():
+        return result
+    if raw_file.is_file():
+        data_source = raw_file
+    else:
+        data_source = zipped
+    raw_min, raw_max = None, None
+    presented_rows = []
+    def rows():
+        if data_source.suffix == ".zip":
+            with zipfile.ZipFile(data_source) as zf:
+                names = [x for x in zf.namelist() if Path(x).name == "a7_presentmon.csv"]
+                if len(names) != 1:
+                    return
+                with zf.open(names[0]) as raw:
+                    import io
+                    yield from csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        else:
+            with data_source.open(encoding="utf-8-sig", newline="") as inp:
+                yield from csv.DictReader(inp)
+    for row in rows():
+        result["csv_rows"] += 1
+        stamp = _pm.epoch(row.get("CPUStartDateTime"))
+        latency = _pm.number(row.get("DisplayLatency"))
+        if stamp is None:
+            continue
+        raw_min = stamp if raw_min is None else min(stamp, raw_min)
+        raw_max = stamp if raw_max is None else max(stamp, raw_max)
+        if latency is None or latency < 0:
+            continue
+        presented_rows.append(stamp + latency / 1000.0)
+    result["displayed_frame_rows"] = len(presented_rows)
+    capture_start = _pm.number(status.get("capture_started_epoch_s"))
+    brush_end = max((row.get("brush_return_epoch_s", 0) for row in accepted), default=0)
+    if (raw_min is None or raw_max is None or capture_start is None
+            or brush_end <= capture_start or len(presented_rows) < 100):
+        return result
+    # Confirm the system's known UTC offset, not an arbitrary post-hoc shift.
+    clock = _pm.choose_clock_alignment(raw_min, raw_max, capture_start, brush_end)
+    if not clock["verified"]:
+        return result
+    result["clock_verified"] = True
+    result["offset_seconds"] = clock["offset_s"]
+    times = sorted(v + clock["offset_s"] for v in presented_rows)
+    for row in accepted:
+        start = row.get("brush_call_epoch_s")
+        if not isinstance(start, (float, int)):
+            continue
+        idx = bisect.bisect_left(times, start)
+        if idx < len(times):
+            result["earliest_display_opportunity_ms"][str(row["index"])] = round(
+                max(0.0, (times[idx] - start) * 1000.0), 3)
+    result["available"] = True
+    return result
 
 
 def analyze(folder: Path) -> dict:
@@ -122,6 +210,9 @@ def analyze(folder: Path) -> dict:
             problems.append("Accepted edit lacks precise timestamp")
         unqualified = [x.get("index") for x in accepted
                        if x.get("first_correct_presented_pixel_ms") is None]
+        present_trace = parse_edit_presentmon(runs[0].parent, accepted)
+        if not present_trace["available"]:
+            problems.append("No lossless clock-aligned per-frame PresentMon edit evidence")
         edit_result = {
             "requested": summary.get("requested_count"),
             "accepted": len(accepted),
@@ -133,7 +224,8 @@ def analyze(folder: Path) -> dict:
                                if x.get("video_marker_index") is not None],
             "time_origin": "scripted brush call; NOT OS HID input",
             "first_correct_presented_pixel_verified": False,
-            "note": "Video marker proves timing cue only. Terrain pixels must be independently observed, correlated with ETW, and reviewed.",
+            "presentmon": present_trace,
+            "note": "Video marker proves timing cue only. Earliest ETW display opportunity after brush is NOT correct terrain presentation; independent pixel review required.",
         }
         route_result = None
         if len(edits) != summary.get("requested_count"):
