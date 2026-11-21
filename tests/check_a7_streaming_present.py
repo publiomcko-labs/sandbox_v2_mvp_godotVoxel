@@ -18,6 +18,7 @@ spec.loader.exec_module(module)
 for path in [
     "scripts/a7-streaming-present-windows.ps1",
     "scripts/a7_streaming_present_report.py",
+    "scripts/a7_etw_diagnose.py",
     ".github/workflows/a7-streaming-present-interactive.yml",
 ]:
     assert (root / path).is_file(), path
@@ -93,4 +94,14 @@ with tempfile.TemporaryDirectory() as t:
         shutil.move(str(folder/filename),str(nested/filename))
     nested_out=module.analyze_run(folder)
     assert nested_out["presentation_status"] == "ETW_INCOMPLETE",nested_out
+    import subprocess
+    probe=subprocess.run(
+        [os.sys.executable, str(root/"scripts/a7_etw_diagnose.py"), str(folder)],
+        text=True, capture_output=True, check=True
+    )
+    diagnostic=json.loads(probe.stdout)
+    assert diagnostic["csv_rows"] == 125, diagnostic
+    assert diagnostic["rows_in_measurement_window"] == 0, diagnostic
+    assert diagnostic["rows_with_parseable_timestamp"] == 125, diagnostic
+    assert diagnostic["presentmon_exit_code"] == 0, diagnostic
 print("A7_STREAMING_ETW_FAIL_CLOSED_CONTRACT_PASS")
