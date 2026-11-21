@@ -108,3 +108,34 @@ The metric `gpu_work_p99_ms` is **null** for display-only captures. Strict
 A7 PERF-60/STREAM-18/VIEW-130/EDIT-100 gates remain `NOT_QUALIFIED`.
 A single subwindow can validate instrument viability, but it cannot
 characterize p99 for an entire multi-minute route.
+
+## A7 ETW lifecycle protection (after 90-second clean capture)
+
+On 21 Nov 2026 a **clean 90s shoreline trace** ran with full GPU tracing,
+`csv_bytes=1525366`, zero reported ETW event loss, and
+`ETW_ALIGNED=1/1`, after the user explicitly stopped a lingering
+`A7_65732_e76f244eb9ea43e3ae868acc0b13fe3a` session.
+That strengthens, but does not prove, the orphaned-session interference
+hypothesis. The strict A7 gates remain NOT_QUALIFIED.
+
+`scripts/a7-etw-session-guard.ps1` is now called automatically by
+`a7-streaming-present-windows.ps1`:
+
+- Before the Godot campaign launches, enumerate the live ETW sessions with
+  `logman.exe query -ets`. Match **only** `A7_<pid>_<32 hex characters>`;
+  never match or terminate unrelated Windows tracing sessions.
+- If A7 sessions remain but **any** PresentMon process is still running,
+  abort with `A7_ETW_GUARD_ACTIVE_COLLECTOR`, rather than interrupt a potentially
+  legitimate concurrent capture.
+- If no PresentMon process exists, stop only the exact A7 sessions using
+  `PresentMon.exe --session_name <exact> --terminate_existing_session`.
+  Verify the target names disappeared from the ETW registry; otherwise abort.
+- After each child finishes, in a `finally` block, check **only** the
+  session name from that child's own `a7_presentmon_status.json`. Recovery
+  remains fail-closed if the stop fails or if the session persists.
+- This does not guarantee that other drivers or processes cannot overload
+  ETW. It specifically prevents a known stale-A7-session contamination path.
+
+All regression/PowerShell syntax checks run in unprivileged CI without
+starting, stopping or elevating any real ETW sessions. Runtime verification
+of the guard still requires an elevated interactive Windows desktop.
