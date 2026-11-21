@@ -40,6 +40,10 @@ assert "etw_events_lost" in source
 assert "[switch] $EtwStressProbe" in campaign and "[switch] $DisplayOnly" in campaign
 assert "A7_ETW_CAPTURE_FAILED_FAST" in campaign and "A7_ETW_EVENTS_LOST" in campaign
 assert "duration=90" in campaign
+assert "[switch] $EtwWindowProbe" in campaign
+assert "PresentMonStartDelaySeconds" in source and "PresentMonCaptureSeconds" in source
+assert "A7_ETW_WINDOW_VALIDATED_PARTIAL" in campaign
+assert "ETW_PARTIAL_ALIGNED" in parser_file.read_text(encoding="utf-8")
 assert "measurement_epoch_begin_s" in runtime and "measurement_epoch_end_s" in runtime
 assert "voxel_threads_requested=0" in campaign and "ResourceTelemetry=$true" in campaign
 assert "interactive-gpu" in workflow
@@ -121,6 +125,27 @@ with tempfile.TemporaryDirectory() as t:
     archived_out=module.analyze_run(folder)
     assert archived_out["presentation_status"] == "ETW_ALIGNED",archived_out
     assert archived_out["presentmon_rows_in_window"] == 125
+    # A bounded ETW trace within a longer run is eligible only as PARTIAL.
+    slice_status = {
+        "collection_started": True, "exit_code": 0, "capture_error": None,
+        "gpu_tracking_requested": False, "etw_events_lost": 0,
+        "capture_start_delay_s": 1.0,
+        "capture_requested_duration_s": 8.0,
+        "capture_started_epoch_s": start + 1.0,
+        "capture_window_end_epoch_s": start + 9.0,
+    }
+    (folder/"a7_presentmon_status.json").write_text(json.dumps(slice_status), encoding="utf-8")
+    sliced = module.analyze_run(folder)
+    assert sliced["presentation_status"] == "ETW_PARTIAL_ALIGNED", sliced
+    assert sliced["etw_scope"] == "sampled_subwindow_only", sliced
+    assert sliced["etw_capture_target_duration_s"] == 8.0, sliced
+    assert sliced["gpu_work_p99_ms"] is None, sliced
+    bad_slice = dict(slice_status)
+    bad_slice["capture_started_epoch_s"] = start + 31.0
+    bad_slice["capture_window_end_epoch_s"] = start + 39.0
+    (folder/"a7_presentmon_status.json").write_text(json.dumps(bad_slice), encoding="utf-8")
+    assert module.analyze_run(folder)["presentation_status"] != "ETW_PARTIAL_ALIGNED"
+
     # A clean exit and CSV are insufficient when PresentMon reports ETW loss.
     (folder/"a7_presentmon_status.json").write_text(json.dumps({
         "collection_started": True, "exit_code": 0, "capture_error": None,
