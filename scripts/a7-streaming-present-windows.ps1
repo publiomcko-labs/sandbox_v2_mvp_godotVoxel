@@ -119,7 +119,7 @@ try {
                 Select-Object -First 1
             if ($null -eq $pmStatusPath) {
                 if ($etwAuthorized) {
-                    throw "A7_ETW_STATUS_MISSING $label: ETW enabled but no status; refusing further routes"
+                    throw "A7_ETW_STATUS_MISSING ${label}: ETW enabled but no status; refusing further routes"
                 }
                 Write-Host "A7_ETW_NOT_MEASURED $label reason=PERFORMANCE_LOG_USERS_PERMISSION_REQUIRED"
             } else {
