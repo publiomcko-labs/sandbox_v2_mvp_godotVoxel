@@ -28,6 +28,11 @@ campaign = (root / "scripts/a7-streaming-present-windows.ps1").read_text(encodin
 workflow = (root / ".github/workflows/a7-streaming-present-interactive.yml").read_text(encoding="utf-8")
 assert "PresentMonExe" in source and "a7_presentmon_status.json" in source
 assert "--session_name " in source and "--v2_metrics" in source
+# A7 must not kill the collector before --timed reaches its own bounded stop.
+assert "Ceiling($Warmup + $Duration + 8.0)" in source
+assert "$pmProcess.WaitForExit(30000)" in source
+assert "Ceiling($Warmup+$Duration+45)" not in source
+assert "$pmProcess.WaitForExit(15000)" not in source
 assert "a7_presentmon_stderr.txt" in source
 assert "measurement_epoch_begin_s" in runtime and "measurement_epoch_end_s" in runtime
 assert "voxel_threads_requested=0" in campaign and "ResourceTelemetry=$true" in campaign
