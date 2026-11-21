@@ -153,6 +153,10 @@ def analyze_run(folder: Path) -> dict:
         "gpu_tracking_requested": None,
         "etw_events_lost": None,
         "etw_buffers_lost": None,
+        "etw_scope": "full_route",
+        "etw_capture_window_begin_s": None,
+        "etw_capture_window_end_s": None,
+        "etw_capture_target_duration_s": None,
         "timestamp_adjustment_seconds": None,
         "timestamp_alignment_method": "unresolved",
         "timestamp_alignment_candidates": [],
@@ -184,6 +188,27 @@ def analyze_run(folder: Path) -> dict:
     if start is None or end is None or start >= end:
         result["reason"] = "Missing reliable Godot measurement time-window"
         return result
+    capture_s = number(status.get("capture_requested_duration_s"))
+    capture_delay_s = number(status.get("capture_start_delay_s"))
+    sample_is_partial = capture_s is not None and capture_s > 0
+    target_start, target_end = start, end
+    if sample_is_partial:
+        if capture_delay_s is None or capture_delay_s <= 0:
+            result["reason"] = "ETW slice lacks validated deferred-start configuration"
+            return result
+        sample_start = number(status.get("capture_started_epoch_s"))
+        sample_end = number(status.get("capture_window_end_epoch_s"))
+        if (sample_start is None or sample_end is None or sample_end <= sample_start
+                or sample_start < start or sample_end > end + 2.0
+                or sample_end - sample_start < capture_s * .9):
+            result["reason"] = "ETW sample missing, outside measured motion, or too short"
+            return result
+        target_start = max(start, sample_start)
+        target_end = min(end, sample_end)
+        result["etw_scope"] = "sampled_subwindow_only"
+    result["etw_capture_window_begin_s"] = target_start
+    result["etw_capture_window_end_s"] = target_end
+    result["etw_capture_target_duration_s"] = round(target_end - target_start, 3)
     # First pass: determine the possible clock interpretation from capture bounds.
     raw_min = raw_max = None
     with open_presentmon_csv(folder) as f:
@@ -204,7 +229,7 @@ def analyze_run(folder: Path) -> dict:
     if raw_min is None or raw_max is None:
         result["reason"] = "PresentMon date-time values could not be parsed"
         return result
-    clock = choose_clock_alignment(raw_min, raw_max, start, end)
+    clock = choose_clock_alignment(raw_min, raw_max, target_start, target_end)
     result["timestamp_alignment_candidates"] = clock["candidates"]
     result["timestamp_alignment_method"] = clock["method"]
     result["timestamp_adjustment_seconds"] = clock["offset_s"]
@@ -224,7 +249,7 @@ def analyze_run(folder: Path) -> dict:
             if stamp is None:
                 continue
             stamp += offset_s
-            if stamp < start or stamp > end:
+            if stamp < target_start or stamp > target_end:
                 continue
             result["presentmon_rows_in_window"] += 1
             if first is None: first = stamp
@@ -251,16 +276,21 @@ def analyze_run(folder: Path) -> dict:
     # per swap chain; do not conflate CPU frame intervals with screen updates.
     result["display_change_p99_ms"] = percentile(displayed_gaps_ms, .99)
     result["present_interval_p99_ms"] = percentile(displayed_gaps_ms, .99)
-    result["gpu_work_p99_ms"] = percentile(samples["GPUTime"], .99)
+    result["gpu_work_p99_ms"] = (percentile(samples["GPUTime"], .99)
+                                 if status.get("gpu_tracking_requested") is not False else None)
     result["cpu_frame_time_p99_ms"] = percentile(samples["FrameTime"], .99)
     result["displayed_time_p99_ms"] = percentile(samples["DisplayedTime"], .99)
     if (result["presentmon_displayed_rows"] < 100 or len(displayed_gaps_ms) < 30
-            or result["window_coverage_s"] < .85 * (end-start)):
+            or result["window_coverage_s"] < .85 * (target_end-target_start)):
         result["presentation_status"] = "ETW_INCOMPLETE"
         result["reason"] = "Insufficient displayed frames or under 85% timestamp coverage"
         return result
-    result["presentation_status"] = "ETW_ALIGNED"
-    result["reason"] = "Per-process ETW presentation metrics aligned to Godot Unix epoch; clock adjustment recorded"
+    result["presentation_status"] = "ETW_PARTIAL_ALIGNED" if sample_is_partial else "ETW_ALIGNED"
+    result["reason"] = (
+        "Bounded ETW subwindow aligned; NOT full-route or strict A7 qualification"
+        if sample_is_partial else
+        "Per-process ETW presentation metrics aligned to Godot Unix epoch; clock adjustment recorded"
+    )
     return result
 
 def summarize(campaign: Path):
@@ -284,11 +314,13 @@ def summarize(campaign: Path):
         "presentmon_version":manifest["presentmon_version"],
         "route_count":len(results),
         "etw_aligned_count":sum(1 for r in results if r["presentation_status"]=="ETW_ALIGNED"),
+        "etw_partial_aligned_count":sum(1 for r in results if r["presentation_status"]=="ETW_PARTIAL_ALIGNED"),
         "strict_acceptance":"NOT_QUALIFIED",
         "warnings":[
             "PresentMon ETW measures software-to-display timing, not camera pixel coverage, HID-to-photon, or actual panel photons.",
             "Results have the same external ETW and process telemetry for both VSync arms.",
             "This is a single-seed diagnostic; do not promote performance settings automatically.",
+            "ETW_PARTIAL_ALIGNED is a sample, not 85% coverage of the full route; it never qualifies A7.",
         ],
         "runs":results,
     }
