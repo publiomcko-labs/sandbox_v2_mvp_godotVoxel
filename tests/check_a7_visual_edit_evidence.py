@@ -156,4 +156,35 @@ with tempfile.TemporaryDirectory() as tmp:
     write_json(folder/"a7_presentmon_status.json", status)
     assert not module.parse_edit_presentmon(folder, brush)["available"]
 
+# A screenshot-free capture arm must not be blamed for GPU readback
+# stalls in the canonical A7 reporting/acceptance matrix.
+_report_spec = importlib.util.spec_from_file_location("a7_report", root / "scripts/a7_report.py")
+_report = importlib.util.module_from_spec(_report_spec)
+assert _report_spec.loader is not None
+_report_spec.loader.exec_module(_report)
+with tempfile.TemporaryDirectory() as tmp:
+    folder=Path(tmp)
+    write_json(folder/"manifest.json", {
+        "schema":"a7_campaign_v1","scenarios":["shoreline_180s"],
+        "seeds":[20261119],"repeats":1
+    })
+    trace_path=folder/"a7_route.json"
+    report={
+        "schema":"a7_route_v1","route":"shoreline_180s",
+        "seed":20261119,"ci_smoke":False,"capture":True,
+        "screenshots":0,"frame_start_p99_ms":16.7,
+        "frame_start_max_ms":16.7,"min_radial_probe_hits_8":8,
+    }
+    write_json(trace_path, report)
+    analyzed=_report.analyze(folder)
+    assert analyzed["route_results"]["shoreline_180s"]["screen_capture_overhead"] is False
+    assert analyzed["route_results"]["shoreline_180s"]["evidence_capture_mode"] is True
+    assert any("without in-engine PNG readback" in w for w in analyzed["warnings"])
+    assert not any("PNG readback introduces" in w for w in analyzed["warnings"])
+    report["screenshots"]=31
+    write_json(trace_path,report)
+    analyzed=_report.analyze(folder)
+    assert analyzed["route_results"]["shoreline_180s"]["screen_capture_overhead"] is True
+    assert any("PNG readback introduces" in w for w in analyzed["warnings"])
+
 print("A7_VISUAL_EDIT_EVIDENCE_FAIL_CLOSED_CONTRACT_PASS")
