@@ -12,6 +12,8 @@ param(
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
+    [ValidateRange(0,300)] [double] $ScreenshotIntervalSeconds = 30.0,
+    [switch] $EditNoStills,
     [switch] $CiSmoke,
     [switch] $VsyncOff,
     [ValidateRange(0,48)] [int] $VoxelThreads = 0,
@@ -46,6 +48,9 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
 }
 if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
+}
+if ($EditNoStills -and (-not $Capture -or $Scenario -notin @('edit_idle_100','edit_moving_100','boundary_edit_100'))) {
+    throw 'A7_EDIT_NO_STILLS_REQUIRES_EVIDENCE_CAPTURE'
 }
 if ($Capture -and $Full) {
     throw 'A7 refuses screenshot overhead inside comparable full performance campaign; use a separate -Capture evidence run'
@@ -104,6 +109,8 @@ $manifest = [ordered]@{
     git_sha=$head; baseline_checkpoint='0c3fee959576d0a1faec9ceecffb4b132a65558b'
     baseline='A5 CPU16 GL Compatibility'; full=[bool]$Full
     ci_smoke=[bool]$CiSmoke; capture=[bool]$Capture
+    screenshot_interval_s=$ScreenshotIntervalSeconds
+    edit_no_stills=[bool]$EditNoStills
     resource_diagnostic=[bool]($VsyncOff -or $VoxelThreads -ne 0 -or $ResourceTelemetry)
     vsync_off_requested=[bool]$VsyncOff
     voxel_threads_requested=$VoxelThreads
@@ -174,6 +181,8 @@ foreach ($name in $scenarios) {
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
+            if ($isEdit -and $EditNoStills) { $argsList += '--no-stills' }
+            if (-not $isEdit -and $Capture) { $argsList += "--screenshot-interval-s=$ScreenshotIntervalSeconds" }
             if ($CiSmoke) { $argsList += '--ci-smoke' }
             if (-not $isEdit) {
                 if ($VsyncOff) { $argsList += '--vsync-off' }
