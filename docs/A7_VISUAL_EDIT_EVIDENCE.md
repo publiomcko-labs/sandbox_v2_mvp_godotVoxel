@@ -9,10 +9,10 @@ Nenhum gate `PERF-60`, `STREAM-18`, `VIEW-130` ou `EDIT-100`
 
 - **Runner CPU/genérico DESKTOP-T0U6S55**: testes estáticos, unitários,
   contratos Python/PowerShell, bootstrap e testes Godot **headless**. O
-  `a0-windows.yml` desta branch exige a etiqueta `a7-cpu`. Se ela ainda não
+  `a0-windows.yml` desta branch exige a etiqueta `cpu-only`. Se ela ainda não
   existir, adicionar **somente nesse runner** pelo GitHub:
   organização `publiomcko-labs` → **Settings** → **Actions** → **Runners**
-  → selecionar `DESKTOP-T0U6S55` → **Labels** → **New label** → `a7-cpu`.
+  → selecionar `DESKTOP-T0U6S55` → **Labels** → **New label** → `cpu-only`.
   Sem o rótulo o job permanece na fila; **não** será transferido
   automaticamente para a GTX 1050 Ti.
 - **GPU GTX 1050 Ti DESKTOP-SAFGO15**: necessária apenas para coleta visual
