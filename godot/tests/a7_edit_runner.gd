@@ -56,6 +56,9 @@ func _run() -> void:
     var warmup := float(_arg("warmup","45"))
     var ci := _flag("ci-smoke")
     var evidence := _flag("capture")
+    # Keep the per-edit color marker and timestamps in external-video mode,
+    # but avoid synchronously pulling GPU pixels into Godot and saving PNGs.
+    var evidence_stills := evidence and not _flag("no-stills")
     if not ["edit_idle_100","edit_moving_100","boundary_edit_100"].has(scenario):
         _fail("invalid edit scenario")
         return
@@ -133,6 +136,7 @@ func _run() -> void:
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
         "input":"scripted brush invocation; no raw OS HID timestamp",
         "visual_evidence_marker":evidence,
+        "in_engine_stills_enabled":evidence_stills,
         "timestamp_clock":"Godot Time.get_unix_time_from_system() UTC epoch and monotonic Time.get_ticks_usec()",
         "marker_gate":"ALIGNMENT_CUE_ONLY",
         "pixel_gate":"NOT_QUALIFIED"
@@ -176,7 +180,7 @@ func _run() -> void:
             rejected+=1
             trace.store_line(JSON.stringify(row))
             continue
-        var do_capture:=evidence and (i==0 or i==1 or i==count-1)
+        var do_capture:=evidence_stills and (i==0 or i==1 or i==count-1)
         if evidence:
             # Diagnostic arm only: aim at every attempted edit so its actual
             # terrain pixels can be reviewed in the full-frame desktop video.
@@ -294,8 +298,9 @@ func _run() -> void:
         "edit_100_gate":"NOT_QUALIFIED",
         "collider_response_gate":"NOT_QUALIFIED",
         "evidence_mode":evidence,
-        "video_marker_only":evidence,
-        "note":"EVIDENCE ONLY: scripted edits are not HID; marker and frame_post_draw are not correct presented pixels; screenshot readback changes timing; desktop video with per-pixel verification and ETW required for EDIT-100"
+        "in_engine_stills_enabled":evidence_stills,
+        "video_marker_only":evidence and not evidence_stills,
+        "note":"EVIDENCE ONLY: scripted edits are not HID; marker and frame_post_draw are not correct presented pixels. External desktop video with ROI/pixel verification and ETW required for EDIT-100. Optional in-engine screenshot mode changes timing."
     }
     var file:=FileAccess.open(folder.path_join("a7_edits.json"),FileAccess.WRITE)
     if file==null:
