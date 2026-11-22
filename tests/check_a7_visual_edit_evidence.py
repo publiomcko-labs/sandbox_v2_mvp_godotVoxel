@@ -28,6 +28,10 @@ assert "first_correct_presented_pixel_ms" in edit
 assert "video_marker_meaning" in edit and "NOT correct terrain presentation" in edit
 assert "A7_EVIDENCE_REQUIRES_INTERACTIVE_DESKTOP" in recorder
 assert "gdigrab" in recorder and "-framerate 60" in recorder
+assert "$screen.Width -lt 1920" in recorder and "$screen.Height -lt 1080" in recorder
+assert "desktop_mode_changed = $false" in recorder
+assert "video_capture_region_xywh = @(0,0,1920,1080)" in recorder
+assert "A7_EVIDENCE_WINDOW_CROP=1920x1080" in recorder
 assert "video_actual_fps_verified = $false" in recorder
 assert "terrain_pixels_correct_verified = $false" in recorder
 assert "strict_gates = 'NOT_QUALIFIED'" in recorder
