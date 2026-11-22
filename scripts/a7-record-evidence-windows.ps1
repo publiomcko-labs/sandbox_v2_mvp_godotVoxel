@@ -30,10 +30,11 @@ if ([System.Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
 }
 Add-Type -AssemblyName System.Windows.Forms
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-if ($screen.Width -ne 1920 -or $screen.Height -ne 1080 -or
+if ($screen.Width -lt 1920 -or $screen.Height -lt 1080 -or
     $screen.X -ne 0 -or $screen.Y -ne 0) {
-    throw "A7_EVIDENCE_REQUIRES_PRIMARY_1920X1080_AT_ORIGIN current=$($screen.X),$($screen.Y),$($screen.Width)x$($screen.Height)"
+    throw "A7_EVIDENCE_REQUIRES_MIN_1920X1080_AT_ORIGIN current=$($screen.X),$($screen.Y),$($screen.Width)x$($screen.Height)"
 }
+Write-Host "A7_EVIDENCE_WINDOW_CROP=1920x1080 monitor=$($screen.Width)x$($screen.Height) desktop_resolution_unchanged=True"
 
 $ff = $null
 $ffhash = $null
@@ -82,8 +83,10 @@ $previous = $env:A7_CAMPAIGN_DIR
 $manifestPath = Join-Path $campaign 'visual_evidence_manifest.json'
 try {
     if (-not $SkipVideo) {
-        # gdigrab captures the entire physical PRIMARY display at 60fps.
-        # A7 evidence-only Godot windows are borderless 1920x1080 at (0,0).
+        # gdigrab captures only the 1920x1080 top-left part of the primary
+        # display; Windows monitor mode and resolution remain untouched.
+        # Godot's evidence-only window is borderless at (0,0). Other windows
+        # must not obscure it, or the resulting video cannot qualify pixels.
         # This is a distinct, instrumented capture arm, NEVER a PERF-60 arm.
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $ff
@@ -187,7 +190,9 @@ try {
         game_invocation_end_epoch_s = $end
         video_path = $(if ($SkipVideo) { $null } else { $video })
         video_fps_requested = $(if ($SkipVideo) { 0 } else { 60 })
-        desktop_primary_px = '1920x1080'
+        desktop_primary_px = "$($screen.Width)x$($screen.Height)"
+        video_capture_region_xywh = @(0,0,1920,1080)
+        desktop_mode_changed = $false
         desktop_offset_xy = @($screen.X,$screen.Y)
         recorder_sha256 = $ffhash
         presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
