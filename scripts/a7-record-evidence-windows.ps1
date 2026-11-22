@@ -11,7 +11,8 @@ param(
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
     [string] $PresentMonExe = '',
-    [switch] $SkipVideo
+    [switch] $SkipVideo,
+    [switch] $NoStills
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -21,6 +22,9 @@ $etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
+if ($NoStills -and -not $SkipVideo) {
+    throw 'A7_EVIDENCE_NO_STILLS_ONLY_WITH_SKIP_VIDEO: external video mode already disables Godot readbacks'
+}
 if (($Mode -eq 'Route' -and $routes -notcontains $Scenario) -or
     ($Mode -eq 'Edit' -and $edits -notcontains $Scenario)) {
     throw 'A7_EVIDENCE_MODE_SCENARIO_MISMATCH'
@@ -118,7 +122,19 @@ try {
         Warmup = $Warmup
         Capture = $true
     }
-    if ($Mode -eq 'Route') { $params.Duration = $Duration }
+    if ($Mode -eq 'Route') {
+        $params.Duration = $Duration
+        # External video: ZERO in-engine GPU readbacks (no stutter induced by
+        # get_viewport().get_texture().get_image()).
+        # Without a video recorder, sample sparingly for static review only.
+        $params.ScreenshotIntervalSeconds = if ($SkipVideo -and -not $NoStills) { 15.0 } else { 0.0 }
+        Write-Host "A7_EVIDENCE_ROUTE_STILLS interval_s=$($params.ScreenshotIntervalSeconds)"
+    } else {
+        # All marker/timestamp observations remain; avoid inline PNG readback
+        # when capturing the desktop externally, or when --NoStills requested.
+        $params.EditNoStills = (-not $SkipVideo) -or [bool]$NoStills
+        Write-Host "A7_EVIDENCE_EDIT_STILLS enabled=$(-not $params.EditNoStills)"
+    }
     if ($presentMonPath) {
         # Distinct evidence-only arm: readback/video costs invalidate PERF-60.
         $params.PresentMonExe = $presentMonPath
@@ -174,8 +190,9 @@ try {
         }
     }
     $videoBytes = if (Test-Path -LiteralPath $video) { (Get-Item -LiteralPath $video).Length } else { 0 }
-    $videoValid = $SkipVideo -or ($videoBytes -gt 1000000 -and
+    $videoValid = (-not $SkipVideo) -and ($videoBytes -gt 1000000 -and
         $recordingExitCode -eq 0 -and -not $recordingError)
+    $captureValid = $SkipVideo -or $videoValid
     $manifest = [ordered]@{
         schema = 'a7_visual_evidence_manifest_v1'
         mode = $Mode
@@ -204,6 +221,9 @@ try {
         video_exit_code = $recordingExitCode
         video_error = $recordingError
         video_capture_valid_container = [bool]$videoValid
+        capture_mode_valid = [bool]$captureValid
+        in_engine_stills_requested = (-not $NoStills) -and [bool]$SkipVideo
+        in_engine_screenshot_interval_s = $(if ($Mode -eq 'Route' -and $SkipVideo -and -not $NoStills) { 15.0 } else { 0.0 })
         game_run_succeeded = [bool]$childSucceeded
         instrumentation_overhead = 'external recorder and screenshots; NOT comparable PERF-60 measurement'
         video_actual_fps_verified = $false
@@ -227,5 +247,8 @@ if ($presentMonPath -and -not $etwCaptureValid) {
     throw "A7_EVIDENCE_ETW_CAPTURE_FAILED $etwCaptureError"
 }
 if (-not $childSucceeded) { throw 'A7_EVIDENCE_GAME_RUN_FAILED' }
-if (-not $videoValid) { throw "A7_EVIDENCE_VIDEO_MISSING_OR_INVALID exit=$recordingExitCode bytes=$videoBytes error=$recordingError" }
+if (-not $captureValid) { throw "A7_EVIDENCE_VIDEO_MISSING_OR_INVALID exit=$recordingExitCode bytes=$videoBytes error=$recordingError" }
+if ($SkipVideo) {
+    Write-Warning 'A7_NO_VIDEO: still-image evidence cannot prove continuous STREAM-18 or EDIT-100 presentation'
+}
 Write-Host "A7_EVIDENCE_RECORDED mode=$Mode scenario=$Scenario video_requested=$(-not [bool]$SkipVideo) strict=NOT_QUALIFIED"
