@@ -22,10 +22,12 @@ Nenhum gate `PERF-60`, `STREAM-18`, `VIEW-130` ou `EDIT-100`
 
 ## A7.1 — fluxo visual
 
-`godot/tests/a7_route_runtime.gd` em `--capture` grava um PNG
-1080p por segundo com posição do jogador, câmera, timestamp Unix,
-ticks monotônicos e resultado das 8 sondas a 130m. O executável é colocado
-em janela borderless na posição (0,0), somente na campanha de evidência.
+`godot/tests/a7_route_runtime.gd` em `--capture` admite PNG
+1080p com intervalo configurável (padrão 30s), posição do jogador, câmera,
+timestamp Unix, ticks monotônicos e resultado das 8 sondas a 130m.
+**Quando há vídeo externo, o intervalo é 0 e nenhum PNG é lido dentro do Godot.**
+O executável fica em janela borderless na posição (0,0), somente na
+campanha de evidência.
 
 `scripts/a7-record-evidence-windows.ps1` inicia FFmpeg com `gdigrab`
 para tentar capturar continuamente o monitor principal a 60fps, antes de
@@ -62,16 +64,25 @@ Depois, caso esteja instalado, usar o caminho real retornado no argumento
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Route -Scenario shoreline_180s -Duration 30 -Warmup 20 -FfmpegExe "CAMINHO_REAL_DO_FFMPEG_EXE"
 ```
 
-Para validar o script sem FFmpeg, `-SkipVideo` salva apenas os PNGs, os
-eventos e o manifesto; a ausência do vídeo **não** qualifica STREAM-18.
+Para validar sem FFmpeg, `-SkipVideo` salva apenas PNGs espaçados **15s**
+(aproximadamente 3 para rota de 30s), eventos e manifesto. Esses PNGs ainda
+geram pausas pontuais, pois `get_viewport().get_texture().get_image()` é
+readback síncrono. Para rodar **sem nenhum readback**, use `-SkipVideo
+-NoStills`: gera telemetria, mas **não gera prova visual**. A ausência do
+vídeo **não** qualifica STREAM-18. O campo de manifesto
+`video_capture_valid_container` é `false` quando vídeo é ignorado,
+mesmo que o experimento de telemetria tenha sucesso.
 
 ## A7.2 — edição visual e timestamp de apresentação
 
 `godot/tests/a7_edit_runner.gd` registra, por tentativa, a posição
 da edição projetada na tela, entrada na função `edit_sphere` em tempo Unix
 e ticks monotônicos, retorno da função, mudança SDF e sincronizador visual
-de cor sobre a imagem. Em três índices representativos registra PNG antes
-e após os frames 1, 4 e 8. O marcador **não** comprova alteração do terreno.
+de cor sobre a imagem. Em modo de imagem estática (`-SkipVideo`, sem `-NoStills`),
+em três índices representativos registra PNG antes e após os
+frames 1, 4 e 8. Em modo de vídeo externo, usa **somente os marcadores
+visuais e timestamps**, sem PNG interno ou readback. O marcador
+**não** comprova alteração do terreno.
 
 O modo `-Mode Edit` permite, opcionalmente, passar `-PresentMonExe`
 para capturar ETW sobre a **mesma execução** que o vídeo e as edições;
@@ -116,3 +127,21 @@ do brush; quando houver dúvida, manter `NOT_QUALIFIED`.
 correlação comprovada frame de vídeo → frame ETW e julgamento automático
 de pixels alterados. Esta implementação entrega captura e correlação
 temporal auxiliar, não uma aprovação prematura de A7.
+
+## Investigação de travadas no primeiro diagnóstico A7.1
+
+ZIP local `evidence-20261122-204616-5884.zip` (22 Nov 2026):
+- `capture=true`, `-SkipVideo`, 30 s de movimento, 31 imagens 1920x1080
+- 31 intervalos de frame maiores que 33 ms (mesmo número dos screenshots)
+- `frame_start_p99_ms=214.001`, `frame_start_max_ms=309.902`
+- `frame_count=1449`, `min_radial_probe_hits_8=8`
+- zero vídeo gravado: `video_fps_requested=0`, `video_path=null`
+
+A correlação 31 screenshots / 31 pausas não prova causalidade frame a frame
+porque o trace não preservou timestamps individuais de todos os frames,
+mas é forte evidência de custo do `get_image()`/PNG síncrono.
+**Não classificar essas pausas como regressão da baseline A5.**
+Correção: gravador externo não executa `get_image()`; `-SkipVideo`
+reduz amostragem a 15 s, com opção `-NoStills` para zero readbacks.
+
+Mantenha vídeo, PNG, ETW e desempenho estrito em braços separados.
