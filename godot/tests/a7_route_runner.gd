@@ -28,11 +28,15 @@ func _start() -> void:
     var seed := int(_arg("seed","20261119"))
     var ci := _flag("ci-smoke")
     var capture := _flag("capture")
+    var screenshot_interval := float(_arg("screenshot-interval-s","30.0"))
     var vsync_off := _flag("vsync-off")
     var voxel_threads_requested := int(_arg("voxel-threads","0"))
     var headless := DisplayServer.get_name()=="headless"
     if voxel_threads_requested<0 or voxel_threads_requested>48 or (ci and (vsync_off or voxel_threads_requested>0)):
         _fail("resource diagnostic flags invalid or not allowed in headless smoke")
+        return
+    if not is_finite(screenshot_interval) or screenshot_interval < 0.0 or screenshot_interval > 300.0:
+        _fail("invalid screenshot interval")
         return
     if normal<1.0 or duration<=0.0 or duration>normal or warmup<0.0 or warmup>180.0:
         _fail("unknown route or invalid duration/warmup")
@@ -77,6 +81,7 @@ func _start() -> void:
     runner.seed_value=seed
     runner.ci_smoke=ci
     runner.capture=capture
+    runner.screenshot_interval_s=screenshot_interval
     runner.vsync_off_requested=vsync_off
     runner.voxel_threads_requested=voxel_threads_requested
     world.add_child(runner)
