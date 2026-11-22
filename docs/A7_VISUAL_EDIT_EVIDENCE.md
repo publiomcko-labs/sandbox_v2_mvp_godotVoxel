@@ -31,7 +31,7 @@ em janela borderless na posição (0,0), somente na campanha de evidência.
 para tentar capturar continuamente o monitor principal a 60fps, antes de
 chamar o mesmo script de rotas. Grava manifestos incluindo versões, horários,
 tamanho do vídeo e advertências. O teste recusa ambientes sem desktop
-interativo e sem monitor principal **1920×1080 na origem (0,0)**.
+interativo ou com monitor principal inferior a **1920×1080**. O monitor principal deve começar na origem **(0,0)**. A resolução atual do Windows é preservada: com telas maiores, a gravação captura somente a área superior esquerda de **1920×1080**, ocupada pela janela borderless do Godot. Não cubra a janela com outros aplicativos; o vídeo do desktop gravaria a sobreposição.
 
 **Importante:** capturar e codificar vídeo e ler PNGs da GPU custa tempo
 adicional. É um braço **somente de evidência visual**, separado dos números
