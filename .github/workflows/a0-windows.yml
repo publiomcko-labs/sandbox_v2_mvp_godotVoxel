@@ -19,7 +19,7 @@ jobs:
     # be placed on DESKTOP-T0U6S55, never on DESKTOP-SAFGO15 (GTX 1050 Ti).
     # Until that label exists this job remains queued rather than occupying
     # the GPU baseline runner that other projects need.
-    runs-on: [self-hosted, Windows, X64, a7-cpu]
+    runs-on: [self-hosted, Windows, X64, cpu-only]
     # Process-scoped policy; no persistent changes to the Windows runner.
     env:
       PSExecutionPolicyPreference: Bypass
