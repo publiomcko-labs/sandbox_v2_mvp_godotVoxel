@@ -8,6 +8,9 @@ var warmup_s := 45.0
 var seed_value := 20261119
 var ci_smoke := false
 var capture := false
+# Zero means no in-engine GPU readback; use external desktop recorder.
+# The old 1Hz PNG readback induced large stalls on GTX 1050 Ti.
+var screenshot_interval_s := 30.0
 var vsync_off_requested := false
 var voxel_threads_requested := 0
 
@@ -70,7 +73,8 @@ func _ready() -> void:
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
         "viewport_px":str(get_viewport().get_visible_rect().size),
         "fov_degrees":_camera_initial_fov, "headless":DisplayServer.get_name()=="headless",
-        "capture":capture, "ci_smoke":ci_smoke,
+        "capture":capture, "screenshot_interval_s":screenshot_interval_s,
+        "ci_smoke":ci_smoke,
         "vsync_off_requested":vsync_off_requested,
         "vsync_mode_actual":int(DisplayServer.window_get_vsync_mode()) if DisplayServer.get_name()!="headless" else -1,
         "engine_max_fps":Engine.max_fps,
@@ -208,12 +212,12 @@ func _process(_delta: float) -> void:
     if t>=_next_sample_s:
         _sample("moving",t)
         _next_sample_s+=1.0
-    if capture and not ci_smoke and t>=_next_screenshot_s:
+    if capture and screenshot_interval_s>0.0 and not ci_smoke and t>=_next_screenshot_s:
+        # Diagnostic-only, opt-in readback. An external 60fps recorder is the
+        # default for continuous evidence because get_image() blocks rendering.
+        # Never use sampled PNG intervals as a PERF-60 measurement.
         _capture(t)
-        # One 1080p still per second for review. A separate external desktop
-        # recorder is responsible for continuous video and present-side gaps.
-        # Screenshots are NEVER collected in the comparable PERF-60 run.
-        _next_screenshot_s+=1.0
+        _next_screenshot_s+=screenshot_interval_s
     if t>=duration_s:
         _finish()
 
@@ -230,6 +234,7 @@ func _finish() -> void:
         "schema":"a7_route_v1","route":route,"seed":seed_value,
         "duration_s":duration_s,"warmup_s":warmup_s,
         "ci_smoke":ci_smoke, "capture":capture,
+        "screenshot_interval_s":screenshot_interval_s,
         "vsync_off_requested":vsync_off_requested,
         "vsync_mode_actual":int(DisplayServer.window_get_vsync_mode()) if DisplayServer.get_name()!="headless" else -1,
         "engine_max_fps":Engine.max_fps,
