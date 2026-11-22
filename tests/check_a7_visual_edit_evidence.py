@@ -19,13 +19,20 @@ route = (root / "godot/tests/a7_route_runtime.gd").read_text(encoding="utf-8")
 edit = (root / "godot/tests/a7_edit_runner.gd").read_text(encoding="utf-8")
 recorder = (root / "scripts/a7-record-evidence-windows.ps1").read_text(encoding="utf-8")
 assert "capture_epoch_s" in route and "capture_ticks_us" in route
-assert "_next_screenshot_s+=1.0" in route
+assert "_next_screenshot_s+=screenshot_interval_s" in route
+assert "screenshot_interval_s>0.0" in route
+assert "var screenshot_interval_s := 30.0" in route
+route_runner = (root / "godot/tests/a7_route_runner.gd").read_text(encoding="utf-8")
+assert 'screenshot-interval-s' in route_runner
+assert "runner.screenshot_interval_s=screenshot_interval" in route_runner
 assert "pixel_depth_verified" in route and "view_130_geometric_probe_hits" in route
 assert "brush_call_epoch_s" in edit and "brush_call_ticks_us" in edit
 assert "brush_return_epoch_s" in edit and "brush_return_ticks_us" in edit
 assert "target_screen_xy_px" in edit and "target_behind_camera" in edit
 assert "first_correct_presented_pixel_ms" in edit
 assert "video_marker_meaning" in edit and "NOT correct terrain presentation" in edit
+assert 'var evidence_stills := evidence and not _flag("no-stills")' in edit
+assert "var do_capture:=evidence_stills" in edit
 assert "A7_EVIDENCE_REQUIRES_INTERACTIVE_DESKTOP" in recorder
 assert "gdigrab" in recorder and "-framerate 60" in recorder
 assert "$screen.Width -lt 1920" in recorder and "$screen.Height -lt 1080" in recorder
@@ -36,11 +43,20 @@ assert "video_actual_fps_verified = $false" in recorder
 assert "terrain_pixels_correct_verified = $false" in recorder
 assert "strict_gates = 'NOT_QUALIFIED'" in recorder
 assert "Capture = $true" in recorder
+assert "$params.ScreenshotIntervalSeconds = if ($SkipVideo -and -not $NoStills) { 15.0 } else { 0.0 }" in recorder
+assert "$params.EditNoStills = (-not $SkipVideo) -or [bool]$NoStills" in recorder
+assert "video_capture_valid_container = [bool]$videoValid" in recorder
+assert "capture_mode_valid = [bool]$captureValid" in recorder
+assert "$videoValid = (-not $SkipVideo)" in recorder
+assert "A7_NO_VIDEO:" in recorder
 assert "PresentMonExe" in recorder and "EvidenceOnlyPresentMon" in recorder
 assert "-Mode Preflight" in recorder and "-Mode Postflight" in recorder
 runner = (root / "scripts/a7-run-windows.ps1").read_text(encoding="utf-8")
 assert "[switch] $EvidenceOnlyPresentMon" in runner
 assert "A7_EDIT_PRESENTMON_REQUIRES_EXPLICIT_CAPTURE_AND_EDIT_SCENARIO" in runner
+assert "ScreenshotIntervalSeconds = 30.0" in runner
+assert "[switch] $EditNoStills" in runner
+assert '--no-stills' in runner
 assert "($Capture -and -not $EvidenceOnlyPresentMon)" in runner
 
 def write_json(path, x):
