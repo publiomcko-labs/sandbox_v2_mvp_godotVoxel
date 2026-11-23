@@ -70,6 +70,79 @@ with tempfile.TemporaryDirectory() as tmp:
     assert res["stream_18_gate"]=="NOT_QUALIFIED"
     assert res["view_130_gate"]=="NOT_QUALIFIED"
     assert res["automatic_acceptance"] is False
+    # A8-P1 opt-in event trace: exactly corroborate the existing >20ms
+    # counters without an instantaneous-worker-causality claim.
+    manifest["a8_spike_trace_requested"] = True
+    report["a8_spike_trace_enabled"] = True
+    report["a8_spike_interval_total"] = 2
+    report["a8_spike_event_count"] = 2
+    report["a8_spike_events_dropped"] = 0
+    report["frame_intervals_over_20_ms"] = 1
+    report["frame_intervals_over_33_ms"] = 0
+    spike_events = [
+        {"frame_index":100,"route_t_s":1.67,"start_interval_ms":18.4,
+         "player_xyz":[30.0,22.0,0.0],"viewport_cpu_ms_observed":1.7,
+         "viewport_gpu_ms_observed":1.0,"queue_last_1hz":0,
+         "active_workers_last_1hz":0,"blocked_lods_last_1hz":0,
+         "queue_sample_age_s":0.67},
+        {"frame_index":203,"route_t_s":3.39,"start_interval_ms":21.4,
+         "player_xyz":[60.0,22.0,0.0],"viewport_cpu_ms_observed":1.9,
+         "viewport_gpu_ms_observed":1.1,"queue_last_1hz":24,
+         "active_workers_last_1hz":9,"blocked_lods_last_1hz":3,
+         "queue_sample_age_s":0.39},
+    ]
+    spike = {
+        "schema":"a8_frame_spikes_v1","route":"straight_18mps_600s",
+        "seed":20261119,"threshold_ms":18.0,
+        "gpu_present_qualified":False,
+        "worker_attribution":"LAST_1HZ_SAMPLE_ONLY_NO_INSTANT_CAUSALITY",
+        "warmup_drawn_frames_observed":1000,"intervals_over_threshold":2,
+        "events_recorded":2,"events_dropped":0,"events":spike_events
+    }
+    spike_path=trial/"a8_frame_spikes.json"
+    write(folder/"manifest.json",manifest)
+    write(trial/"a7_route.json",report)
+    write(spike_path,spike)
+    p1=a8.summarize(folder)
+    assert p1["frame_spike_diagnostics"]["events_18ms_or_more"] == 2
+    assert p1["frame_spike_diagnostics"]["events_over_20ms"] == 1
+    assert p1["frame_spike_diagnostics"]["events_with_recent_1hz_worker_backlog"] == 1
+    assert p1["frame_spike_diagnostics"]["worker_snapshots_are_instantaneous"] is False
+    assert p1["perf_60_gate"] == "NOT_QUALIFIED"
+
+    # Counter/trace mismatch is invalid; never silently discard a slow frame.
+    spike["events"][1]["start_interval_ms"]=19.4
+    write(spike_path,spike)
+    try:
+        a8.summarize(folder)
+        raise AssertionError("Accepted slow-frame counter mismatch")
+    except ValueError: pass
+    spike["events"][1]["start_interval_ms"]=21.4
+    spike["events_dropped"]=1
+    write(spike_path,spike)
+    try:
+        a8.summarize(folder)
+        raise AssertionError("Accepted overflow in event ring")
+    except ValueError: pass
+    spike["events_dropped"]=0
+    spike["events"][1]["queue_sample_age_s"]=9.9
+    write(spike_path,spike)
+    try:
+        a8.summarize(folder)
+        raise AssertionError("Accepted stale source without marking invalid")
+    except ValueError: pass
+
+    # Restore the baseline fixture for preexisting failure-path tests.
+    spike_path.unlink()
+    manifest.pop("a8_spike_trace_requested")
+    report.pop("a8_spike_trace_enabled")
+    report.pop("a8_spike_interval_total")
+    report.pop("a8_spike_event_count")
+    report.pop("a8_spike_events_dropped")
+    report["frame_intervals_over_20_ms"]=4
+    report["frame_intervals_over_33_ms"]=1
+    write(folder/"manifest.json",manifest)
+    write(trial/"a7_route.json",report)
     # No headless evidence masquerading as GPU results.
     manifest["ci_smoke"]=True
     write(folder/"manifest.json",manifest)
@@ -114,4 +187,9 @@ assert "if ($WarmupFrames -gt 0)" in ps
 assert "[int] $WarmupFrames = 1000" in pilot
 assert "-WarmupFrames $WarmupFrames" in pilot
 assert '"automatic_acceptance": False' in (root/"scripts/a8_route_triage.py").read_text(encoding="utf-8")
+assert "A8_SPIKE_TRACE_REQUIRES_1000_FRAMES_NORMAL_VSYNC_ONE_UNCAPTURED_GPU_ROUTE" in ps
+assert "A8_SPIKE_THRESHOLD_MS := 18.0" in gd
+assert "a8_frame_spikes.json" in gd
+assert "a8_spike_trace_enabled" in runner
+assert "[switch] $SpikeTrace" in pilot
 print("A8_FRAME_WARMUP_AND_ROUTE_DIAGNOSTIC_FAIL_CLOSED_PASS")
