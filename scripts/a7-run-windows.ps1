@@ -10,6 +10,7 @@ param(
     [ValidateRange(1,10)] [int] $Repeats = 3,
     [double] $Warmup = 45,
     [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
+    [switch] $A8VisualEvidence,
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
@@ -51,7 +52,12 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
 if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
 }
-if ($WarmupFrames -gt 0 -and ($Full -or $CiSmoke -or $Capture -or $PresentMonExe -or
+if ($A8VisualEvidence -and (-not $Capture -or $WarmupFrames -ne 1000 -or $Full -or $CiSmoke -or
+    $PresentMonExe -or $VsyncOff -or $VoxelThreads -ne 0 -or $Duration -lt 10 -or $Duration -gt 90 -or
+    $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
+    throw 'A8_VISUAL_EVIDENCE_REQUIRES_SEPARATE_CAPTURE_1000_FRAMES_NORMAL_VSYNC'
+}
+if ($WarmupFrames -gt 0 -and ($Full -or $CiSmoke -or ($Capture -and -not $A8VisualEvidence) -or $PresentMonExe -or
     $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
     throw 'A8_FRAME_WARMUP_RESTRICTED_TO_REAL_GPU_UNRECORDED_SHORT_ROUTE'
 }
@@ -134,7 +140,7 @@ $manifest = [ordered]@{
     requested_view_distance_m=192; visual_radius_target_m=130
     mesh_block_voxels=16; lod_count=4; lod_distance=48
     seeds=@($runSeeds); repeats=$reps; scenarios=@($scenarios)
-    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; duration_override_s=$Duration
+    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; a8_visual_evidence_requested=[bool]$A8VisualEvidence; duration_override_s=$Duration
     windows_version=[Environment]::OSVersion.VersionString
     cpu=$env:PROCESSOR_IDENTIFIER; gpu=@($adapter)
     notes='Main-game A5 is unmodified; CI and frame intervals cannot prove full GPU+present, pixels or EDIT-100.'
@@ -189,6 +195,7 @@ foreach ($name in $scenarios) {
             } else {
                 $argsList += @("--route=$name","--seed=$seed","--warmup=$Warmup")
                 if ($WarmupFrames -gt 0) { $argsList += "--warmup-frames=$WarmupFrames" }
+                if ($A8VisualEvidence) { $argsList += '--a8-visual-evidence' }
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
