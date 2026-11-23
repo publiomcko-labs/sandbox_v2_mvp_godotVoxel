@@ -80,11 +80,10 @@ if (-not $SkipVideo) {
         # remain explicit: never quietly downgrade to lossy 30fps recording.
         $filters = (& $ff -hide_banner -filters | Out-String)
         $encoders = (& $ff -hide_banner -encoders | Out-String)
-        if ($filters -notmatch '(?m)^\\s*[.A-Z|]+\\s+ddagrab\\s' -and
-            $filters -notmatch '\\bddagrab\\b') {
+        if ($filters -notmatch 'ddagrab') {
             throw 'A7_EVIDENCE_DDAGRAB_FILTER_UNAVAILABLE'
         }
-        if ($encoders -notmatch '\\bh264_nvenc\\b') {
+        if ($encoders -notmatch 'h264_nvenc') {
             throw 'A7_EVIDENCE_NVENC_ENCODER_UNAVAILABLE'
         }
     }
