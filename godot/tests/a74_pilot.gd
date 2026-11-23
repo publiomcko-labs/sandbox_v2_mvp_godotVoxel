@@ -42,12 +42,13 @@ func _mark(marker: ColorRect, events: FileAccess, index: int, rgb: String) -> vo
 func _run() -> void:
     var scenario := _arg("scenario", "static_remove")
     var warmup := float(_arg("warmup", "45"))
+    var warmup_frames := int(_arg("warmup-frames", "0"))
     var seed := int(_arg("seed", "20261119"))
     if not ["static_remove", "static_add", "boundary_remove", "boundary_add"].has(scenario):
         _fail("unknown scenario")
         return
-    if warmup < 5.0 or warmup > 180.0:
-        _fail("warmup outside [5,180]")
+    if warmup_frames < 0 or warmup_frames > 10000 or (warmup_frames == 0 and (warmup < 5.0 or warmup > 180.0)):
+        _fail("warmup-frames outside [0,10000] or legacy warmup outside [5,180]")
         return
     if DisplayServer.get_name() == "headless":
         _fail("GPU desktop is mandatory; headless is not visual evidence")
@@ -84,8 +85,9 @@ func _run() -> void:
     var z := 15.0
     player.global_position = Vector3(x, 22.0, z + 12.0)
     var begin := Time.get_ticks_msec()
+    var initial_drawn := Engine.get_frames_drawn()
     var center := Vector3(INF, INF, INF)
-    while Time.get_ticks_msec() - begin < int(warmup * 1000.0):
+    while true:
         await process_frame
         var above := Vector3(x, 55.0, z)
         var hit: VoxelRaycastResult = tool.raycast(above, Vector3.DOWN, 100.0)
@@ -93,6 +95,24 @@ func _run() -> void:
             var candidate := above + Vector3.DOWN * (hit.distance + 0.6)
             if bool(world.call("can_edit_sphere", candidate, RADIUS_M)):
                 center = candidate
+        var elapsed_ms := Time.get_ticks_msec() - begin
+        var rendered := Engine.get_frames_drawn() - initial_drawn
+        if warmup_frames > 0:
+            if rendered >= warmup_frames:
+                break
+            if elapsed_ms > 180000:
+                _fail("warmup draw-frame watchdog exceeded 180s")
+                return
+        elif elapsed_ms >= int(warmup * 1000.0):
+            break
+    var observed_warmup_frames := Engine.get_frames_drawn() - initial_drawn
+    var observed_warmup_ms := Time.get_ticks_msec() - begin
+    if warmup_frames > 0 and observed_warmup_frames < warmup_frames:
+        _fail("rendered-frame warmup below requested count")
+        return
+    print("A74_WARMUP_OK frames=", observed_warmup_frames,
+          " elapsed_ms=", observed_warmup_ms,
+          " mode=", "drawn_frames" if warmup_frames > 0 else "legacy_seconds")
     if not center.is_finite():
         _fail("surface/LOD0 not ready after warmup")
         return
@@ -158,6 +178,31 @@ func _run() -> void:
     marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
     marker.color = Color(0.15, 0.15, 0.15, 1.0)
     world.get_node("HUD").add_child(marker)
+    # The recorder is started only after this pre-edit reference and fixed
+    # camera are ready. This removes ~1000 warmup frames from video/ffprobe
+    # work while preserving >=1s pre-edit video and eight HUD clock markers.
+    var ready_info := {
+        "schema": "a74_capture_ready_v1",
+        "scenario": scenario, "seed": seed,
+        "warmup_mode": "rendered_frames" if warmup_frames > 0 else "legacy_seconds",
+        "warmup_frames_requested": warmup_frames,
+        "warmup_frames_observed": observed_warmup_frames,
+        "warmup_elapsed_ms": observed_warmup_ms,
+        "reference_written": true, "camera_fixed": true
+    }
+    if not _write_json(folder.path_join("a74_ready.json"), ready_info):
+        events.close()
+        _fail("could not publish ready handshake")
+        return
+    var capture_release := folder.path_join("a74_capture_start.flag")
+    var capture_wait_begin := Time.get_ticks_msec()
+    while not FileAccess.file_exists(capture_release):
+        if Time.get_ticks_msec() - capture_wait_begin > 45000:
+            events.close()
+            _fail("recorder start handshake timed out")
+            return
+        await process_frame
+    print("A74_RECORDER_HANDSHAKE_OK frames=", observed_warmup_frames)
     await create_timer(1.0).timeout
     for i in range(4):
         _mark(marker, events, i, "00ff00" if i % 2 == 0 else "ff00ff")
@@ -191,6 +236,10 @@ func _run() -> void:
         "schema": "a74_pilot_result_v1", "scenario": scenario,
         "accepted_count": 1, "native_apply_ms": native_apply_ms,
         "camera_fixed": true, "pre_edit_reference_saved": true,
+        "warmup_mode": "rendered_frames" if warmup_frames > 0 else "legacy_seconds",
+        "warmup_frames_requested": warmup_frames,
+        "warmup_frames_observed": observed_warmup_frames,
+        "warmup_elapsed_ms": observed_warmup_ms,
         "first_correct_presented_pixel_ms": null,
         "edit_100_gate": "NOT_QUALIFIED",
         "note": "Reference fixture only, video/depth/ETW qualification required."
