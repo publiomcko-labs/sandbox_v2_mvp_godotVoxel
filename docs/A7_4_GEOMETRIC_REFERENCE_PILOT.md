@@ -21,7 +21,7 @@ No computador GPU GTX 1050 Ti, manter a sessão desbloqueada e o jogo em primeir
     cd "C:\Dev\sandbox-a7-etw"
     git fetch origin exp/a7-4-independent-pixel-pilot-20261123
     git switch --detach FETCH_HEAD
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-pilot-windows.ps1" -Scenario static_remove -Warmup 45
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-pilot-windows.ps1" -Scenario static_remove -WarmupFrames 1000
 
 O script usa FFmpeg portátil verificado por SHA-256, gera relatórios em reports/generated/a74-pilot/ por cenário e não modifica saves do jogador. Artefatos: world.sqlite, a74_reference.json, a74_events.jsonl, a74_result.json, a74_capture_manifest.json, desktop-1080p-60fps.mkv, a74_pilot_review.json (se análise concluir).
 
@@ -68,16 +68,34 @@ Execução recomendada no Windows GPU, após o CI da branch passar (PowerShell, 
     cd "C:\Dev\sandbox-a7-etw"
     git fetch origin exp/a7-4-independent-pixel-pilot-20261123
     git switch --detach FETCH_HEAD
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Repeats 3 -Warmup 45
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Repeats 3 -WarmupFrames 1000
 
 Para um único cenário que apresentou sinal fraco (3 repetições):
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Scenarios static_add -Repeats 3 -Warmup 45
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Scenarios static_add -Repeats 3 -WarmupFrames 1000
 
 Para ampliar as seeds somente depois da primeira bateria, mantendo três repetições por cenário e por seed:
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -SeedList "20261119,20261120,20261121" -Repeats 3 -Warmup 45
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -SeedList "20261119,20261120,20261121" -Repeats 3 -WarmupFrames 1000
 
 A pasta `reports/generated/a74-batch/batch-<timestamp>-<pid>/` terá `a74_batch_manifest.json`, `a74_batch_report.json`, `a74_batch_trials.csv`, dados completos de cada run, e `a74_batch_summary.zip`. **Envie inicialmente o ZIP resumido.** Ele contém os JSONs e referências geométricas, mas não os vídeos do desktop por privacidade e tamanho. Se algum cenário precisar de verificação quadro a quadro, fornecer somente o vídeo correspondente ou usar `-FullArchive` para criar o ZIP com todos os vídeos. O processo interrompe em erro de aquisição por padrão e produz um resumo parcial reprovado; `-ContinueOnFailure` permite prosseguir com os cenários restantes, preservando as falhas como inválidas. Não alterar o relatório histórico.
 
 **Limitações estatísticas:** três repetições servem como triagem de consistência, não como prova de distribuição de cauda; p95 calculado com n=3 tende a coincidir com o máximo. A medição não é HID-to-photon, e as capturas NVENC não são a carga canônica PERF-60. `EDIT-100`, `PERF-60`, `STREAM-18` e `VIEW-130` permanecem `NOT_QUALIFIED`.
+
+## A7.4-P1d — warmup por frames e recuperação da bateria anterior
+
+**Evidência real** `a74_batch_summary.zip` de 23/11/2026, lote `batch-20261123-163513-36464`: **12/12 execuções gráficas terminaram com 1 edição aceita por sessão**. Quatro capturas (`static_remove` repetições 2–3 e `boundary_remove` repetições 1 e 3) têm `TIMING_AMBIGUOUS` na janela local do PTS; não são falhas de edição, gravação ou aplicação nativa. O agregador P1c descartava essas quatro execuções inteiras, provocando `collection_complete=false` e exit code 2 após mais de 12 capturas. **Corrigido:** manter todos os tempos nativos de aquisições com manifesto válido, mas não atribuir latência de vídeo aos quatro registros ambíguos. As contagens separadas são `video_timing_ambiguous_runs`, `visual_signal_without_usable_timing` e `video_candidate_ms` somente para casos cronometráveis.
+
+Reprocessar **sem repetir nenhum teste** (CPU-only):
+
+    python .\scripts\a74-reprocess-summary.py "C:\Dev\sandbox-a7-etw\reports\generated\a74-batch\batch-20261123-163513-36464\a74_batch_summary.zip"
+
+A saída `a74_batch_summary-reprocessed.zip` preserva o ZIP original e contém a revisão do CSV e do JSON, com o relatório anterior arquivado como `a74_batch_report_original.json`. Requer apenas Python stdlib, sem FFmpeg ou Godot.
+
+**Redução de duração da próxima bateria:** o comando `scripts/a74-batch-windows.ps1` passou a usar `-WarmupFrames 1000` por padrão. O Godot aguarda **1.000 frames realmente desenhados** (`Engine.get_frames_drawn()`), com exigência de LOD0 editável e watchdog. Quando o referencial SDF pré-edição e a câmera estão prontos, escreve `a74_ready.json` e aguarda o Windows iniciar a gravação NVENC externa. Só então inicia os oito marcadores e a edição. Vídeo não inclui o aquecimento e reduz duração, tamanho e esforço do ffprobe/análise; o relatório inclui `warmup_frames_requested`, `warmup_frames_observed` e `warmup_elapsed_ms`. Se o warmup não completar ou o handshake falhar, o piloto falha explicitamente. A captura gráfica continua sem qualificar os quatro gates.
+
+Comando atualizado para **todos os quatro cenários e três repetições**, se nova evidência for indispensável:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Repeats 3 -WarmupFrames 1000
+
+**Não é necessário executar os 12 casos novamente apenas para corrigir a consolidação.** O primeiro próximo experimento útil deverá focalizar a baixa sensibilidade das operações `static_add`/`boundary_add`, somente após avaliar os resumos e decidir um critério visual independente de direção.
