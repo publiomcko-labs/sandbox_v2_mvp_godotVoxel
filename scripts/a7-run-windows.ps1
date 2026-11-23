@@ -258,10 +258,13 @@ public static class A7NativeFocus {
                     verified=$true
                     note='Foreground PID verified at startup only. Occlusion later still requires independent video review.'
                 }
-                $foregroundStatus | Add-Member -NotePropertyName 'continuity_verified' -NotePropertyValue $false
-                $foregroundStatus | Add-Member -NotePropertyName 'continuous_check_interval_ms' -NotePropertyValue 200
-                $foregroundStatus | Add-Member -NotePropertyName 'checks' -NotePropertyValue 0
-                $foregroundStatus | Add-Member -NotePropertyName 'foreground_loss_detected' -NotePropertyValue $false
+                # This is an OrderedDictionary. Use real entries (not
+                # PowerShell extended properties) so ConvertTo-Json preserves
+                # the status and strict-mode mutation is reliable in PS 5.1.
+                $foregroundStatus['continuity_verified'] = $false
+                $foregroundStatus['continuous_check_interval_ms'] = 200
+                $foregroundStatus['checks'] = 0
+                $foregroundStatus['foreground_loss_detected'] = $false
                 $foregroundStatus | ConvertTo-Json -Depth 4 |
                     Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
                 Write-Host "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED pid=$($p.Id) continuous_watchdog=True"
