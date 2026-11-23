@@ -126,14 +126,14 @@ jobs:
       - name: Verify locked Godot and A3 native DLL without C++ rebuild
         shell: powershell
         run: ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+      - name: Headless module and GDExtension smoke
+        shell: powershell
+        run: ./scripts/smoke-windows.ps1
       - name: A7.4 GDScript pilot parser only (no visual qualification)
         shell: powershell
         run: |
           & .\.tools\godot.exe --headless --path .\godot --script res://tests/a74_parse_check.gd
           if ($LASTEXITCODE -ne 0) { throw 'A74_GDSCRIPT_PARSE_FAIL' }
-      - name: Headless module and GDExtension smoke
-        shell: powershell
-        run: ./scripts/smoke-windows.ps1
       - name: A1 deterministic SDF and scene smoke
         shell: powershell
         run: ./scripts/a1-smoke-windows.ps1
