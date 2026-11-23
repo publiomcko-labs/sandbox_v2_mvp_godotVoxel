@@ -76,7 +76,7 @@ Para um único cenário que apresentou sinal fraco (3 repetições):
 
 Para ampliar as seeds somente depois da primeira bateria, mantendo três repetições por cenário e por seed:
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Seeds 20261119,20261120,20261121 -Repeats 3 -Warmup 45
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -SeedList "20261119,20261120,20261121" -Repeats 3 -Warmup 45
 
 A pasta `reports/generated/a74-batch/batch-<timestamp>-<pid>/` terá `a74_batch_manifest.json`, `a74_batch_report.json`, `a74_batch_trials.csv`, dados completos de cada run, e `a74_batch_summary.zip`. **Envie inicialmente o ZIP resumido.** Ele contém os JSONs e referências geométricas, mas não os vídeos do desktop por privacidade e tamanho. Se algum cenário precisar de verificação quadro a quadro, fornecer somente o vídeo correspondente ou usar `-FullArchive` para criar o ZIP com todos os vídeos. O processo interrompe em erro de aquisição por padrão e produz um resumo parcial reprovado; `-ContinueOnFailure` permite prosseguir com os cenários restantes, preservando as falhas como inválidas. Não alterar o relatório histórico.
 
