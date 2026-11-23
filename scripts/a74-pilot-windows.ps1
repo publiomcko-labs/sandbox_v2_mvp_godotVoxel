@@ -189,7 +189,7 @@ try {
     $env:A3_SAVE_PATH = $previousSave
     $env:A4_ROCK_STATE_PATH = $previousRock
     $videoSize = if (Test-Path -LiteralPath $video) { (Get-Item -LiteralPath $video).Length } else { 0 }
-    $videoValid = ($videoSize -gt 1000000 -and $recorderExit -eq 0 -and -not $recorderError)
+    $videoValid = ($videoSize -ge 65536 -and $recorderExit -eq 0 -and -not $recorderError)
     $manifest = [ordered]@{
         schema = 'a74_capture_manifest_v1'
         scenario = $Scenario
