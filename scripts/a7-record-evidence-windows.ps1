@@ -45,6 +45,8 @@ Write-Host "A7_EVIDENCE_WINDOW_CROP=1920x1080 monitor=$($screen.Width)x$($screen
 $ff = $null
 $ffhash = $null
 $presentMonPath = $null
+$isAdmin = $false
+$isPerfUser = $false
 $presentMonHash = 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
 if ($PresentMonExe) {
     # This must happen BEFORE starting the desktop recorder or Godot.
