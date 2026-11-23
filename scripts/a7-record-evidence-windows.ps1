@@ -10,6 +10,8 @@ param(
     [ValidateRange(0,180)] [double] $Warmup = 20,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
+    [ValidateSet('ddagrab_nvenc','gdigrab_x264')]
+    [string] $RecorderMode = 'ddagrab_nvenc',
     [string] $PresentMonExe = '',
     [switch] $SkipVideo,
     [switch] $NoStills
@@ -71,6 +73,21 @@ if (-not $SkipVideo) {
     }
     $ff = (Resolve-Path -LiteralPath $FfmpegExe).Path
     $ffhash = (Get-FileHash -LiteralPath $ff -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($RecorderMode -eq 'ddagrab_nvenc') {
+        # This video-only workload requires a real GPU. Using GPU-native
+        # Desktop Duplication and NVENC avoids forcing 1080p/60fps raw frames
+        # through GDI and CPU x264 on the reference host. A failure must
+        # remain explicit: never quietly downgrade to lossy 30fps recording.
+        $filters = (& $ff -hide_banner -filters | Out-String)
+        $encoders = (& $ff -hide_banner -encoders | Out-String)
+        if ($filters -notmatch '(?m)^\\s*[.A-Z|]+\\s+ddagrab\\s' -and
+            $filters -notmatch '\\bddagrab\\b') {
+            throw 'A7_EVIDENCE_DDAGRAB_FILTER_UNAVAILABLE'
+        }
+        if ($encoders -notmatch '\\bh264_nvenc\\b') {
+            throw 'A7_EVIDENCE_NVENC_ENCODER_UNAVAILABLE'
+        }
+    }
 }
 
 $campaign = Join-Path $root ('reports/generated/a7-visual-evidence/evidence-' +
@@ -92,19 +109,30 @@ $previous = $env:A7_CAMPAIGN_DIR
 $manifestPath = Join-Path $campaign 'visual_evidence_manifest.json'
 try {
     if (-not $SkipVideo) {
-        # gdigrab captures only the 1920x1080 top-left part of the primary
-        # display; Windows monitor mode and resolution remain untouched.
-        # Godot's evidence-only window is borderless at (0,0). Other windows
-        # must not obscure it, or the resulting video cannot qualify pixels.
-        # This is a distinct, instrumented capture arm, NEVER a PERF-60 arm.
+        # Native screen crop: never change the Windows monitor mode.
+        # The NVIDIA/D3D11 backend is only used when visual recording
+        # is mandatory; ordinary Python and Godot headless CI remain CPU-only.
+        # Strict A7 video at 60 FPS must use real frames, not declared FPS.
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $ff
-        $psi.Arguments = ('-hide_banner -loglevel error -nostats -y ' +
-            '-f gdigrab -framerate 60 -offset_x ' + $screen.X +
-            ' -offset_y ' + $screen.Y +
-            ' -video_size 1920x1080 -draw_mouse 0 -i desktop ' +
-            '-c:v libx264 -preset ultrafast -crf 19 -pix_fmt yuv420p "' +
-            $video + '"')
+        if ($RecorderMode -eq 'ddagrab_nvenc') {
+            # FFmpeg 7.1 ddagrab is GPU-native D3D11 Desktop Duplication.
+            # dup_frames=0 prevents synthesizing smooth video from stale frames.
+            $psi.Arguments = ('-hide_banner -loglevel error -nostats -y ' +
+                '-f lavfi -i "ddagrab=output_idx=0:framerate=60:video_size=1920x1080:' +
+                'offset_x=0:offset_y=0:draw_mouse=0:dup_frames=0" ' +
+                '-fps_mode passthrough -c:v h264_nvenc -preset p1 -cq 18 -bf 0 "' +
+                $video + '"')
+        } else {
+            # Historical compatibility path only, NOT a 60fps qualification:
+            # this mode produced 29.7 real FPS in campaign 20261122-211708.
+            $psi.Arguments = ('-hide_banner -loglevel error -nostats -y ' +
+                '-f gdigrab -framerate 60 -offset_x ' + $screen.X +
+                ' -offset_y ' + $screen.Y +
+                ' -video_size 1920x1080 -draw_mouse 0 -i desktop ' +
+                '-c:v libx264 -preset ultrafast -crf 19 -pix_fmt yuv420p "' +
+                $video + '"')
+        }
         $psi.WorkingDirectory = $root
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
@@ -217,6 +245,9 @@ try {
         desktop_mode_changed = $false
         desktop_offset_xy = @($screen.X,$screen.Y)
         recorder_sha256 = $ffhash
+        recorder_mode = $(if ($SkipVideo) { 'none' } else { $RecorderMode })
+        video_frames_actual_verified = $false
+        video_recorder_has_cpu_x264_fallback = ($RecorderMode -eq 'gdigrab_x264')
         recorder_source = $(if ($ff -and $ff.Contains('a7-ffmpeg-7.1.1')) { 'pinned_portable_7.1.1' } else { 'provided_path' })
         ffprobe_path = $(if ($ff) { Join-Path (Split-Path -Parent $ff) 'ffprobe.exe' } else { $null })
         presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
