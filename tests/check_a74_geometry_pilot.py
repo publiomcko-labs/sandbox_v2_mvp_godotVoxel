@@ -99,6 +99,39 @@ for frame in range(12, 19):
 ambiguous = p.evaluate_video(changed+controls, b"".join(frames),
                              n, 12, pts, 2000.0, 2000.0)
 assert ambiguous["status"] == "NO_CONSISTENT_LUMA_SIGNAL", ambiguous
+# Calibrated low-contrast case: 10 luma on oracle rays, 2 on controls,
+# unlike the initial 18-level per-pixel threshold that missed real A7.4
+# static_remove video. This is still a candidate, not correct terrain pixels.
+subtle = [bytearray([100] * p.PATCH_BYTES) for _ in range(n)]
+for frame in range(12, 19):
+    for ray in changed + controls:
+        x, y = ray["pixel"][0]-840, ray["pixel"][1]-420
+        level = 110 if ray["predicted_changed"] else 102
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                subtle[frame][(y+dy)*p.PATCH_SIDE+x+dx] = level
+soft = p.evaluate_video(changed+controls, b"".join(subtle),
+                        n, 12, pts, 2000.0, 2000.0)
+assert soft["status"] == "ORACLE_CONSISTENT_LUMA_CANDIDATE", soft
+assert soft["frames_reviewed"][0]["detection_method"] == "SPATIAL_CONTRAST"
+assert soft["first_correct_presented_pixel_ms"] is None
+# An unrelated global lighting/camera shift MUST fail the spatial-contrast
+# gate, including a weak (10 luma) shift that the old strong test misses.
+uniform = [bytearray([100]*p.PATCH_BYTES) for _ in range(n)]
+for frame in range(12, 19):
+    uniform[frame][:] = bytes([110])*p.PATCH_BYTES
+uniform_result = p.evaluate_video(changed+controls, b"".join(uniform),
+                                  n, 12, pts, 2000.0, 2000.0)
+assert uniform_result["status"] == "NO_CONSISTENT_LUMA_SIGNAL", uniform_result
+# A duplicated PTS in the edit window invalidates candidate timing even if
+# the expected image changes; never interpolate manufactured frames.
+bad_pts = pts.copy()
+bad_pts[13] = bad_pts[12]
+bad_time = p.evaluate_video(changed+controls, blob, n, 12, bad_pts,
+                            2000.0, 2000.0)
+assert bad_time["status"] == "TIMING_AMBIGUOUS", bad_time
+assert bad_time["first_oracle_consistent_candidate_ms"] is None
+
 src = (root / "scripts/a74_geometry_pilot.py").read_text(encoding="utf-8")
 assert '"automatic_acceptance": False' in src
 assert '"first_correct_presented_pixel_ms": None' in src
