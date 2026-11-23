@@ -39,6 +39,8 @@ var _samples := 0
 var _captures := 0
 var _camera_initial_fov := 0.0
 var _measurement_epoch_begin := -1.0
+var _video_sync_marker: ColorRect
+var _video_sync_index := -1
 
 func _ready() -> void:
     _world = get_parent()
@@ -62,6 +64,15 @@ func _ready() -> void:
     _player.set_process_unhandled_input(false)
     _player.global_position = Routes.position_for(route, 0.0)
     _camera_initial_fov = _camera.fov
+    if capture and DisplayServer.get_name() != "headless":
+        # Compact solid sync patch remains visible in desktop video. Its
+        # transitions anchor *video* PTS to Godot events, not terrain pixels.
+        _video_sync_marker = ColorRect.new()
+        _video_sync_marker.position = Vector2(1860,22)
+        _video_sync_marker.size = Vector2(42,40)
+        _video_sync_marker.color = Color(0.15,0.15,0.15,1.0)
+        _video_sync_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        _world.get_node("HUD").add_child(_video_sync_marker)
     if DisplayServer.get_name() != "headless":
         RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
     _begin_us = Time.get_ticks_usec()
@@ -74,6 +85,8 @@ func _ready() -> void:
         "viewport_px":str(get_viewport().get_visible_rect().size),
         "fov_degrees":_camera_initial_fov, "headless":DisplayServer.get_name()=="headless",
         "capture":capture, "screenshot_interval_s":screenshot_interval_s,
+        "video_sync_marker_crop_xywh":[1888,42,8,8] if capture else null,
+        "video_sync_marker_gate":"CLOCK_ALIGNMENT_ONLY",
         "ci_smoke":ci_smoke,
         "vsync_off_requested":vsync_off_requested,
         "vsync_mode_actual":int(DisplayServer.window_get_vsync_mode()) if DisplayServer.get_name()!="headless" else -1,
@@ -196,6 +209,22 @@ func _process(_delta: float) -> void:
         return
     var t := minf(duration_s,float(now-_movement_begin_us)/1000000.0)
     _set_path(t)
+    if is_instance_valid(_video_sync_marker):
+        # Alternate two high-contrast colors every elapsed second. A separate
+        # decoder can verify consecutive transitions and estimate the offset
+        # between FFmpeg PTS and Godot epoch, without GPU readback.
+        var sync_index := int(floor(t))
+        if sync_index != _video_sync_index:
+            _video_sync_index = sync_index
+            var green := sync_index%2 == 0
+            _video_sync_marker.color = Color(0.0,1.0,0.0,1.0) if green else Color(1.0,0.0,1.0,1.0)
+            _emit({
+                "type":"video_sync","index":sync_index,"route_t_s":t,
+                "event_epoch_s":Time.get_unix_time_from_system(),
+                "event_ticks_us":Time.get_ticks_usec(),
+                "marker_rgb":"00ff00" if green else "ff00ff",
+                "alignment_only":true
+            })
     var dt_ms := float(now-_previous_us)/1000.0
     _previous_us=now
     if dt_ms>0.0:
