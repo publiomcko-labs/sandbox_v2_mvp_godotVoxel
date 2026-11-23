@@ -108,7 +108,8 @@ pilot=(root/"scripts/a8-pilot-windows.ps1").read_text(encoding="utf-8")
 assert "Engine.get_frames_drawn() - _warmup_initial_drawn" in gd
 assert "warmup_drawn_frames_observed" in gd
 assert 'warmup_drawn_frames=warmup_frames' in runner
-assert "headless or ci or capture" in runner
+assert "headless or ci or (capture and not a8_visual_evidence)" in runner
+assert "a8_visual_evidence and (headless or ci or not capture or warmup_frames != 1000" in runner
 assert "A8_FRAME_WARMUP_RESTRICTED_TO_REAL_GPU_UNRECORDED_SHORT_ROUTE" in ps
 assert "if ($WarmupFrames -gt 0)" in ps
 assert "[int] $WarmupFrames = 1000" in pilot
