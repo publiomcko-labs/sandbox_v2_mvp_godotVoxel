@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import zipfile
+import importlib.util
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
@@ -92,6 +94,35 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not inconsistent["collection_complete"] and inconsistent["invalid_runs"] == 1
     ambiguous["observations"]["edit_window_invalid_pts"] = True
     save(ambiguous_path, ambiguous)
+    # Reprocess a compact evidence ZIP without any GPU/video rerecording;
+    # preserve the original archive and reject directory traversal.
+    spec = importlib.util.spec_from_file_location(
+        "a74_reprocessor", root/"scripts"/"a74-reprocess-summary.py")
+    assert spec is not None and spec.loader is not None
+    reproc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reproc)
+    original = folder/"original_summary.zip"
+    corrected = folder/"corrected_summary.zip"
+    with zipfile.ZipFile(original,"w",zipfile.ZIP_DEFLATED) as archive:
+        for p in folder.rglob("*"):
+            if p.is_file() and p != original:
+                archive.write(p,arcname=p.relative_to(folder).as_posix())
+    rereport = reproc.reprocess(original, corrected)
+    assert corrected.is_file() and original.is_file()
+    assert rereport["collection_complete"] and rereport["video_timing_ambiguous_runs"] == 1
+    with zipfile.ZipFile(corrected) as archive:
+        names = archive.namelist()
+        assert "a74_batch_report_original.json" in names
+        reread = json.loads(archive.read("a74_batch_report.json"))
+        assert reread["scenarios"]["static_add"]["native_apply_ms"]["n"] == 3
+    malicious = folder/"traversal_summary.zip"
+    with zipfile.ZipFile(malicious,"w") as archive:
+        archive.writestr("../escape.json","{}")
+    try:
+        reproc.reprocess(malicious, folder/"escape_reprocessed.zip")
+        raise AssertionError("Unsafe archive path accepted")
+    except ValueError:
+        pass
     # A succeeded process with no pixel signal remains VALID for the batch;
     # it is not falsely converted into candidate success or a zero latency.
     save(folder/trials[2]["relative_path"]/"a74_capture_manifest.json", {
