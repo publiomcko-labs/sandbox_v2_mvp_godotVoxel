@@ -58,9 +58,13 @@ def decode_probe_json(blob: str) -> dict:
         timestamps.append(stamp)
     if len(timestamps) < 100:
         raise ValueError("At least 100 video frames with valid PTS required")
-    if any(b <= a for a, b in zip(timestamps, timestamps[1:])):
-        raise ValueError("Video frame timestamps not strictly increasing")
-    gaps = [(b - a) * 1000.0 for a, b in zip(timestamps, timestamps[1:])]
+    # D3D11 Desktop Duplication + NVENC can emit duplicate millisecond PTS.
+    # Preserve the actual frame order and report these defects rather than
+    # dropping evidence or failing before correlation with Godot's markers.
+    deltas = [b-a for a,b in zip(timestamps,timestamps[1:])]
+    duplicates = sum(d == 0 for d in deltas)
+    backwards = sum(d < 0 for d in deltas)
+    gaps = [max(0.0,d)*1000.0 for d in deltas]
     return {
         "width": 1920, "height": 1080,
         "frames": len(timestamps),
@@ -69,6 +73,10 @@ def decode_probe_json(blob: str) -> dict:
         "duration_by_pts_s": timestamps[-1] - timestamps[0],
         "nominal_video_fps": stream.get("avg_frame_rate"),
         "observed_fps": (len(timestamps)-1)/(timestamps[-1]-timestamps[0]),
+        "duplicated_timestamp_pairs": duplicates,
+        "backward_timestamp_pairs": backwards,
+        "timestamp_strictly_increasing": duplicates == 0 and backwards == 0,
+        "gaps_over_33ms": sum(g > 33.0 for g in gaps),
         "gap_p99_ms": sorted(gaps)[math.ceil((len(gaps)-1)*0.99)],
         "gap_max_ms": max(gaps),
         "pts_s": timestamps,
@@ -164,6 +172,37 @@ def correlate_markers(expected: list[dict], observed: list[dict]) -> dict:
     return result
 
 
+def route_movement_window(frames: list[float], expected: list[dict],
+                          aligned: dict) -> dict | None:
+    """Measure only the routed 30s segment bracketed by visible sync changes.
+
+    Avoid diluting 60fps conclusions with recorder startup/20s warmup.
+    """
+    marks = aligned.get("aligned_events", [])
+    if len(marks) < 2 or len(expected) != len(marks):
+        return None
+    first, last = marks[0], marks[-1]
+    i, j = first["video_frame_index"], last["video_frame_index"]
+    if not (isinstance(i,int) and isinstance(j,int) and 0 <= i < j < len(frames)):
+        return None
+    section = frames[i:j+1]
+    deltas = [(b-a)*1000.0 for a,b in zip(section,section[1:])]
+    positive = [max(0.0,x) for x in deltas]
+    elapsed = section[-1]-section[0]
+    if elapsed <= 0.0:
+        return None
+    return {
+        "start_frame": i,"end_frame":j,
+        "frames":len(section),"elapsed_pts_s":round(elapsed,3),
+        "observed_fps":round((len(section)-1)/elapsed,4),
+        "duplicated_pts_pairs":sum(x==0.0 for x in deltas),
+        "backward_pts_pairs":sum(x<0.0 for x in deltas),
+        "gaps_over_33ms":sum(x>33.0 for x in deltas),
+        "gap_max_ms":round(max(positive),3),
+        "note":"Recorded video PTS only, NOT app/compositor presented-frame cadence",
+    }
+
+
 def process_video(root: Path, ffmpeg: str, ffprobe: str) -> dict:
     manifest = read_json(root/"visual_evidence_manifest.json")
     if manifest.get("schema") != "a7_visual_evidence_manifest_v1":
@@ -189,7 +228,11 @@ def process_video(root: Path, ffmpeg: str, ffprobe: str) -> dict:
     raw = subprocess.run(patch_cmd,stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, check=True,timeout=600)
     marker = marker_transitions(raw.stdout,info["pts_s"])
-    aligned = correlate_markers(expected_markers(manifest["mode"],events),marker["transitions"])
+    expected = expected_markers(manifest["mode"],events)
+    aligned = correlate_markers(expected,marker["transitions"])
+    route_window = (
+        route_movement_window(info["pts_s"],expected,aligned)
+        if manifest.get("mode") == "Route" else None)
     info.pop("pts_s")
     report = {
         "schema":SCHEMA,"video_name":video.name,
@@ -199,6 +242,7 @@ def process_video(root: Path, ffmpeg: str, ffprobe: str) -> dict:
         "frame_integrity":info,
         "video_fps_60_diagnostic":info["observed_fps"]>=59.0,
         "video_gap_over_33ms":info["gap_max_ms"]>33.0,
+        "route_movement_window":route_window,
         "marker":aligned,
         "marker_classified_frames":marker["classified_frames"],
         "marker_transitions":marker["transitions"],
@@ -221,6 +265,9 @@ def main():
     args=ap.parse_args()
     result=process_video(args.campaign,args.ffmpeg,args.ffprobe)
     print("A7_VIDEO_TIMELINE_FRAMES="+str(result["frame_integrity"]["frames"]))
+    print("A7_VIDEO_PTS_DUPLICATES="+str(result["frame_integrity"]["duplicated_timestamp_pairs"]))
+    if result["route_movement_window"] is not None:
+        print("A7_VIDEO_ROUTE_EFFECTIVE_FPS="+str(result["route_movement_window"]["observed_fps"]))
     print("A7_VIDEO_SYNC_SEQUENCE="+str(result["marker"]["sequence_verified"]))
     print("A7_VIDEO_SYNC_ALIGNMENT="+str(result["marker"]["alignment_verified"]))
     print("A7_VIDEO_PIXELS=NOT_QUALIFIED")
