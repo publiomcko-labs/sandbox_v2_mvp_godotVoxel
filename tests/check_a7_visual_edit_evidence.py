@@ -51,6 +51,17 @@ assert "-c:v h264_nvenc" in recorder and "dup_frames=0" in recorder
 assert "-fps_mode passthrough" in recorder
 assert "A7_EVIDENCE_DDAGRAB_FILTER_UNAVAILABLE" in recorder
 assert "A7_EVIDENCE_NVENC_ENCODER_UNAVAILABLE" in recorder
+assert "A7_ETW_ACCESS_REQUIRED" in recorder
+assert "S-1-5-32-559" in recorder
+assert "A7_ETW_PRIVILEGE_PREFLIGHT=PASS" in recorder
+assert "presentmon_privilege_preflight_passed" in recorder
+runner_foreground=(root/"scripts/a7-run-windows.ps1").read_text(encoding="utf-8")
+assert "A7_EVIDENCE_GAME_FOREGROUND_REQUIRED" in runner_foreground
+assert "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED" in runner_foreground
+assert "A7NativeFocus" in runner_foreground
+assert "SetForegroundWindow" in runner_foreground
+assert "GetForegroundWindow" in runner_foreground
+assert "a7_foreground.json" in runner_foreground
 assert "recorder_mode =" in recorder
 assert "$params.VisualSurfaceFollow = $true" in recorder
 assert "evidence_camera_surface_follow =" in recorder
