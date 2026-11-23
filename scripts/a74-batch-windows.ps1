@@ -2,7 +2,7 @@ param(
     [ValidateSet('static_remove','static_add','boundary_remove','boundary_add')]
     [string[]] $Scenarios = @('static_remove','static_add','boundary_remove','boundary_add'),
     [ValidateRange(1,10)] [int] $Repeats = 3,
-    [ValidateRange(5,180)] [int] $Warmup = 45,
+    [ValidateRange(60,10000)] [int] $WarmupFrames = 1000,
     [string] $SeedList = '20261119',
     [string] $FfmpegExe = '',
     [switch] $ContinueOnFailure,
@@ -39,7 +39,8 @@ $manifest = [ordered]@{
     schema = 'a74_batch_manifest_v1'
     batch_id = $batchId
     git_sha = (& git -C $root rev-parse HEAD).Trim()
-    sampling_policy = 'one brush per process, isolated SQLite/video/oracle; fixed seed across repeats for comparable variation'
+    sampling_policy = 'one brush per process, isolated SQLite/video/oracle; 1000 drawn warmup frames; video starts only after warmup; fixed seed across repeats'
+    warmup_frames = $WarmupFrames
     scenarios = @($Scenarios)
     seeds = @($Seeds)
     repeats_per_scenario_seed = $Repeats
@@ -54,7 +55,7 @@ function Write-BatchManifest {
         Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 Write-BatchManifest
-Write-Host "A74_BATCH_START id=$batchId runs=$($manifest.expected_runs)"
+Write-Host "A74_BATCH_START id=$batchId runs=$($manifest.expected_runs) warmup_rendered_frames=$WarmupFrames"
 $stop = $false
 foreach ($scenario in $Scenarios) {
     foreach ($seed in $Seeds) {
@@ -64,7 +65,7 @@ foreach ($scenario in $Scenarios) {
             if (Test-Path -LiteralPath $target) { throw "A74_REPEAT_FOLDER_COLLISION $target" }
             $argsList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$runner,
                           '-Scenario',$scenario,'-Seed',[string]$seed,
-                          '-Warmup',[string]$Warmup,'-OutputDirectory',$target)
+                          '-WarmupFrames',[string]$WarmupFrames,'-OutputDirectory',$target)
             if ($FfmpegExe) { $argsList += @('-FfmpegExe',$FfmpegExe) }
             $ordinal = $trials.Count + 1
             Write-Host "A74_BATCH_TRIAL_BEGIN ordinal=$ordinal/$($manifest.expected_runs) scenario=$scenario seed=$seed repeat=$repeat"
