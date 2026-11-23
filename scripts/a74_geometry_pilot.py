@@ -200,27 +200,58 @@ def evaluate_video(ref_rays: list[dict], patches: bytes, frames: int,
             roi_luma(patches, j, r["pixel"]) for j in range(edit_marker-6, edit_marker-2)
         ) for r in ref_rays
     }
+    # Global video timing can contain recorder startup gaps. The EDIT window
+    # is independently checked; duplicated/backward/gapped PTS would make
+    # candidate latency ambiguous, even when the image comparison is clear.
+    window_deltas_ms = [
+        (pts[j+1] - pts[j]) * 1000.0
+        for j in range(edit_marker-6, edit_marker+7)
+    ]
+    window_bad = any(delta <= 0.0 or delta > 34.0 for delta in window_deltas_ms)
     frames_checked = []
     first = None
     for frame in range(edit_marker, edit_marker+7):
-        def change_ratio(rows: list[dict]) -> float:
-            return sum(abs(roi_luma(patches, frame, r["pixel"]) -
-                           baseline[tuple(r["pixel"])]) >= 18.0
-                       for r in rows) / len(rows)
-        hit, false = change_ratio(changed), change_ratio(controls)
-        candidate = hit >= 0.60 and false <= 0.15
+        def deltas(rows: list[dict]) -> list[float]:
+            return [abs(roi_luma(patches, frame, r["pixel"]) -
+                        baseline[tuple(r["pixel"])]) for r in rows]
+        hit_delta, control_delta = deltas(changed), deltas(controls)
+        hit = sum(v >= 18.0 for v in hit_delta) / len(hit_delta)
+        false = sum(v >= 18.0 for v in control_delta) / len(control_delta)
+        # The legacy strong-per-pixel test missed a visually obvious A7.4
+        # cavity: changed rays averaged 9.7 luma levels, controls 2.5.
+        # A second, more sensitive CONTRAST test requires spatial selectivity,
+        # substantial change coverage and quiet independent control rays.
+        # It remains a diagnostic, not correct-depth or latency qualification.
+        hit_low = sum(v >= 4.0 for v in hit_delta) / len(hit_delta)
+        false_low = sum(v >= 4.0 for v in control_delta) / len(control_delta)
+        hit_mean = statistics.mean(hit_delta)
+        control_mean = statistics.mean(control_delta)
+        strong = hit >= 0.60 and false <= 0.15
+        contrast = (hit_mean >= 6.0 and control_mean <= 3.5 and
+                    hit_mean >= 2.8 * max(control_mean, 0.1) and
+                    hit_low >= 0.70 and false_low <= 0.25)
+        candidate = strong or contrast
         frames_checked.append({
             "frame": frame, "video_pts_s": pts[frame],
             "predicted_change_signal_ratio": round(hit, 3),
             "control_false_change_ratio": round(false, 3),
+            "predicted_change_low_contrast_ratio": round(hit_low, 3),
+            "control_low_contrast_ratio": round(false_low, 3),
+            "predicted_mean_abs_luma": round(hit_mean, 3),
+            "control_mean_abs_luma": round(control_mean, 3),
+            "detection_method": "STRONG_PIXEL" if strong else
+                                "SPATIAL_CONTRAST" if contrast else "NONE",
             "oracle_consistent_luma_candidate": candidate
         })
-        if candidate and first is None:
+        if candidate and first is None and not window_bad:
             first = round((pts[frame] + offset_s - brush_epoch_s)*1000.0, 3)
     return {
-        "status": "ORACLE_CONSISTENT_LUMA_CANDIDATE" if first is not None
+        "status": "TIMING_AMBIGUOUS" if window_bad else
+                  "ORACLE_CONSISTENT_LUMA_CANDIDATE" if first is not None
                   else "NO_CONSISTENT_LUMA_SIGNAL",
         "expected_changed_rays": len(changed), "control_rays": len(controls),
+        "edit_window_gap_max_ms": round(max(window_deltas_ms), 3),
+        "edit_window_invalid_pts": window_bad,
         "frames_reviewed": frames_checked,
         "first_oracle_consistent_candidate_ms": first,
         "first_correct_presented_pixel_ms": None,
@@ -290,6 +321,7 @@ def run(root: Path, ffmpeg: str, ffprobe: str) -> dict:
         "video_frame_count": info["frames"],
         "video_duplicate_pts_pairs": info["duplicated_timestamp_pairs"],
         "video_gap_max_ms": info["gap_max_ms"],
+        "video_startup_gaps_not_attributed_to_edit": True,
         "marker_alignment_residual_p99_ms": alignment["offset_residual_p99_ms"],
         "observations": observations,
         "oracle_rays": rays,
