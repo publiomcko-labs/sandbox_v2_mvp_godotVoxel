@@ -49,15 +49,25 @@ func _start() -> void:
         return
     var fixture: Dictionary = parsed
     var events: Array = fixture.get("events",[])
-    if (fixture.get("schema") != "a8_p3_video_pixel_targets_v1" or
-            fixture.get("source_video_sha256") != EXPECTED_VIDEO_HASH or
-            fixture.get("route") != "turns_18mps_300s" or
-            fixture.get("seed") != SEED or
-            fixture.get("screen_px") != [1920,1080] or
-            fixture.get("event_count") != 5 or
-            fixture.get("ray_samples_per_event") != 12 or
+    # Godot JSON.parse_string numbers are doubles. Compare numeric values
+    # explicitly and check arrays element by element, not by variant identity.
+    var source_screen: Array = fixture.get("screen_px",[])
+    if (str(fixture.get("schema","")) != "a8_p3_video_pixel_targets_v1" or
+            str(fixture.get("source_video_sha256","")) != EXPECTED_VIDEO_HASH or
+            str(fixture.get("route","")) != "turns_18mps_300s" or
+            int(fixture.get("seed",-1)) != SEED or
+            source_screen.size() != 2 or
+            int(source_screen[0]) != SCREEN.x or
+            int(source_screen[1]) != SCREEN.y or
+            int(fixture.get("event_count",-1)) != 5 or
+            int(fixture.get("ray_samples_per_event",-1)) != 12 or
             events.size() != 5):
-        _fail("pixel fixture provenance mismatch")
+        _fail("pixel fixture provenance mismatch values="+JSON.stringify({
+            "schema":fixture.get("schema"),"source_hash":fixture.get("source_video_sha256"),
+            "route":fixture.get("route"),"seed":fixture.get("seed"),
+            "screen":fixture.get("screen_px"),"event_count":fixture.get("event_count"),
+            "samples":fixture.get("ray_samples_per_event"),"loaded_events":events.size()
+        }))
         return
     var generator: VoxelGeneratorGraph = TerrainSDF.build_generator(SEED)
     if generator == null:
