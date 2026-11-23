@@ -65,6 +65,12 @@ assert "a7_foreground.json" in runner_foreground
 assert "A7_EVIDENCE_FOREGROUND_LOST" in runner_foreground
 assert "continuous_watchdog=True" in runner_foreground
 assert "while (-not $p.WaitForExit(200))" in runner_foreground
+assert "$foregroundFailure = $null" in runner_foreground
+assert "$foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST" in runner_foreground
+assert "break # Always finalize PresentMon before propagating failure" in runner_foreground
+assert "if ($foregroundFailure) {" in runner_foreground
+assert runner_foreground.index("if ($foregroundFailure) {") > runner_foreground.index("A7_PRESENTMON_STATUS exit=")
+assert "throw $foregroundFailure" in runner_foreground
 assert "$foregroundStatus['continuity_verified'] = $false" in runner_foreground
 assert "godot_foreground_verified_continuously" in script.read_text(encoding="utf-8")
 assert "godot_foreground_verified_at_start" in script.read_text(encoding="utf-8")
