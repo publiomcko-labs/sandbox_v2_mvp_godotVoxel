@@ -159,8 +159,25 @@ jobs:
           $out = Join-Path (Get-Location).Path 'reports/generated/a8p3-ci'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $env:A8_P3_OUTPUT_DIR = $out
-          & .\.tools\godot.exe --headless --path .\godot --script res://tests/a8_p3_depth_oracle.gd
-          if ($LASTEXITCODE -ne 0) { throw "A8_P3_HEADLESS_SDF_ORACLE_FAILED exit=$LASTEXITCODE" }
+          # Godot is a Windows GUI subsystem binary; '&' does not reliably
+          # populate LASTEXITCODE in Windows PowerShell 5.1. Wait for the
+          # actual owned process and inspect its ExitCode instead.
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p3_depth_oracle.gd'
+          $psi.UseShellExecute = $false
+          $game = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $game) { throw 'A8_P3_GODOT_START_FAILED' }
+          try {
+            if (-not $game.WaitForExit(180000)) {
+              $game.Kill()
+              throw 'A8_P3_GODOT_TIMEOUT_180S'
+            }
+            $godotExit = $game.ExitCode
+          } finally { $game.Dispose() }
+          if ($godotExit -ne 0) { throw "A8_P3_HEADLESS_SDF_ORACLE_FAILED exit=$godotExit" }
           python .\scripts\a8_p3_depth_report.py (Join-Path $out 'a8_p3_procedural_depth.json')
           if ($LASTEXITCODE -ne 0) { throw "A8_P3_SDF_REPORT_FAILED exit=$LASTEXITCODE" }
           Write-Host "A8_P3_SDF_ONLY_COMPLETED strict=NOT_QUALIFIED"
