@@ -17,6 +17,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A7.2: encerramento funcional (300 edições, limitações e próxima intervenção)](docs/A7_2_ENCERRAMENTO_FUNCIONAL.md)
 - [A7.1–A7.3: evidência gráfica, ETW e auditoria de pixels](docs/A7_VISUAL_EDIT_EVIDENCE.md)
 - [A8-P0: diagnóstico de FPS, 18 m/s e sondas de 130 m, com warmup de 1.000 frames](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md)
+- [A8-P2: prova visual de rotas a 18 m/s e revisão manual de 130 m](docs/A8_2_VISUAL_STREAMING_EVIDENCE.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
@@ -88,3 +89,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-pilot-windows.p
 ```
 
 1.000 frames de warmup realmente desenhados, 30 s de trajeto reto a 18 m/s, sem vídeo/PNG/ETW, relatório e ZIP resumido em `reports/generated/a8/`. Ver [escopo e limitações](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md).
+
+## A8-P2 — vídeo separado da medição de FPS
+
+Após o encerramento da A8-P1 sem merge, esta etapa coleta uma única rota com curva e 1000 frames realmente desenhados de warmup, via DDAGrab/NVENC 1080p60 e marcadores de relógio. Nenhuma otimização de workers/LOD é promovida; vídeo não qualifica profundidade a 130m nem PERF-60.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-p2-visual-windows.ps1
+```
+
+Resultado: `reports/generated/a7-visual-evidence/evidence-.../a8_visual_evidence.zip` (contém vídeo original). Revisão humana de fissuras, regiões, rochas e água continua obrigatória.
