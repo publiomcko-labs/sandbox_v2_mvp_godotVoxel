@@ -16,6 +16,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A7: campanha de aceite final e matriz PASS/FAIL/NOT_QUALIFIED](docs/A7_IMPLEMENTACAO.md)
 - [A7.2: encerramento funcional (300 edições, limitações e próxima intervenção)](docs/A7_2_ENCERRAMENTO_FUNCIONAL.md)
 - [A7.1–A7.3: evidência gráfica, ETW e auditoria de pixels](docs/A7_VISUAL_EDIT_EVIDENCE.md)
+- [A8-P0: diagnóstico de FPS, 18 m/s e sondas de 130 m, com warmup de 1.000 frames](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
@@ -77,3 +78,13 @@ Comandos em docs/A7_IMPLEMENTACAO.md. Entrada individual curta (não qualificat�
 Campanha completa (90 execuções gráficas): powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a7-run-windows.ps1 -Full -Repeats 3 -Seeds 20261119,20261120,20261121 -Warmup 45
 
 O relatório não marca as metas PERF-60 / STREAM-18 / VIEW-130 / EDIT-100 como aprovadas sem evidência específica. Limitações de A4/A5 permanecem documentadas; não há alteração do terreno, CPU16, água, física ou streaming.
+
+## A8-P0 — diagnóstico gráfico curto, sem readback
+
+A7.4 foi encerrada sem merge em [PR #17](https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/pull/17). A8 inicia isoladamente a coleta de desempenho/streaming sobre a baseline A5 CPU16; não altera mundo/LOD/C++ e mantém PERF-60, STREAM-18, VIEW-130 e EDIT-100 como NOT_QUALIFIED.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-pilot-windows.ps1
+```
+
+1.000 frames de warmup realmente desenhados, 30 s de trajeto reto a 18 m/s, sem vídeo/PNG/ETW, relatório e ZIP resumido em `reports/generated/a8/`. Ver [escopo e limitações](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md).
