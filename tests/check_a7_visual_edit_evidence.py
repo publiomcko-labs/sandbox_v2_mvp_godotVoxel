@@ -62,6 +62,11 @@ assert "A7NativeFocus" in runner_foreground
 assert "SetForegroundWindow" in runner_foreground
 assert "GetForegroundWindow" in runner_foreground
 assert "a7_foreground.json" in runner_foreground
+assert "A7_EVIDENCE_FOREGROUND_LOST" in runner_foreground
+assert "continuous_watchdog=True" in runner_foreground
+assert "while (-not $p.WaitForExit(200))" in runner_foreground
+assert "$foregroundStatus['continuity_verified'] = $false" in runner_foreground
+assert "godot_foreground_verified_continuously" in script.read_text(encoding="utf-8")
 assert "godot_foreground_verified_at_start" in script.read_text(encoding="utf-8")
 assert "No verified foreground Godot window" in script.read_text(encoding="utf-8")
 assert "recorder_mode =" in recorder
@@ -132,6 +137,24 @@ with tempfile.TemporaryDirectory() as tmp:
     assert result["gates"]["VIEW-130"] == "NOT_QUALIFIED"
     assert not result["automatic_acceptance"]
     assert not result["video_container_available"]
+    assert result["godot_foreground_verified_continuously"] is False
+    # A video captured after verified *startup* can still contain 100%
+    # browser pixels. Startup-only provenance must not grant visual PASS.
+    manifest["video_path"] = "C:\\diagnostic\\fake_video.mkv"
+    write_json(folder/"visual_evidence_manifest.json",manifest)
+    write_json(game/"a7_foreground.json",{
+        "verified":True,"continuity_verified":False,"checks":12})
+    result = module.analyze(folder)
+    assert result["godot_foreground_verified_at_start"] is True
+    assert result["godot_foreground_verified_continuously"] is False
+    assert any("continuity" in x for x in result["problems"])
+    write_json(game/"a7_foreground.json",{
+        "verified":True,"continuity_verified":True,"checks":300})
+    result = module.analyze(folder)
+    assert result["godot_foreground_verified_continuously"] is True
+    assert not any("continuity" in x for x in result["problems"])
+    manifest["video_path"] = None
+    write_json(folder/"visual_evidence_manifest.json",manifest)
 
     manifest["mode"], manifest["scenario"] = "Edit", "edit_idle_100"
     write_json(folder/"visual_evidence_manifest.json", manifest)
