@@ -28,10 +28,14 @@ func _start() -> void:
     var seed := int(_arg("seed","20261119"))
     var ci := _flag("ci-smoke")
     var capture := _flag("capture")
+    var visual_follow := _flag("visual-surface-follow")
     var screenshot_interval := float(_arg("screenshot-interval-s","30.0"))
     var vsync_off := _flag("vsync-off")
     var voxel_threads_requested := int(_arg("voxel-threads","0"))
     var headless := DisplayServer.get_name()=="headless"
+    if visual_follow and (not capture or ci or not ["shoreline_180s","rocks_water_180s"].has(route)):
+        _fail("visual surface follow only available in shoreline/rocks evidence capture")
+        return
     if voxel_threads_requested<0 or voxel_threads_requested>48 or (ci and (vsync_off or voxel_threads_requested>0)):
         _fail("resource diagnostic flags invalid or not allowed in headless smoke")
         return
@@ -82,6 +86,7 @@ func _start() -> void:
     runner.ci_smoke=ci
     runner.capture=capture
     runner.screenshot_interval_s=screenshot_interval
+    runner.visual_surface_follow=visual_follow
     runner.vsync_off_requested=vsync_off
     runner.voxel_threads_requested=voxel_threads_requested
     world.add_child(runner)
