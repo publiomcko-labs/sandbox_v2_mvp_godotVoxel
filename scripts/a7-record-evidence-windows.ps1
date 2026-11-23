@@ -59,7 +59,12 @@ if ($PresentMonExe) {
 }
 if (-not $SkipVideo) {
     if (-not $FfmpegExe) {
-        throw 'A7_EVIDENCE_FFMPEG_REQUIRED: specify -FfmpegExe or explicitly -SkipVideo'
+        # A7 can operate without a machine-wide FFmpeg installation, PATH
+        # changes or winget. A versioned ZIP is verified before extraction.
+        $bootstrap = Join-Path $PSScriptRoot 'a7-bootstrap-ffmpeg-windows.ps1'
+        & $bootstrap
+        if (-not $?) { throw 'A7_EVIDENCE_FFMPEG_BOOTSTRAP_FAILED' }
+        $FfmpegExe = Join-Path $root 'reports/tools/a7-ffmpeg-7.1.1/ffmpeg-7.1.1-essentials_build/bin/ffmpeg.exe'
     }
     if (-not (Test-Path -LiteralPath $FfmpegExe -PathType Leaf)) {
         throw 'A7_EVIDENCE_FFMPEG_NOT_FOUND'
@@ -212,6 +217,8 @@ try {
         desktop_mode_changed = $false
         desktop_offset_xy = @($screen.X,$screen.Y)
         recorder_sha256 = $ffhash
+        recorder_source = $(if ($ff -and $ff.Contains('a7-ffmpeg-7.1.1')) { 'pinned_portable_7.1.1' } else { 'provided_path' })
+        ffprobe_path = $(if ($ff) { Join-Path (Split-Path -Parent $ff) 'ffprobe.exe' } else { $null })
         presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
         presentmon_requested = [bool]$presentMonPath
         presentmon_capture_valid = [bool]$etwCaptureValid
