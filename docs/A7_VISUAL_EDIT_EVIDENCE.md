@@ -223,3 +223,53 @@ arquivo, validação do código e smokes headless continuam no `cpu-only`.
 - **Próxima coleta:** somente `boundary_edit_100`, sem necessidade de repetir `edit_moving_100`. Manter o Godot no primeiro plano e não usar o navegador durante a execução. Fechar janelas com conteúdo privado antes de gravar.
 - Contadores ETW de eventos e buffers perdidos estão `null` nas duas coletas, portanto **não** declarar rastreamento comprovadamente sem perdas.
 - `EDIT-100`, `PERF-60`, `STREAM-18` e `VIEW-130` continuam `NOT_QUALIFIED`. Nenhuma mudança funcional na A5 CPU16.
+
+## A7.3 — análise offline do primeiro candidato visual (sem nova coleta)
+
+O script `scripts/a7_pixel_roi_review.py` analisa os três vídeos já
+recebidos, usando somente CPU + FFmpeg/FFprobe e a telemetria dos 100
+marcadores. Não exige runner gráfico, não muda o motor A5 e não adiciona
+leituras GPU no Godot. Para cada edição, compara o quadro imediatamente
+anterior ao marcador com os próximos quadros enquanto a câmera ainda
+está orientada para a mesma região. A análise usa uma ROI central
+240×240 reduzida a 120×120 em luminância, exclui a mira central e
+usa um anel externo como controle contra movimento global.
+
+Resultado da análise retroativa das gravações de 2026-11-23:
+
+| Cenário | Mudança local candidata | Cena ambígua | Mudança local não detectada |
+| --- | ---: | ---: | ---: |
+| `edit_idle_100` | 82 | 14 | 4 |
+| `edit_moving_100` | 21 | 76 | 3 |
+| `boundary_edit_100` | 52 | 13 | 35 |
+| **Total** | **155** | **103** | **42** |
+
+Esses números representam apenas **candidatos de alteração visual
+localizada**, não 155 edições qualificadas e tampouco 42 erros.
+No cenário em movimento, 76/100 quadros permanecem ambíguos devido
+ao movimento da cena. A comparação não dispõe de máscara de profundidade
+e geometria correta produzida por referência independente. A captura
+registra chamadas de brush programáticas (não entrada HID física), os
+PTS do NVENC podem estar duplicados e o alinhamento dos relógios tem
+erro residual. Portanto `first_correct_presented_pixel_ms` permanece
+`null` em todas as 300 edições e `EDIT-100` permanece
+**NOT_QUALIFIED**. Nenhuma diferença arbitrária de pixels é promovida
+a prova de geometria correta ou a latência válida.
+
+Para auditar uma campanha extraída na máquina Windows:
+
+```powershell
+python ".\scripts\a7_pixel_roi_review.py" "C:\Dev\sandbox-a7-etw\reports\generated\a7-visual-evidence\evidence-AAAAmmdd-HHMMSS-PID" --ffmpeg "C:\Dev\sandbox-a7-etw\reports\tools\a7-ffmpeg-7.1.1\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe" --ffprobe "C:\Dev\sandbox-a7-etw\reports\tools\a7-ffmpeg-7.1.1\ffmpeg-7.1.1-essentials_build\bin\ffprobe.exe"
+```
+
+**Decisão:** a evidência é suficiente para encerrar a **validação
+funcional A7.2** (300/300 chamadas de edição aceitas em repouso,
+movimento e fronteira, com persistência e registros de ETW/vídeo).
+Não repetir essas campanhas apenas para obter novos marcadores.
+Para promover `EDIT-100` estritamente, ainda seria necessária uma
+comparação visual independente com referência geométrica correta,
+amostragem calibrada da apresentação do pixel e prova sob a janela de
+100ms em todas as operações. Os critérios `PERF-60`, `STREAM-18` e
+`VIEW-130` também permanecem formalmente **NOT_QUALIFIED**. Uma
+aprovação funcional **não equivale** à aprovação estrita dos critérios
+iniciais de desempenho e continuidade.
