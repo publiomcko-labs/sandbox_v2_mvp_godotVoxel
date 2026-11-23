@@ -99,10 +99,13 @@ jobs:
       - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
         shell: powershell
         run: python tests/check_a7_pixel_roi_review.py
+      - name: A7.4 independent geometric reference and video false-positive contract
+        shell: powershell
+        run: python tests/check_a74_geometry_pilot.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a74-pilot-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null
@@ -123,6 +126,11 @@ jobs:
       - name: Verify locked Godot and A3 native DLL without C++ rebuild
         shell: powershell
         run: ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+      - name: A7.4 GDScript pilot parser only (no visual qualification)
+        shell: powershell
+        run: |
+          & .\.tools\godot.exe --headless --path .\godot --check-only --script res://tests/a74_pilot.gd
+          if ($LASTEXITCODE -ne 0) { throw 'A74_GDSCRIPT_PARSE_FAIL' }
       - name: Headless module and GDExtension smoke
         shell: powershell
         run: ./scripts/smoke-windows.ps1
