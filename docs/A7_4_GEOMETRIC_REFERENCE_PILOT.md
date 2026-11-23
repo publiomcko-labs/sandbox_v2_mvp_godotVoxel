@@ -55,3 +55,29 @@ O analisador P1 original marcou `NO_CONSISTENT_LUMA_SIGNAL` por exigir 18 nívei
 Corretiva A7.4-P1b: manter o teste original de pixels fortes, mas acrescentar um ramo explícito de **contraste espacial relativo** com requisitos simultâneos de cobertura de raios previstos, média de contraste, relação sinal/controle e baixa variação dos controles. Marcar `TIMING_AMBIGUOUS` se houver PTS duplicado, reverso ou gap >34ms **na janela local** de edição. Os testes CPU incluem mudança localizada fraca, iluminação global falsa e PTS duplicado. O relatório original do ZIP **não é alterado** e continua um registro válido do detector anterior.
 
 A revisão visual confirmou uma cavidade de terreno aparecendo após a edição, sem oclusão da janela no trecho avaliado. Ainda não há buffer de profundidade independente, ETW de apresentação alinhado a este piloto nem HID. Todos os gates permanecem `NOT_QUALIFIED`. Próxima aquisição, **somente depois de aprovar CI da corretiva**, pode usar `static_add` para verificar direção oposta antes de boundary ou campanhas amplas.
+
+
+## A7.4-P1c — bateria de repetições independentes
+
+A coleta estática individual de adição em 23/11/2026 (`static_add-20261123-161352-42048.zip`) confirmou 1/1 edição aceita e aplicação nativa de 4,181 ms; vídeo de 3.154 quadros, 34 raios com mudança geométrica prevista e 87 controles. A gravação apresenta uma elevação sutil, mas o detector P1b retornou `NO_CONSISTENT_LUMA_SIGNAL`. Isso não comprova que a edição falhou: aparência local e critério de detecção são coisas diferentes.
+
+Uma única operação não fornece estimativa robusta de variabilidade. A bateria automatizada `scripts/a74-batch-windows.ps1` repete os quatro cenários **três vezes cada (12 execuções por padrão)** com seed idêntica, mas novo processo, SQLite, referência SDF pré-edição, vídeo e pasta para cada execução. O agregador CPU-only `scripts/a74_batch_report.py` registra número de aquisições válidas, falhas, sinal/no-signal, média/mediana/p95/máximo/desvio amostral da **aplicação nativa**, e estatísticas separadas apenas dos **candidatos visuais** encontrados. Não calcula médias de `first_correct_presented_pixel_ms` e não transforma ausência de sinal em zero.
+
+Execução recomendada no Windows GPU, após o CI da branch passar (PowerShell, sem interação na tela enquanto grava):
+
+    cd "C:\Dev\sandbox-a7-etw"
+    git fetch origin exp/a7-4-independent-pixel-pilot-20261123
+    git switch --detach FETCH_HEAD
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Repeats 3 -Warmup 45
+
+Para um único cenário que apresentou sinal fraco (3 repetições):
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Scenarios static_add -Repeats 3 -Warmup 45
+
+Para ampliar as seeds somente depois da primeira bateria, mantendo três repetições por cenário e por seed:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Seeds 20261119,20261120,20261121 -Repeats 3 -Warmup 45
+
+A pasta `reports/generated/a74-batch/batch-<timestamp>-<pid>/` terá `a74_batch_manifest.json`, `a74_batch_report.json`, `a74_batch_trials.csv`, dados completos de cada run, e `a74_batch_summary.zip`. **Envie inicialmente o ZIP resumido.** Ele contém os JSONs e referências geométricas, mas não os vídeos do desktop por privacidade e tamanho. Se algum cenário precisar de verificação quadro a quadro, fornecer somente o vídeo correspondente ou usar `-FullArchive` para criar o ZIP com todos os vídeos. O processo interrompe em erro de aquisição por padrão e produz um resumo parcial reprovado; `-ContinueOnFailure` permite prosseguir com os cenários restantes, preservando as falhas como inválidas. Não alterar o relatório histórico.
+
+**Limitações estatísticas:** três repetições servem como triagem de consistência, não como prova de distribuição de cauda; p95 calculado com n=3 tende a coincidir com o máximo. A medição não é HID-to-photon, e as capturas NVENC não são a carga canônica PERF-60. `EDIT-100`, `PERF-60`, `STREAM-18` e `VIEW-130` permanecem `NOT_QUALIFIED`.
