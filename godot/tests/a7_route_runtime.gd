@@ -5,6 +5,10 @@ const Routes = preload("res://tests/a7_routes.gd")
 var route: String = ""
 var duration_s := 0.0
 var warmup_s := 45.0
+var warmup_drawn_frames := 0
+var _warmup_initial_drawn := 0
+var _warmup_observed_frames := 0
+var _warmup_observed_s := 0.0
 var seed_value := 20261119
 var ci_smoke := false
 var capture := false
@@ -89,9 +93,11 @@ func _ready() -> void:
     if DisplayServer.get_name() != "headless":
         RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
     _begin_us = Time.get_ticks_usec()
+    _warmup_initial_drawn = Engine.get_frames_drawn()
     _emit({
         "type":"metadata", "schema":"a7_route_v1",
         "route":route, "seed":seed_value, "warmup_s":warmup_s,
+        "warmup_drawn_frames_requested":warmup_drawn_frames,
         "duration_s":duration_s, "speed_mps":Routes.SPEED_MPS,
         "render_method":RenderingServer.get_current_rendering_method(),
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
@@ -228,14 +234,27 @@ func _process(_delta: float) -> void:
         if age>=_next_sample_s:
             _sample("warmup",age)
             _next_sample_s+=1.0
-        if age<warmup_s:
+        var drawn := Engine.get_frames_drawn() - _warmup_initial_drawn
+        if warmup_drawn_frames > 0:
+            if drawn < warmup_drawn_frames:
+                if age > 180.0:
+                    push_error("A8_DRAWN_WARMUP_TIMEOUT: fewer than requested frames within 180s")
+                    _trace.close()
+                    _trace=null
+                    get_tree().quit(2)
+                return
+        elif age < warmup_s:
             return
+        _warmup_observed_frames = drawn
+        _warmup_observed_s = age
         _movement_begin_us=now
         _measurement_epoch_begin=Time.get_unix_time_from_system()
         _previous_us=now
         _next_sample_s=0.0
         _next_screenshot_s=0.0
         _emit({"type":"warmup_end","age_s":age,
+               "warmup_drawn_frames_requested":warmup_drawn_frames,
+               "warmup_drawn_frames_observed":_warmup_observed_frames,
                "measurement_epoch_begin_s":_measurement_epoch_begin,
                "startup_eight_mesh_probes_ms":_ready_at_ms,
                "startup_pixels_verified":false})
@@ -295,6 +314,9 @@ func _finish() -> void:
     var summary := {
         "schema":"a7_route_v1","route":route,"seed":seed_value,
         "duration_s":duration_s,"warmup_s":warmup_s,
+        "warmup_drawn_frames_requested":warmup_drawn_frames,
+        "warmup_drawn_frames_observed":_warmup_observed_frames,
+        "warmup_observed_s":_warmup_observed_s,
         "ci_smoke":ci_smoke, "capture":capture,
         "screenshot_interval_s":screenshot_interval_s,
         "vsync_off_requested":vsync_off_requested,
