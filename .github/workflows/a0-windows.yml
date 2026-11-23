@@ -108,6 +108,9 @@ jobs:
       - name: A7.4 1000 rendered-frame warmup and recorder handshake source contract
         shell: powershell
         run: python tests/check_a74_warmup_contract.py
+      - name: A7.4-P1e addition low-contrast diagnostic negative controls
+        shell: powershell
+        run: python tests/check_a74_addition_investigation.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
