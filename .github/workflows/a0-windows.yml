@@ -99,10 +99,13 @@ jobs:
       - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
         shell: powershell
         run: python tests/check_a7_pixel_roi_review.py
+      - name: A8 short GPU-route warmup and triage fail-closed contracts (CPU fixture)
+        shell: powershell
+        run: python tests/check_a8_route_triage.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null
