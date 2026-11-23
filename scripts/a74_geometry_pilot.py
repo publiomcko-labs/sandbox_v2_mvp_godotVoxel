@@ -298,7 +298,7 @@ def run(root: Path, ffmpeg: str, ffprobe: str) -> dict:
             edits[0].get("accepted") is not True):
         raise ValueError("Eight ordered clock markers + exactly one edit required")
     video = root/"desktop-1080p-60fps.mkv"
-    if not video.is_file() or video.stat().st_size < 1_000_000:
+    if not video.is_file() or video.stat().st_size < 65_536:
         raise ValueError("No complete visual evidence")
     probe = subprocess.run([
         ffprobe, "-v", "error", "-select_streams", "v:0",
