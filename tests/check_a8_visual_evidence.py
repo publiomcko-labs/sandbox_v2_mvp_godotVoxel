@@ -107,6 +107,6 @@ assert "A8_VISUAL_EVIDENCE_REQUIRES_SEPARATE_CAPTURE_1000_FRAMES_NORMAL_VSYNC" i
 assert "A8_VISUAL_EVIDENCE_REQUIRES_1000_FRAMES_DDAGRAB_NVENC_ROUTE" in record
 assert "a8-visual-evidence" in godot
 assert "warmup_drawn_frames_observed" in runtime
-assert "'A8_VISUAL_TIMELINE_INVALID" in wrapper
+assert "A8_VISUAL_TIMELINE_INVALID" in wrapper
 assert "a8_visual_evidence.zip" in wrapper
 print("A8_VISUAL_1000_FRAME_EVIDENCE_CONTRACT_PASS")
