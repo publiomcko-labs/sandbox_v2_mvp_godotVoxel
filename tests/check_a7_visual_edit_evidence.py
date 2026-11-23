@@ -33,6 +33,9 @@ assert "first_correct_presented_pixel_ms" in edit
 assert "video_marker_meaning" in edit and "NOT correct terrain presentation" in edit
 assert 'type":"video_sync' in route
 assert "video_sync_marker_crop_xywh" in route
+assert "visual_surface_follow" in route and "_surface_tool.raycast" in route
+assert "surface_follow_misses" in route and "minimum_surface_clearance_m" in route
+assert "if visual_follow and (not capture or ci" in route_runner
 assert "ColorRect.new()" in route and "marker_rgb" in route
 assert 'var evidence_stills := evidence and not _flag("no-stills")' in edit
 assert "var do_capture:=evidence_stills" in edit
@@ -43,6 +46,15 @@ assert "Get-FileHash" in bootstrap and "Expand-Archive" in bootstrap
 assert "Invoke-WebRequest" in bootstrap
 assert "a7-bootstrap-ffmpeg-windows.ps1" in recorder
 assert "A7_EVIDENCE_REQUIRES_INTERACTIVE_DESKTOP" in recorder
+assert "ddagrab_nvenc" in recorder and "gdigrab_x264" in recorder
+assert "-c:v h264_nvenc" in recorder and "dup_frames=0" in recorder
+assert "-fps_mode passthrough" in recorder
+assert "A7_EVIDENCE_DDAGRAB_FILTER_UNAVAILABLE" in recorder
+assert "A7_EVIDENCE_NVENC_ENCODER_UNAVAILABLE" in recorder
+assert "recorder_mode =" in recorder
+assert "$params.VisualSurfaceFollow = $true" in recorder
+assert "evidence_camera_surface_follow =" in recorder
+assert "evidence_surface_clearance_target_m = 5" in recorder
 assert "gdigrab" in recorder and "-framerate 60" in recorder
 assert "$screen.Width -lt 1920" in recorder and "$screen.Height -lt 1080" in recorder
 assert "desktop_mode_changed = $false" in recorder
@@ -100,6 +112,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ]) + "\n", encoding="utf-8")
     result = module.analyze(folder)
     assert result["route"]["radial_probe_below_eight_count"] == 1
+    assert result["route"]["visual_surface_follow"] is False
     assert result["screenshot_count"] == 1, result
     assert result["screenshots"][0]["dimensions"] == [1920,1080]
     assert result["gates"]["STREAM-18"] == "NOT_QUALIFIED"
