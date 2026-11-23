@@ -8,6 +8,8 @@ param(
     [string] $Scenario = 'shoreline_180s',
     [int] $Seed = 20261119,
     [ValidateRange(0,180)] [double] $Warmup = 20,
+    [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
+    [switch] $A8VisualEvidence,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
     [ValidateSet('ddagrab_nvenc','gdigrab_x264')]
@@ -24,6 +26,14 @@ $etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
+if ($A8VisualEvidence -and ($Mode -ne 'Route' -or $WarmupFrames -ne 1000 -or
+    $Duration -lt 10 -or $Duration -gt 90 -or $SkipVideo -or $PresentMonExe -or
+    $RecorderMode -ne 'ddagrab_nvenc' -or $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
+    throw 'A8_VISUAL_EVIDENCE_REQUIRES_1000_FRAMES_DDAGRAB_NVENC_ROUTE'
+}
+if ($WarmupFrames -gt 0 -and -not $A8VisualEvidence) {
+    throw 'A8_DRAWN_WARMUP_ONLY_WITH_EXPLICIT_VISUAL_MODE'
+}
 if ($NoStills -and -not $SkipVideo) {
     throw 'A7_EVIDENCE_NO_STILLS_ONLY_WITH_SKIP_VIDEO: external video mode already disables Godot readbacks'
 }
@@ -167,6 +177,8 @@ try {
         Seeds = @($Seed)
         Warmup = $Warmup
         Capture = $true
+        WarmupFrames = $WarmupFrames
+        A8VisualEvidence = [bool]$A8VisualEvidence
     }
     if ($Mode -eq 'Route') {
         $params.Duration = $Duration
@@ -248,6 +260,8 @@ try {
         scenario = $Scenario
         seed = $Seed
         warmup_s = $Warmup
+        warmup_frames_requested = $WarmupFrames
+        a8_visual_evidence_requested = [bool]$A8VisualEvidence
         duration_override_s = $(if ($Mode -eq 'Route') { $Duration } else { $null })
         git_sha = (& git -C $root rev-parse HEAD).Trim()
         recording_process_started_epoch_s = $recordingStartedEpochS
