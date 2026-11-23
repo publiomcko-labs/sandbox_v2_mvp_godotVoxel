@@ -99,3 +99,88 @@ Comando atualizado para **todos os quatro cenários e três repetições**, se n
     powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a74-batch-windows.ps1" -Repeats 3 -WarmupFrames 1000
 
 **Não é necessário executar os 12 casos novamente apenas para corrigir a consolidação.** O primeiro próximo experimento útil deverá focalizar a baixa sensibilidade das operações `static_add`/`boundary_add`, somente após avaliar os resumos e decidir um critério visual independente de direção.
+
+
+## A7.4-P1e — investigação final de adição e encerramento experimental
+
+**Fontes auditadas (23/11/2026):** o lote original de 12 capturas
+`batch-20261123-163513-36464` e seu ZIP reprocessado sem modificar
+os arquivos originais, mais o vídeo individual
+`static_add-20261123-161352-42048.zip`. Não foram feitas novas
+gravações nem alterações no motor, terreno ou na baseline A5.
+
+A referência geométrica pré-edição prevê mudanças em 34 raios e usa 87
+controles para `static_add`; para `boundary_add`, são 29 raios
+alterados e 92 controles. Todas as seis edições (3+3) foram aceitas.
+Os três vídeos de cada cenário foram medidos com a **mesma seed e câmera**:
+não são amostras independentes da distribuição de terrenos.
+
+| Indicador | static_add (3 sessões) | boundary_add (3 sessões) |
+| --- | ---: | ---: |
+| Tempo nativo médio do brush | 4,161 ms | 5,607 ms |
+| Raio previsto: média de abs delta Y | 1,706 | 3,862 |
+| Raios de controle: média de abs delta Y | 0,172 | 0,652 |
+| Cobertura com abs delta >= 4 no previsto | 14,7%–17,6% | 62,1% |
+| Cobertura com abs delta >= 4 no controle | 0% | 4,3% |
+| Estado do detector original | NO_CONSISTENT_LUMA_SIGNAL (3/3) | NO_CONSISTENT_LUMA_SIGNAL (3/3) |
+| Assinatura fraca espacial/temporal exploratória | 3/3 | 3/3 |
+
+A inspeção do vídeo individual original de `static_add` (quadros
+2902–2918, recorte 240×240) mostrou que a modificação é uma
+**elevação discreta**, predominantemente uma borda sombreada da mesma
+cor do terreno, não uma mudança forte de cor. A imagem se mantém estável
+antes do brush (incluindo os frames 2902–2906) e muda a partir do frame
+2907, permanecendo até pelo menos 2950. O detector baseado em >=18
+níveis de luminância, ou média >=6 com 70% da máscara alterada, não tem
+sensibilidade suficiente para esse caso: no `static_add`, apenas
+~15–18% dos raios previstos excedem 4 níveis, apesar do contraste relativo
+médio de ~9,9 vezes em relação ao controle.
+
+Foi implementada uma **auditoria separada, exploratória e sem efeito
+nos gates**: `scripts/a74_addition_investigation.py`. Ela lê
+o ZIP compacto existente, exige proveniência de seis execuções,
+dois frames iniciais quietos e ao menos quatro dos cinco frames seguintes
+com alteração espacialmente seletiva (média prevista >=1,2, relação
+previsto/controle >=5, controles <=0,75, cobertura prevista >=12%,
+falsa cobertura <=10%). Rejeita iluminação global, variação apenas
+transitória, mudança anterior à edição e relógio ambíguo. Os limiares
+foram definidos **depois de ver estas evidências** e, portanto, servem
+somente para investigar a causa do falso negativo; **não são critérios
+pré-registrados de aprovação**.
+
+Reprodução CPU-only, sem captura, no checkout A7.4:
+
+    python .\scripts\a74_addition_investigation.py "C:\Dev\sandbox-a7-etw\reports\generated\a74-batch\batch-20261123-163513-36464\a74_batch_summary-reprocessed.zip"
+
+A ferramenta cria `a74_addition_investigation.json` ao lado do ZIP,
+preservando o relatório original. CI contém
+`tests/check_a74_addition_investigation.py` com casos sintéticos
+positivos e controles negativos.
+
+### Decisão de encerramento da A7.4
+
+1. **Edição funcional / aplicação nativa:** aceita em 12/12 processos;
+   tempos médios 4,113–5,715 ms segundo os cenários. Comprovado somente
+   nesse escopo e na mesma seed.
+2. **Alteração visual:** remoção apresenta sinal forte em 3/3 de cada
+   cenário (dois relógios ambíguos por tipo); adição apresenta **sinal
+   visual fraco e repetível em 3/3** de cada cenário, insuficiente para
+   certificação da geometria exata.
+3. **Metodologia temporal:** warmup de 1000 frames e vídeo pós-warmup
+   passaram em piloto gráfico `static_remove-20261123-172130-65272.zip`.
+   Esse teste não qualifica automaticamente todos os cenários.
+4. **Limites:** não há profundidade independente por pixel, nem HID
+   correlacionado a ETW de apresentação. Imagens de aparência não
+   comprovam que o mesh corresponde às profundidades previstas.
+5. **Gates estritos:** `EDIT-100`, `PERF-60`,
+   `STREAM-18`, `VIEW-130`
+   **permanecem NOT_QUALIFIED**.
+
+**A7.4 encerrada como experimento diagnóstico, sem promoção.**
+Nenhuma mudança aplicada à A5/CPU16, nenhum merge do PR experimental.
+Não há justificativa para repetir as 12 capturas novamente apenas para
+aumentar a confiança de um detector de luminância incapaz de medir
+profundidade. A próxima campanha, se solicitada, deve priorizar
+as metas de 60 FPS, continuidade visual a 18 m/s e alcance 130 m,
+ou implantar uma prova independente de profundidade/present para EDIT-100
+em um experimento distinto.
