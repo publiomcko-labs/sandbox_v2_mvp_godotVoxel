@@ -129,7 +129,7 @@ jobs:
       - name: A7.4 GDScript pilot parser only (no visual qualification)
         shell: powershell
         run: |
-          & .\.tools\godot.exe --headless --path .\godot --check-only --script res://tests/a74_pilot.gd
+          & .\.tools\godot.exe --headless --path .\godot --script res://tests/a74_parse_check.gd
           if ($LASTEXITCODE -ne 0) { throw 'A74_GDSCRIPT_PARSE_FAIL' }
       - name: Headless module and GDExtension smoke
         shell: powershell
