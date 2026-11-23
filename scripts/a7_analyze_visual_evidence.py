@@ -164,6 +164,8 @@ def analyze(folder: Path) -> dict:
     video = manifest.get("video_path")
     if video and (foreground_status is None or foreground_status.get("verified") is not True):
         problems.append("No verified foreground Godot window at start of desktop capture")
+    if video and (foreground_status is None or foreground_status.get("continuity_verified") is not True):
+        problems.append("Godot foreground continuity across the full capture not verified")
     video_size = None
     if video:
         path = Path(video)
@@ -285,6 +287,7 @@ def analyze(folder: Path) -> dict:
         "video_container_available": video_valid,
         "video_bytes_observed": video_size,
         "godot_foreground_verified_at_start": foreground_status is not None and foreground_status.get("verified") is True,
+        "godot_foreground_verified_continuously": foreground_status is not None and foreground_status.get("continuity_verified") is True,
         "godot_foreground_provenance": foreground_status,
         "video_timeline": video_timeline,
         "screenshots": screenshots,
