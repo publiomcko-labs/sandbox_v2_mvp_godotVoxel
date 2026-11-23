@@ -179,8 +179,23 @@ def analyze(folder: Path) -> dict:
     )
     if not video_valid:
         problems.append("Continuous 60fps 1080p desktop recording not available/verified")
-    if manifest.get("video_actual_fps_verified") is not True:
-        problems.append("Actual captured video FPS/timestamps not independently verified")
+    video_timeline = None
+    timeline_path = folder / "a7_video_timeline.json"
+    if timeline_path.is_file():
+        video_timeline = read_json(timeline_path)
+        if (video_timeline.get("schema") != "a7_video_timeline_v1"
+                or not isinstance(video_timeline.get("frame_integrity"),dict)
+                or video_timeline.get("video_name") != (
+                    Path(video.replace("\\","/")).name if isinstance(video,str) else None)):
+            problems.append("Video timeline provenance mismatch or invalid schema")
+            video_timeline = None
+    if video_valid and video_timeline is None:
+        problems.append("CPU-side frame timestamp and marker analysis not yet produced")
+    elif video_timeline is not None:
+        if not video_timeline.get("video_fps_60_diagnostic"):
+            problems.append("Recorded video cadence below 59 observed frames/s")
+        if not video_timeline.get("marker",{}).get("alignment_verified"):
+            problems.append("No reliable marker sequence and video/Godot clock alignment")
     if mode == "Route":
         moving_samples = [x for x in trace if x.get("type") == "sample" and x.get("phase") == "moving"]
         radial_low = [x.get("t_s") for x in moving_samples
@@ -259,6 +274,7 @@ def analyze(folder: Path) -> dict:
         "mode": mode, "scenario": scenario, "seed": seed,
         "video_container_available": video_valid,
         "video_bytes_observed": video_size,
+        "video_timeline": video_timeline,
         "screenshots": screenshots,
         "screenshot_count": len(screenshots),
         "route": route_result, "edit": edit_result,
