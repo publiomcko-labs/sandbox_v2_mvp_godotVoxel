@@ -132,8 +132,14 @@ jobs:
       - name: A7.4 GDScript pilot parser only (no visual qualification)
         shell: powershell
         run: |
-          & .\.tools\godot.exe --headless --path .\godot --script res://tests/a74_parse_check.gd
-          if ($LASTEXITCODE -ne 0) { throw 'A74_GDSCRIPT_PARSE_FAIL' }
+          # The Godot .exe is a Windows GUI subsystem binary. Direct '&' can
+          # return before it exits in Windows PowerShell. Wait for the actual PID.
+          $editor = (Resolve-Path .\.tools\godot.exe).Path
+          $project = (Resolve-Path .\godot).Path
+          $quotedProject = '"' + $project + '"'
+          $check = Start-Process -FilePath $editor -ArgumentList @('--headless','--path',$quotedProject,'--script','res://tests/a74_parse_check.gd') -Wait -PassThru -NoNewWindow
+          Write-Host "A74_GDSCRIPT_PROCESS_EXIT=$($check.ExitCode)"
+          if ($check.ExitCode -ne 0) { throw "A74_GDSCRIPT_PARSE_FAIL exit=$($check.ExitCode)" }
       - name: A1 deterministic SDF and scene smoke
         shell: powershell
         run: ./scripts/a1-smoke-windows.ps1
