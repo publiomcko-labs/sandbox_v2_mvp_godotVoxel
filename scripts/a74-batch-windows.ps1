@@ -3,13 +3,18 @@ param(
     [string[]] $Scenarios = @('static_remove','static_add','boundary_remove','boundary_add'),
     [ValidateRange(1,10)] [int] $Repeats = 3,
     [ValidateRange(5,180)] [int] $Warmup = 45,
-    [int[]] $Seeds = @(20261119),
+    [string] $SeedList = '20261119',
     [string] $FfmpegExe = '',
     [switch] $ContinueOnFailure,
     [switch] $FullArchive
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# -File does not reliably bind a comma-delimited string to [int[]]; parse it
+# explicitly so the documented CLI works in Windows PowerShell 5.1.
+try {
+    $Seeds = @($SeedList.Split(',') | ForEach-Object { [int]::Parse($_.Trim()) })
+} catch { throw "A74_BATCH_INVALID_SEED_LIST $SeedList" }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runner = Join-Path $PSScriptRoot 'a74-pilot-windows.ps1'
 $reporter = Join-Path $PSScriptRoot 'a74_batch_report.py'
