@@ -53,7 +53,7 @@ if ($PresentMonExe) {
     # Without ETW privileges PresentMon 2.6.0 exits 6, and a 100-edit
     # campaign cannot be correlated to true displayed frames.
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
     $isAdmin = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
     $perfSid = 'S-1-5-32-559' # BUILTIN Performance Log Users (language-independent)
     $isPerfUser = [bool](@($identity.Groups | Where-Object { $_.Value -eq $perfSid }).Count -gt 0)
