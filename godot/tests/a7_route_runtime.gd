@@ -6,6 +6,7 @@ var route: String = ""
 var duration_s := 0.0
 var warmup_s := 45.0
 var warmup_drawn_frames := 0
+var a8_visual_evidence := false
 var _warmup_initial_drawn := 0
 var _warmup_observed_frames := 0
 var _warmup_observed_s := 0.0
@@ -98,6 +99,7 @@ func _ready() -> void:
         "type":"metadata", "schema":"a7_route_v1",
         "route":route, "seed":seed_value, "warmup_s":warmup_s,
         "warmup_drawn_frames_requested":warmup_drawn_frames,
+        "a8_visual_evidence":a8_visual_evidence,
         "duration_s":duration_s, "speed_mps":Routes.SPEED_MPS,
         "render_method":RenderingServer.get_current_rendering_method(),
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
@@ -317,6 +319,7 @@ func _finish() -> void:
         "warmup_drawn_frames_requested":warmup_drawn_frames,
         "warmup_drawn_frames_observed":_warmup_observed_frames,
         "warmup_observed_s":_warmup_observed_s,
+        "a8_visual_evidence":a8_visual_evidence,
         "ci_smoke":ci_smoke, "capture":capture,
         "screenshot_interval_s":screenshot_interval_s,
         "vsync_off_requested":vsync_off_requested,
