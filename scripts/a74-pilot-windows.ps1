@@ -3,7 +3,8 @@ param(
     [string] $Scenario = 'static_remove',
     [ValidateRange(5,180)] [int] $Warmup = 45,
     [int] $Seed = 20261119,
-    [string] $FfmpegExe = ''
+    [string] $FfmpegExe = '',
+    [string] $OutputDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -39,7 +40,14 @@ $ff = (Resolve-Path -LiteralPath $FfmpegExe).Path
 $ffprobe = Join-Path (Split-Path $ff -Parent) 'ffprobe.exe'
 if (-not (Test-Path -LiteralPath $ffprobe)) { throw 'A74_FFPROBE_MISSING' }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$folder = Join-Path $root "reports/generated/a74-pilot/$Scenario-$stamp-$PID"
+$folder = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else {
+    Join-Path $root "reports/generated/a74-pilot/$Scenario-$stamp-$PID"
+}
+$generated = [IO.Path]::GetFullPath((Join-Path $root 'reports/generated')).TrimEnd('\\') + '\\'
+if (-not ([IO.Path]::GetFullPath($folder)).StartsWith($generated, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'A74_OUTPUT_DIR_MUST_BE_UNDER_REPORTS_GENERATED'
+}
+if (Test-Path -LiteralPath $folder) { throw "A74_OUTPUT_DIR_ALREADY_EXISTS $folder" }
 New-Item -ItemType Directory -Force -Path $folder | Out-Null
 $video = Join-Path $folder 'desktop-1080p-60fps.mkv'
 $previousOut = $env:A74_OUTPUT_DIR
