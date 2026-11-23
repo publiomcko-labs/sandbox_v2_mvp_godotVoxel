@@ -16,6 +16,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A7: campanha de aceite final e matriz PASS/FAIL/NOT_QUALIFIED](docs/A7_IMPLEMENTACAO.md)
 - [A7.2: encerramento funcional (300 edições, limitações e próxima intervenção)](docs/A7_2_ENCERRAMENTO_FUNCIONAL.md)
 - [A7.1–A7.3: evidência gráfica, ETW e auditoria de pixels](docs/A7_VISUAL_EDIT_EVIDENCE.md)
+- [A7.4 experimental: piloto de geometria pré-edição e vídeo, sem aceite automático](docs/A7_4_GEOMETRIC_REFERENCE_PILOT.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
