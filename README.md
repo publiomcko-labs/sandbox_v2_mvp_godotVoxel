@@ -18,6 +18,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A7.1–A7.3: evidência gráfica, ETW e auditoria de pixels](docs/A7_VISUAL_EDIT_EVIDENCE.md)
 - [A8-P0: diagnóstico de FPS, 18 m/s e sondas de 130 m, com warmup de 1.000 frames](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md)
 - [A8-P2: prova visual de rotas a 18 m/s e revisão manual de 130 m](docs/A8_2_VISUAL_STREAMING_EVIDENCE.md)
+- [A8-P3: oráculo SDF independente para 60 pixels do vídeo e classificação espacial dentro/fora dos 130 m](docs/A8_3_HORIZON_DEPTH_ORACLE.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
@@ -99,3 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-p2-visual-windo
 ```
 
 Resultado: `reports/generated/a7-visual-evidence/evidence-.../a8_visual_evidence.zip` (contém vídeo original). Revisão humana de fissuras, regiões, rochas e água continua obrigatória.
+
+## A8-P3 — localização espacial independente, sem nova GPU
+
+A8-P2 encontrou cinco pops no horizonte a intervalos espaciais de aproximadamente 128m. O P3 congela 60 pixels do vídeo e executa um oráculo procedural SDF sobre a câmera/replay da A7 no runner CPU, sem alterar A5 CPU16, LOD ou streaming. O resultado identifica **terreno esperado**, não profundidade realmente desenhada. Ver [`docs/A8_3_HORIZON_DEPTH_ORACLE.md`](docs/A8_3_HORIZON_DEPTH_ORACLE.md). Todos os gates continuam NOT_QUALIFIED.
