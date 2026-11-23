@@ -156,6 +156,9 @@ try {
     }
     if ($Mode -eq 'Route') {
         $params.Duration = $Duration
+        if (@('shoreline_180s','rocks_water_180s') -contains $Scenario) {
+            $params.VisualSurfaceFollow = $true
+        }
         # External video: ZERO in-engine GPU readbacks (no stutter induced by
         # get_viewport().get_texture().get_image()).
         # Without a video recorder, sample sparingly for static review only.
@@ -260,6 +263,8 @@ try {
         video_capture_valid_container = [bool]$videoValid
         capture_mode_valid = [bool]$captureValid
         in_engine_stills_requested = (-not $NoStills) -and [bool]$SkipVideo
+        evidence_camera_surface_follow = ($Mode -eq 'Route' -and @('shoreline_180s','rocks_water_180s') -contains $Scenario)
+        evidence_surface_clearance_target_m = 5
         in_engine_screenshot_interval_s = $(if ($Mode -eq 'Route' -and $SkipVideo -and -not $NoStills) { 15.0 } else { 0.0 })
         game_run_succeeded = [bool]$childSucceeded
         instrumentation_overhead = 'external recorder and screenshots; NOT comparable PERF-60 measurement'
