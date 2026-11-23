@@ -45,3 +45,13 @@ O workflow A0–A7 cobre CSG, profundidade prevista, direção add/remove, refer
 ## Critério de interrupção
 
 Se não houver raios alterados/controles suficientes, câmera imóvel, foco contínuo ou sincronização válida, não afrouxar limiares para obter PASS. Diagnosticar, registrar e manter NOT_QUALIFIED.
+
+## Auditoria do primeiro piloto real (23/11/2026)
+
+Evidência fornecida: `static_remove-20261123-155735-26860.zip`, commit `6bcd2f9`. Manifesto: Godot=0, FFmpeg=0, foreground_ok=true, 1/1 edição aceita, aplicação nativa 4,131ms. Vídeo 1080p com 3.148 frames; 8/8 marcadores em ordem, alinhamento p99 4,5ms. O vídeo original tem 165 pares de PTS duplicados e intervalo máximo 983ms **fora** do momento da edição, não atribuível automaticamente ao Godot. Na janela da edição (quadros 2926–2938), PTS avançou ~16–17ms sem duplicatas; o primeiro sinal geométrico visível ocorre no quadro 2934.
+
+O analisador P1 original marcou `NO_CONSISTENT_LUMA_SIGNAL` por exigir 18 níveis de alteração **em cada raio**: apenas 3/31 raios previstos e 4/90 controles passaram desse limiar no quadro 2934. Auditoria independente sobre o ROI Gray extraído diretamente do vídeo (ffmpeg, sem reencode visual): nos 31 raios previstos, diferença média de luminância 10,161; nos 90 controles, 2,578. Com limiar de 4 níveis, a cobertura é 83,9% dos raios esperados contra 17,8% dos controles. Um contraste espacial seletivo aparece a partir do frame 2934, cujo PTS alinhado equivale aproximadamente a **33,5 ms após a chamada de brush**. Esse número é `first_oracle_consistent_candidate_ms` aproximado, NÃO o primeiro pixel geometricamente correto ou input-to-photon.
+
+Corretiva A7.4-P1b: manter o teste original de pixels fortes, mas acrescentar um ramo explícito de **contraste espacial relativo** com requisitos simultâneos de cobertura de raios previstos, média de contraste, relação sinal/controle e baixa variação dos controles. Marcar `TIMING_AMBIGUOUS` se houver PTS duplicado, reverso ou gap >34ms **na janela local** de edição. Os testes CPU incluem mudança localizada fraca, iluminação global falsa e PTS duplicado. O relatório original do ZIP **não é alterado** e continua um registro válido do detector anterior.
+
+A revisão visual confirmou uma cavidade de terreno aparecendo após a edição, sem oclusão da janela no trecho avaliado. Ainda não há buffer de profundidade independente, ETW de apresentação alinhado a este piloto nem HID. Todos os gates permanecem `NOT_QUALIFIED`. Próxima aquisição, **somente depois de aprovar CI da corretiva**, pode usar `static_add` para verificar direção oposta antes de boundary ou campanhas amplas.
