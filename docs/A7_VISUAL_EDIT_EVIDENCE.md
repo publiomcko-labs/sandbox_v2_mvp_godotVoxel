@@ -53,29 +53,29 @@ python .\tests\check_a7_visual_edit_evidence.py
 
 **FFmpeg portátil automático:** não é necessário instalar o programa
 no Windows ou alterar o PATH. No primeiro teste gráfico, o script baixa
-a versão 7.1.1 para \`reports/tools/\` e valida seu SHA-256 contra o
-manifesto público versionado de \`microsoft/winget-pkgs\`.
+a versão 7.1.1 para `reports/tools/` e valida seu SHA-256 contra o
+manifesto público versionado de `microsoft/winget-pkgs`.
 
 A7.1 com vídeo externo de 60fps (sem capturas dentro do Godot):
 
-\`\`\`powershell
+```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Route -Scenario shoreline_180s -Duration 30 -Warmup 20
-\`\`\`
+```
 
 A7.2 com vídeo externo e PresentMon ETW do mesmo processo:
 
-\`\`\`powershell
+```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Edit -Scenario boundary_edit_100 -Warmup 45 -PresentMonExe ".\PresentMon.exe"
-\`\`\`
+```
 
 A indexação temporal do vídeo (no runner CPU ou outra máquina, sem reserva
 da GTX 1050 Ti), após transferir os arquivos de evidência, utiliza:
 
-\`\`\`powershell
+```powershell
 python .\scripts\a7_video_timeline.py "CAMINHO_REAL_DA_PASTA_EVIDENCE" --ffmpeg "CAMINHO_FFMPEG_PORTATIL" --ffprobe "CAMINHO_FFPROBE_PORTATIL"
-\`\`\`
+```
 
-O arquivo \`a7_video_timeline.json\` registra os timestamps PTS de cada
+O arquivo `a7_video_timeline.json` registra os timestamps PTS de cada
 frame, cadência e o marcador verde/magenta de sincronização. Sua correlação
 com o relógio do Godot é aproximada; não substitui a verificação dos pixels
 alterados nem profundidade a 130 m.
