@@ -31,8 +31,17 @@ assert "brush_return_epoch_s" in edit and "brush_return_ticks_us" in edit
 assert "target_screen_xy_px" in edit and "target_behind_camera" in edit
 assert "first_correct_presented_pixel_ms" in edit
 assert "video_marker_meaning" in edit and "NOT correct terrain presentation" in edit
+assert 'type":"video_sync' in route
+assert "video_sync_marker_crop_xywh" in route
+assert "ColorRect.new()" in route and "marker_rgb" in route
 assert 'var evidence_stills := evidence and not _flag("no-stills")' in edit
 assert "var do_capture:=evidence_stills" in edit
+bootstrap = (root/"scripts/a7-bootstrap-ffmpeg-windows.ps1").read_text(encoding="utf-8")
+assert "04861D3339C5EBE38B56C19A15CF2C0CC97F5DE4FA8910E4D47E5E6404E4A2D4" in bootstrap
+assert "a7-ffmpeg-7.1.1" in bootstrap
+assert "Get-FileHash" in bootstrap and "Expand-Archive" in bootstrap
+assert "Invoke-WebRequest" in bootstrap
+assert "a7-bootstrap-ffmpeg-windows.ps1" in recorder
 assert "A7_EVIDENCE_REQUIRES_INTERACTIVE_DESKTOP" in recorder
 assert "gdigrab" in recorder and "-framerate 60" in recorder
 assert "$screen.Width -lt 1920" in recorder and "$screen.Height -lt 1080" in recorder
@@ -155,6 +164,40 @@ with tempfile.TemporaryDirectory() as tmp:
     status["etw_events_lost"] = 15
     write_json(folder/"a7_presentmon_status.json", status)
     assert not module.parse_edit_presentmon(folder, brush)["available"]
+
+# Video decoder/marker alignment is deterministic and does not need GPU,
+# video fixtures, third-party Python packages, or a graphical runner.
+_video_spec=importlib.util.spec_from_file_location("a7_video",root/"scripts/a7_video_timeline.py")
+_video=importlib.util.module_from_spec(_video_spec)
+assert _video_spec.loader is not None
+_video_spec.loader.exec_module(_video)
+def patch(r,g,b):
+    return bytes([r,g,b])*64
+assert _video.classify_marker(patch(0,240,0))=="green"
+assert _video.classify_marker(patch(230,0,222))=="magenta"
+assert _video.classify_marker(patch(20,20,20))=="unclassified"
+pts = [0.00,0.016,0.033,0.050,0.066,0.083]
+raw = patch(20,20,20)+patch(0,240,0)*2+patch(230,0,222)*2+patch(0,240,0)
+transitions=_video.marker_transitions(raw,pts)
+assert [x["color"] for x in transitions["transitions"]]==["green","magenta","green"]
+expected=[{"index":i,"color":c,"event_epoch_s":1700000000+p+0.025}
+          for i,c,p in zip((0,1,2),("green","magenta","green"),(0.016,0.050,0.083))]
+aligned=_video.correlate_markers(expected,transitions["transitions"])
+assert aligned["sequence_verified"] and aligned["alignment_verified"], aligned
+assert len(aligned["aligned_events"])==3
+assert aligned["video_epoch_offset_s"] > 1700000000
+assert not _video.correlate_markers(expected,transitions["transitions"][:-1])["alignment_verified"]
+probe={"streams":[{"width":1920,"height":1080,"avg_frame_rate":"60/1"}],
+       "frames":[{"best_effort_timestamp_time":f"{i/60:.8f}"} for i in range(120)]}
+decoded=_video.decode_probe_json(json.dumps(probe))
+assert decoded["frames"]==120
+assert abs(decoded["observed_fps"]-60)<0.01
+probe["streams"][0]["width"]=1280
+try:
+    _video.decode_probe_json(json.dumps(probe))
+    raise AssertionError("Incorrect video resolution accepted")
+except ValueError:
+    pass
 
 # A screenshot-free capture arm must not be blamed for GPU readback
 # stalls in the canonical A7 reporting/acceptance matrix.
