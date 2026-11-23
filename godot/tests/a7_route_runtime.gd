@@ -30,6 +30,7 @@ const A8_SPIKE_MAX_EVENTS := 256
 var a8_spike_trace_enabled := false
 var _a8_spike_events: Array[Dictionary] = []
 var _a8_spike_dropped := 0
+var _a8_spike_interval_total := 0
 var _a8_queue_last_1hz := -1
 var _a8_active_last_1hz := -1
 var _a8_blocked_last_1hz := -1
@@ -308,6 +309,7 @@ func _process(_delta: float) -> void:
             if cpu>0.0: _render_cpu_ms.append(cpu)
             if gpu>0.0: _render_gpu_ms.append(gpu)
     if a8_spike_trace_enabled and dt_ms >= A8_SPIKE_THRESHOLD_MS:
+        _a8_spike_interval_total+=1
         # Snapshot only existing counters; worker/LOD figures are last 1Hz
         # measurements, NOT state at the exact slow frame. No disk writes.
         if _a8_spike_events.size() < A8_SPIKE_MAX_EVENTS:
@@ -364,6 +366,7 @@ func _finish() -> void:
         "measurement_epoch_end_s":Time.get_unix_time_from_system(),
         "frame_count":_intervals.size(),
         "a8_spike_trace_enabled":a8_spike_trace_enabled,
+        "a8_spike_interval_total":_a8_spike_interval_total,
         "a8_spike_event_count":_a8_spike_events.size(),
         "a8_spike_events_dropped":_a8_spike_dropped,
         "frame_start_p50_ms":_percentile(_intervals,0.5),
@@ -404,6 +407,7 @@ func _finish() -> void:
             "seed":seed_value, "threshold_ms":A8_SPIKE_THRESHOLD_MS,
             "warmup_drawn_frames_observed":_warmup_observed_frames,
             "events_recorded":_a8_spike_events.size(),
+            "intervals_over_threshold":_a8_spike_interval_total,
             "events_dropped":_a8_spike_dropped,
             "events":_a8_spike_events,
             "worker_attribution":"LAST_1HZ_SAMPLE_ONLY_NO_INSTANT_CAUSALITY",
