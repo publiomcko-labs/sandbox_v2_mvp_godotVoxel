@@ -43,7 +43,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $folder = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else {
     Join-Path $root "reports/generated/a74-pilot/$Scenario-$stamp-$PID"
 }
-$generated = [IO.Path]::GetFullPath((Join-Path $root 'reports/generated')).TrimEnd('\\') + '\\'
+$generated = [IO.Path]::GetFullPath((Join-Path $root 'reports/generated')).TrimEnd('\') + '\'
 if (-not ([IO.Path]::GetFullPath($folder)).StartsWith($generated, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'A74_OUTPUT_DIR_MUST_BE_UNDER_REPORTS_GENERATED'
 }
