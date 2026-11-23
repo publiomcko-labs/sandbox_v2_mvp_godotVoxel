@@ -65,6 +65,33 @@ with tempfile.TemporaryDirectory() as tmp:
     assert result["automatic_acceptance"] is False
     assert result["first_correct_presented_pixel_ms"] is None
     assert (folder/"a74_batch_trials.csv").is_file()
+    # A local duplicate/gap in video timestamps is a TIMING limitation,
+    # not a failure of a fully accepted native edit or the whole batch.
+    ambiguous_path = folder/trials[2]["relative_path"]/"a74_pilot_review.json"
+    ambiguous = json.loads(ambiguous_path.read_text(encoding="utf-8"))
+    ambiguous["pilot_status"] = "TIMING_AMBIGUOUS"
+    ambiguous["observations"]["status"] = "TIMING_AMBIGUOUS"
+    ambiguous["observations"]["edit_window_invalid_pts"] = True
+    ambiguous["observations"]["first_oracle_consistent_candidate_ms"] = None
+    ambiguous["observations"]["frames_reviewed"][0]["oracle_consistent_luma_candidate"] = True
+    save(ambiguous_path, ambiguous)
+    mixed = batch.summarize(folder)
+    sample = mixed["scenarios"]["static_add"]
+    assert mixed["collection_complete"] and mixed["invalid_runs"] == 0
+    assert mixed["video_timing_ambiguous_runs"] == 1
+    assert sample["valid_diagnostic_runs"] == 3
+    assert sample["timing_ambiguous"] == 1
+    assert sample["visual_signal_without_usable_timing"] == 1
+    assert sample["native_apply_ms"]["n"] == 3
+    assert sample["video_candidate_ms"]["n"] == 2
+    assert mixed["first_correct_presented_pixel_ms"] is None
+    # Contradictory status/PTS is still rejected rather than auto-qualified.
+    ambiguous["observations"]["edit_window_invalid_pts"] = False
+    save(ambiguous_path, ambiguous)
+    inconsistent = batch.summarize(folder)
+    assert not inconsistent["collection_complete"] and inconsistent["invalid_runs"] == 1
+    ambiguous["observations"]["edit_window_invalid_pts"] = True
+    save(ambiguous_path, ambiguous)
     # A succeeded process with no pixel signal remains VALID for the batch;
     # it is not falsely converted into candidate success or a zero latency.
     save(folder/trials[2]["relative_path"]/"a74_capture_manifest.json", {
