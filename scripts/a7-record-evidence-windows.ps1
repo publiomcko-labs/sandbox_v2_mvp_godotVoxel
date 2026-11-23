@@ -47,6 +47,18 @@ $ffhash = $null
 $presentMonPath = $null
 $presentMonHash = 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
 if ($PresentMonExe) {
+    # This must happen BEFORE starting the desktop recorder or Godot.
+    # Without ETW privileges PresentMon 2.6.0 exits 6, and a 100-edit
+    # campaign cannot be correlated to true displayed frames.
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    $isAdmin = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    $perfSid = 'S-1-5-32-559' # BUILTIN Performance Log Users (language-independent)
+    $isPerfUser = [bool](@($identity.Groups | Where-Object { $_.Value -eq $perfSid }).Count -gt 0)
+    if (-not $isAdmin -and -not $isPerfUser) {
+        throw 'A7_ETW_ACCESS_REQUIRED: launch Windows PowerShell with Run as administrator, or sign in with Performance Log Users membership.'
+    }
+    Write-Host "A7_ETW_PRIVILEGE_PREFLIGHT=PASS elevated=$isAdmin performance_log_user=$isPerfUser"
     if ($Mode -ne 'Edit') {
         throw 'A7_EVIDENCE_ETW_ONLY_SUPPORTED_FOR_EDIT'
     }
@@ -254,6 +266,7 @@ try {
         ffprobe_path = $(if ($ff) { Join-Path (Split-Path -Parent $ff) 'ffprobe.exe' } else { $null })
         presentmon_sha256 = $(if ($presentMonPath) { $presentMonHash.ToLowerInvariant() } else { $null })
         presentmon_requested = [bool]$presentMonPath
+        presentmon_privilege_preflight_passed = [bool]($presentMonPath -and ($isAdmin -or $isPerfUser))
         presentmon_capture_valid = [bool]$etwCaptureValid
         presentmon_capture_error = $etwCaptureError
         etw_cleanup_error = $etwGuardError
