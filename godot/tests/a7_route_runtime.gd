@@ -8,6 +8,16 @@ var warmup_s := 45.0
 var seed_value := 20261119
 var ci_smoke := false
 var capture := false
+# Zero means no in-engine GPU readback; use external desktop recorder.
+# The old 1Hz PNG readback induced large stalls on GTX 1050 Ti.
+var screenshot_interval_s := 30.0
+# Route visualization only: keep camera above the actual terrain surface.
+# The canonical 18m/s benchmark route remains unchanged.
+var visual_surface_follow := false
+var _surface_tool: VoxelTool
+var _surface_hits := 0
+var _surface_misses := 0
+var _minimum_clearance_m := INF
 var vsync_off_requested := false
 var voxel_threads_requested := 0
 
@@ -36,6 +46,8 @@ var _samples := 0
 var _captures := 0
 var _camera_initial_fov := 0.0
 var _measurement_epoch_begin := -1.0
+var _video_sync_marker: ColorRect
+var _video_sync_index := -1
 
 func _ready() -> void:
     _world = get_parent()
@@ -59,6 +71,21 @@ func _ready() -> void:
     _player.set_process_unhandled_input(false)
     _player.global_position = Routes.position_for(route, 0.0)
     _camera_initial_fov = _camera.fov
+    if visual_surface_follow:
+        _surface_tool = _terrain.get_voxel_tool()
+        if _surface_tool == null:
+            push_error("A7_EVIDENCE_SURFACE_TOOL_UNAVAILABLE")
+            get_tree().quit(2)
+            return
+    if capture and DisplayServer.get_name() != "headless":
+        # Compact solid sync patch remains visible in desktop video. Its
+        # transitions anchor *video* PTS to Godot events, not terrain pixels.
+        _video_sync_marker = ColorRect.new()
+        _video_sync_marker.position = Vector2(1860,22)
+        _video_sync_marker.size = Vector2(42,40)
+        _video_sync_marker.color = Color(0.15,0.15,0.15,1.0)
+        _video_sync_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        _world.get_node("HUD").add_child(_video_sync_marker)
     if DisplayServer.get_name() != "headless":
         RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
     _begin_us = Time.get_ticks_usec()
@@ -70,7 +97,12 @@ func _ready() -> void:
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
         "viewport_px":str(get_viewport().get_visible_rect().size),
         "fov_degrees":_camera_initial_fov, "headless":DisplayServer.get_name()=="headless",
-        "capture":capture, "ci_smoke":ci_smoke,
+        "capture":capture, "screenshot_interval_s":screenshot_interval_s,
+        "visual_surface_follow":visual_surface_follow,
+        "visual_clearance_target_m":5.0 if visual_surface_follow else null,
+        "video_sync_marker_crop_xywh":[1888,42,8,8] if capture else null,
+        "video_sync_marker_gate":"CLOCK_ALIGNMENT_ONLY",
+        "ci_smoke":ci_smoke,
         "vsync_off_requested":vsync_off_requested,
         "vsync_mode_actual":int(DisplayServer.window_get_vsync_mode()) if DisplayServer.get_name()!="headless" else -1,
         "engine_max_fps":Engine.max_fps,
@@ -114,6 +146,9 @@ func _sample(phase: String, t: float) -> void:
         "type":"sample", "phase":phase, "t_s":snappedf(t,0.001),
         "player_x":_player.global_position.x, "player_y":_player.global_position.y,
         "player_z":_player.global_position.z, "meshed_radial_probes":hits,
+        "surface_follow_hits":_surface_hits,
+        "surface_follow_misses":_surface_misses,
+        "surface_follow_min_clearance_m":_minimum_clearance_m if is_finite(_minimum_clearance_m) else null,
         "mesh_blocks":_terrain.debug_get_mesh_block_count(),
         "data_blocks":_terrain.debug_get_data_block_count(),
         "rocks_instanced":_instancer.debug_get_instance_counts(),
@@ -131,7 +166,22 @@ func _sample(phase: String, t: float) -> void:
     _samples += 1
 
 func _set_path(t: float) -> void:
-    _player.global_position = Routes.position_for(route,t)
+    var target: Vector3 = Routes.position_for(route,t)
+    if visual_surface_follow:
+        # Raycast against the loaded SDF data in the player's neighborhood.
+        # This is EVIDENCE ONLY, never a gameplay or performance change.
+        # It prevents a fixed y=7 path crossing terrain hills and displaying
+        # the underside of meshes as if rocks or water had vanished.
+        var above := Vector3(target.x,80.0,target.z)
+        var hit: VoxelRaycastResult = _surface_tool.raycast(above,Vector3.DOWN,160.0)
+        if hit == null:
+            _surface_misses += 1
+        else:
+            var surface_y: float = above.y-hit.distance
+            target.y = maxf(target.y,surface_y+5.0)
+            _surface_hits += 1
+            _minimum_clearance_m = minf(_minimum_clearance_m,target.y-surface_y)
+    _player.global_position = target
     if Routes.is_stationary(route):
         # 360-degree coverage rotation over eight fixed headings.
         _player.rotation.y = -TAU * fposmod(t,45.0)/45.0
@@ -146,14 +196,26 @@ func _set_path(t: float) -> void:
 func _capture(t: float) -> void:
     var img: Image = get_viewport().get_texture().get_image()
     if img==null or img.is_empty():
-        _emit({"type":"screenshot_failed","t_s":t})
+        _emit({"type":"screenshot_failed","t_s":t,"reason":"empty_viewport_image"})
         return
-    var name := "a7_%s_s%04d.png" % [route,int(t)]
+    var name := "a7_%s_ms%08d.png" % [route,int(round(t*1000.0))]
+    var captured_epoch_s := Time.get_unix_time_from_system()
+    var captured_ticks_us := Time.get_ticks_usec()
     var err := img.save_png(_outdir.path_join(name))
     if err == OK:
         _captures += 1
-        _emit({"type":"screenshot","t_s":t,"name":name,
-               "note":"GPU readback imposes overhead; evidence-only run, never use for PERF-60"})
+        _emit({
+            "type":"screenshot","t_s":t,"name":name,
+            "capture_epoch_s":captured_epoch_s,
+            "capture_ticks_us":captured_ticks_us,
+            "player_xyz":[_player.global_position.x,_player.global_position.y,_player.global_position.z],
+            "camera_yaw_rad":_player.rotation.y,
+            "camera_pitch_rad":_camera.rotation.x,
+            "view_130_geometric_probe_hits":_probes(),
+            "screen_size_px":[img.get_width(),img.get_height()],
+            "pixel_depth_verified":false,
+            "note":"Viewport readback is sampled and may perturb frame timings. External 60fps desktop video + depth review is required for strict STREAM-18 and VIEW-130."
+        })
     else:
         _emit({"type":"screenshot_failed","t_s":t,"error":err})
 
@@ -180,6 +242,22 @@ func _process(_delta: float) -> void:
         return
     var t := minf(duration_s,float(now-_movement_begin_us)/1000000.0)
     _set_path(t)
+    if is_instance_valid(_video_sync_marker):
+        # Alternate two high-contrast colors every elapsed second. A separate
+        # decoder can verify consecutive transitions and estimate the offset
+        # between FFmpeg PTS and Godot epoch, without GPU readback.
+        var sync_index := int(floor(t))
+        if sync_index != _video_sync_index:
+            _video_sync_index = sync_index
+            var green := sync_index%2 == 0
+            _video_sync_marker.color = Color(0.0,1.0,0.0,1.0) if green else Color(1.0,0.0,1.0,1.0)
+            _emit({
+                "type":"video_sync","index":sync_index,"route_t_s":t,
+                "event_epoch_s":Time.get_unix_time_from_system(),
+                "event_ticks_us":Time.get_ticks_usec(),
+                "marker_rgb":"00ff00" if green else "ff00ff",
+                "alignment_only":true
+            })
     var dt_ms := float(now-_previous_us)/1000.0
     _previous_us=now
     if dt_ms>0.0:
@@ -196,9 +274,12 @@ func _process(_delta: float) -> void:
     if t>=_next_sample_s:
         _sample("moving",t)
         _next_sample_s+=1.0
-    if capture and not ci_smoke and t>=_next_screenshot_s:
+    if capture and screenshot_interval_s>0.0 and not ci_smoke and t>=_next_screenshot_s:
+        # Diagnostic-only, opt-in readback. An external 60fps recorder is the
+        # default for continuous evidence because get_image() blocks rendering.
+        # Never use sampled PNG intervals as a PERF-60 measurement.
         _capture(t)
-        _next_screenshot_s+=30.0
+        _next_screenshot_s+=screenshot_interval_s
     if t>=duration_s:
         _finish()
 
@@ -215,6 +296,7 @@ func _finish() -> void:
         "schema":"a7_route_v1","route":route,"seed":seed_value,
         "duration_s":duration_s,"warmup_s":warmup_s,
         "ci_smoke":ci_smoke, "capture":capture,
+        "screenshot_interval_s":screenshot_interval_s,
         "vsync_off_requested":vsync_off_requested,
         "vsync_mode_actual":int(DisplayServer.window_get_vsync_mode()) if DisplayServer.get_name()!="headless" else -1,
         "engine_max_fps":Engine.max_fps,
@@ -238,6 +320,10 @@ func _finish() -> void:
         "first_eight_mesh_probes_ms":_ready_at_ms,
         "samples":_samples,
         "screenshots":_captures,
+        "visual_surface_follow":visual_surface_follow,
+        "surface_follow_hits":_surface_hits,
+        "surface_follow_misses":_surface_misses,
+        "minimum_surface_clearance_m":_minimum_clearance_m if is_finite(_minimum_clearance_m) else null,
         "frame_start_interval_target_16_7":
             "EXCEEDED" if _over16>0 else "NOT_EXCEEDED",
         "perf_60_full_present_gate":"NOT_QUALIFIED",

@@ -1,6 +1,6 @@
 # Sandbox V2 — MVP A | Godot + Voxel Tools + C++
 
-**Estado:** A0 build/API/smoke aprovados no CI e renderização local confirmada; A1 em implementação. Metas de desempenho e cobertura real ainda não qualificadas.
+**Estado experimental (23/11/2026):** baseline A5/CPU16 preservada; A7.2 encerrada funcionalmente (`FUNCTIONAL_COMPLETE_WITH_LIMITATIONS`, 300/300 edições aceitas). A7.3 realizou análise offline de pixels. Os gates estritos `PERF-60`, `STREAM-18`, `VIEW-130` e `EDIT-100` permanecem `NOT_QUALIFIED`; nenhuma promoção/merge da PR #16.
 
 MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 integrado e lógica nativa em C++20. Meta final: 60 FPS/16,7 ms por frame completo, movimento contínuo de 18 m/s sem lacunas, raio visual efetivo de 130 m em 360°, edição visível <=100 ms, rochas físicas, água básica e persistência.
 
@@ -14,6 +14,8 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A4: rochas em MultiMesh, promoção para RigidBody e estado persistido](docs/A4_IMPLEMENTACAO.md)
 - [A5: oceano y=0, empuxo, arrasto, corrente e nado](docs/A5_IMPLEMENTACAO.md)
 - [A7: campanha de aceite final e matriz PASS/FAIL/NOT_QUALIFIED](docs/A7_IMPLEMENTACAO.md)
+- [A7.2: encerramento funcional (300 edições, limitações e próxima intervenção)](docs/A7_2_ENCERRAMENTO_FUNCIONAL.md)
+- [A7.1–A7.3: evidência gráfica, ETW e auditoria de pixels](docs/A7_VISUAL_EDIT_EVIDENCE.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.

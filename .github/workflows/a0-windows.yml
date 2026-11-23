@@ -15,7 +15,11 @@ concurrency:
 
 jobs:
   smoke:
-    runs-on: [self-hosted, Windows, X64]
+    # Experimental branch: CPU/generic host ONLY. This dedicated label must
+    # be placed on DESKTOP-T0U6S55, never on DESKTOP-SAFGO15 (GTX 1050 Ti).
+    # Until that label exists this job remains queued rather than occupying
+    # the GPU baseline runner that other projects need.
+    runs-on: [self-hosted, Windows, X64, cpu-only]
     # Process-scoped policy; no persistent changes to the Windows runner.
     env:
       PSExecutionPolicyPreference: Bypass
@@ -29,6 +33,13 @@ jobs:
         with:
           path: a0-integration-isolated
           clean: false
+      - name: Confirm generic CPU Windows host (never reserve GTX 1050 Ti)
+        shell: powershell
+        run: |
+          if ($env:COMPUTERNAME -ne 'DESKTOP-T0U6S55') {
+            throw "A7_CPU_RUNNER_HOST_MISMATCH expected=DESKTOP-T0U6S55 actual=$env:COMPUTERNAME"
+          }
+          Write-Host "A7_CPU_RUNNER_CONFIRMED machine=$env:COMPUTERNAME"
       - name: Set up uv (no machine-wide Python install)
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -82,10 +93,16 @@ jobs:
       - name: A7 ETW presentation parser, clock, loss and probe regression contracts
         shell: powershell
         run: python tests/check_a7_streaming_present.py
+      - name: A7.1/A7.2 independent visual and edit evidence contracts
+        shell: powershell
+        run: python tests/check_a7_visual_edit_evidence.py
+      - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
+        shell: powershell
+        run: python tests/check_a7_pixel_roi_review.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null

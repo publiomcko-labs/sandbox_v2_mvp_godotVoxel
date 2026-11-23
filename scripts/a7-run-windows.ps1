@@ -12,12 +12,16 @@ param(
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
+    [ValidateRange(0,300)] [double] $ScreenshotIntervalSeconds = 30.0,
+    [switch] $EditNoStills,
+    [switch] $VisualSurfaceFollow,
     [switch] $CiSmoke,
     [switch] $VsyncOff,
     [ValidateRange(0,48)] [int] $VoxelThreads = 0,
     [switch] $ResourceTelemetry,
     [string] $PresentMonExe = '',
     [switch] $PresentMonNoGpu,
+    [switch] $EvidenceOnlyPresentMon,
     [ValidateRange(0,600)] [double] $PresentMonStartDelaySeconds = 0,
     [ValidateRange(0,600)] [double] $PresentMonCaptureSeconds = 0
 )
@@ -32,6 +36,9 @@ if (-not (Test-Path $exe) -or -not (Test-Path $dll)) {
 }
 if ($PresentMonExe -and (-not (Test-Path -LiteralPath $PresentMonExe))) { throw "A7 PresentMon executable missing: $PresentMonExe" }
 if ($PresentMonNoGpu -and -not $PresentMonExe) { throw 'A7_NO_GPU_ETW_REQUIRES_PRESENTMON' }
+if ($EvidenceOnlyPresentMon -and (-not $PresentMonExe -or -not $Capture -or $Scenario -notin @('edit_idle_100','edit_moving_100','boundary_edit_100'))) {
+    throw 'A7_EDIT_PRESENTMON_REQUIRES_EXPLICIT_CAPTURE_AND_EDIT_SCENARIO'
+}
 if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
     if (-not $PresentMonExe -or -not $ResourceTelemetry -or $PresentMonStartDelaySeconds -le 0 -or $PresentMonCaptureSeconds -le 0) {
         throw 'A7_ETW_SLICE_REQUIRES_PRESENTMON_RESOURCE_TELEMETRY_DELAY_AND_CAPTURE_DURATION'
@@ -40,8 +47,14 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
         throw 'A7_ETW_SLICE_OUTSIDE_REQUESTED_GAME_RUNTIME'
     }
 }
-if ($PresentMonExe -and ($CiSmoke -or $Full -or $Capture -or $VoxelThreads -ne 0)) {
-    throw 'A7 PresentMon ETW is restricted to non-headless isolated timed routes with automatic voxel threads and no screenshot readback'
+if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
+    throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
+}
+if ($VisualSurfaceFollow -and (-not $Capture -or $CiSmoke -or $Scenario -notin @('shoreline_180s','rocks_water_180s'))) {
+    throw 'A7_VISUAL_SURFACE_FOLLOW_REQUIRES_EXPLICIT_SHORELINE_OR_ROCKS_EVIDENCE_MODE'
+}
+if ($EditNoStills -and (-not $Capture -or $Scenario -notin @('edit_idle_100','edit_moving_100','boundary_edit_100'))) {
+    throw 'A7_EDIT_NO_STILLS_REQUIRES_EVIDENCE_CAPTURE'
 }
 if ($Capture -and $Full) {
     throw 'A7 refuses screenshot overhead inside comparable full performance campaign; use a separate -Capture evidence run'
@@ -100,11 +113,15 @@ $manifest = [ordered]@{
     git_sha=$head; baseline_checkpoint='0c3fee959576d0a1faec9ceecffb4b132a65558b'
     baseline='A5 CPU16 GL Compatibility'; full=[bool]$Full
     ci_smoke=[bool]$CiSmoke; capture=[bool]$Capture
+    screenshot_interval_s=$ScreenshotIntervalSeconds
+    edit_no_stills=[bool]$EditNoStills
+    visual_surface_follow=[bool]$VisualSurfaceFollow
     resource_diagnostic=[bool]($VsyncOff -or $VoxelThreads -ne 0 -or $ResourceTelemetry)
     vsync_off_requested=[bool]$VsyncOff
     voxel_threads_requested=$VoxelThreads
     process_cpu_sampling=[bool]$ResourceTelemetry
     presentmon_requested=[bool]$PresentMonExe
+    evidence_only_presentmon=[bool]$EvidenceOnlyPresentMon
     presentmon_gpu_tracking_requested=[bool]($PresentMonExe -and -not $PresentMonNoGpu)
     presentmon_start_delay_s=$PresentMonStartDelaySeconds
     presentmon_capture_duration_s=$PresentMonCaptureSeconds
@@ -169,6 +186,9 @@ foreach ($name in $scenarios) {
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
+            if (-not $isEdit -and $VisualSurfaceFollow) { $argsList += '--visual-surface-follow' }
+            if ($isEdit -and $EditNoStills) { $argsList += '--no-stills' }
+            if (-not $isEdit -and $Capture) { $argsList += "--screenshot-interval-s=$ScreenshotIntervalSeconds" }
             if ($CiSmoke) { $argsList += '--ci-smoke' }
             if (-not $isEdit) {
                 if ($VsyncOff) { $argsList += '--vsync-off' }
@@ -190,6 +210,69 @@ foreach ($name in $scenarios) {
                 throw "A7_RUN_START_FAIL scenario=$name seed=$seed rep=$r"
             }
             $gameTimer = [System.Diagnostics.Stopwatch]::StartNew()
+            # Preserve the focus failure until the owned PresentMon collector
+            # has fully stopped/flushed the CSV. Throwing from the watchdog
+            # previously skipped collector cleanup and locked ZIP archiving.
+            $foregroundFailure = $null
+            if ($Capture -and -not $CiSmoke) {
+                # Desktop Duplication records whatever is in the foreground.
+                # The A7.2 capture of 2026-11-23 only saw 68/100 color
+                # changes because an unrelated desktop window obscured Godot.
+                # Pin the real game window to foreground before warmup/edits.
+                if (-not ('A7NativeFocus' -as [type])) {
+                    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class A7NativeFocus {
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+                }
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                $windowReady = $false
+                while ([DateTime]::UtcNow -lt $deadline -and -not $p.HasExited) {
+                    $p.Refresh()
+                    $handle = $p.MainWindowHandle
+                    if ($handle -ne [IntPtr]::Zero) {
+                        [void][A7NativeFocus]::ShowWindowAsync($handle,9)
+                        [void][A7NativeFocus]::SetForegroundWindow($handle)
+                        Start-Sleep -Milliseconds 200
+                        [uint32]$frontPid = 0
+                        [void][A7NativeFocus]::GetWindowThreadProcessId(
+                            [A7NativeFocus]::GetForegroundWindow(),[ref]$frontPid)
+                        if ($frontPid -eq $p.Id) {
+                            $windowReady = $true
+                            break
+                        }
+                    }
+                    Start-Sleep -Milliseconds 250
+                }
+                if (-not $windowReady) {
+                    try { if (-not $p.HasExited) { $p.Kill() } } catch {}
+                    throw "A7_EVIDENCE_GAME_FOREGROUND_REQUIRED scenario=$name pid=$($p.Id): cannot verify unobstructed capture; close other windows and run in interactive desktop"
+                }
+                $foregroundStatus = [ordered]@{
+                    schema='a7_foreground_v1'
+                    game_pid=$p.Id
+                    foreground_pid=$frontPid
+                    foreground_verified_epoch_s=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                    verified=$true
+                    note='Foreground PID verified at startup only. Occlusion later still requires independent video review.'
+                }
+                # This is an OrderedDictionary. Use real entries (not
+                # PowerShell extended properties) so ConvertTo-Json preserves
+                # the status and strict-mode mutation is reliable in PS 5.1.
+                $foregroundStatus['continuity_verified'] = $false
+                $foregroundStatus['continuous_check_interval_ms'] = 200
+                $foregroundStatus['checks'] = 0
+                $foregroundStatus['foreground_loss_detected'] = $false
+                $foregroundStatus | ConvertTo-Json -Depth 4 |
+                    Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                Write-Host "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED pid=$($p.Id) continuous_watchdog=True"
+            }
             $pmProcess = $null
             $pmCsv = Join-Path $folder 'a7_presentmon.csv'
             $pmStatusPath = Join-Path $folder 'a7_presentmon_status.json'
@@ -227,6 +310,10 @@ foreach ($name in $scenarios) {
                     # if --terminate_on_proc_exit did not close the collector immediately.
                     $pmTimedSeconds = if ($PresentMonCaptureSeconds -gt 0) {
                         [int][Math]::Ceiling($PresentMonCaptureSeconds)
+                    } elseif ($isEdit -and $EvidenceOnlyPresentMon) {
+                        # 100 scripted edits at 10Hz plus startup. PresentMon
+                        # will terminate early on game PID exit if appropriate.
+                        [int][Math]::Ceiling($Warmup + 30.0)
                     } else {
                         [int][Math]::Ceiling($Warmup + $Duration + 8.0)
                     }
@@ -346,6 +433,87 @@ foreach ($name in $scenarios) {
                 $resourceSummary | ConvertTo-Json -Depth 4 |
                     Set-Content -LiteralPath $resourceSummaryPath -Encoding UTF8
                 Write-Host "A7_RESOURCE_TELEMETRY_WRITTEN samples=$count path=$resourceSummaryPath"
+            } elseif ($Capture -and -not $CiSmoke) {
+                # Enforce foreground continuity throughout warmup and edit.
+                # The old check covered only startup. In boundary_edit_100 the
+                # browser obscured all 100 video markers after startup.
+                # Detect focus loss promptly and stop, rather than recording
+                # private desktop content or presenting invalid visual evidence.
+                while (-not $p.WaitForExit(200)) {
+                    [uint32]$watchForegroundPid = 0
+                    [void][A7NativeFocus]::GetWindowThreadProcessId(
+                        [A7NativeFocus]::GetForegroundWindow(),[ref]$watchForegroundPid)
+                    $foregroundStatus.checks = [int]$foregroundStatus.checks + 1
+                    if ($watchForegroundPid -ne $p.Id) {
+                        # The foreground PID changes legitimately when Godot
+                        # exits, sometimes before WaitForExit(200) notices.
+                        # boundary_edit_100 20261123-140948 produced 100/100
+                        # synced markers; the browser returned only AFTER the
+                        # final edit and A7_EDIT_REPORT_OK. Distinguish normal
+                        # completion from genuine occlusion, without weakening
+                        # the watchdog during the actual edit workload.
+                        $reportName = if ($isEdit) { 'a7_edits.json' } else { 'a7_route.json' }
+                        $endReportPath = Join-Path $folder $reportName
+                        $completedWorkload = $false
+                        if (Test-Path -LiteralPath $endReportPath -PathType Leaf) {
+                            try {
+                                $endReport = Get-Content -LiteralPath $endReportPath -Raw | ConvertFrom-Json
+                                if ($isEdit) {
+                                    $completedWorkload = (
+                                        $endReport.schema -eq 'a7_edit_v1' -and
+                                        $endReport.scenario -eq $name -and
+                                        $endReport.seed -eq $seed -and
+                                        $endReport.requested_count -eq 100 -and
+                                        $endReport.accepted_count -eq 100 -and
+                                        $endReport.all_accepted -eq $true -and
+                                        $endReport.sqlite_saved -eq $true -and
+                                        $endReport.edit_100_gate -eq 'NOT_QUALIFIED'
+                                    )
+                                } else {
+                                    $completedWorkload = (
+                                        $endReport.schema -eq 'a7_route_v1' -and
+                                        $endReport.route -eq $name -and
+                                        $endReport.seed -eq $seed -and
+                                        $endReport.frame_count -gt 0 -and
+                                        $endReport.perf_60_full_present_gate -eq 'NOT_QUALIFIED'
+                                    )
+                                }
+                            } catch {
+                                # An incomplete report is never evidence of a
+                                # legitimate end-of-run focus transfer.
+                                $completedWorkload = $false
+                            }
+                        }
+                        if ($completedWorkload -and $p.WaitForExit(1500)) {
+                            $p.Refresh()
+                            if ($p.ExitCode -eq 0) {
+                                $foregroundStatus['exit_focus_transfer_accepted'] = $true
+                                $foregroundStatus['exit_foreground_pid'] = [int]$watchForegroundPid
+                                $foregroundStatus['exit_epoch_s'] = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                                $foregroundStatus['note'] = 'Godot retained foreground during watched workload; complete report and successful process exit observed before accepting normal end-of-run focus transfer. Pixel review still required.'
+                                Write-Host "A7_EVIDENCE_NORMAL_EXIT_FOCUS_TRANSFER game=$($p.Id) foreground=$watchForegroundPid report=$reportName"
+                                break
+                            }
+                        }
+                        $foregroundStatus.foreground_loss_detected = $true
+                        $foregroundStatus.verified = $false
+                        $foregroundStatus.foreground_pid = [int]$watchForegroundPid
+                        $foregroundStatus.lost_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                        $foregroundStatus | ConvertTo-Json -Depth 4 |
+                            Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                        Write-Warning "A7_EVIDENCE_FOREGROUND_LOST game=$($p.Id) actual=$watchForegroundPid"
+                        $foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST: another process assumed focus before verified normal completion; campaign invalid'
+                        try { if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit() } } catch {}
+                        break # Always finalize PresentMon before propagating failure
+                    }
+                }
+                if (-not $foregroundFailure) {
+                    $foregroundStatus.continuity_verified = $true
+                    $foregroundStatus.completed_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                    $foregroundStatus | ConvertTo-Json -Depth 4 |
+                        Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                    Write-Host "A7_EVIDENCE_FOREGROUND_CONTINUITY_CONFIRMED checks=$($foregroundStatus.checks)"
+                }
             } else {
                 $p.WaitForExit()
             }
@@ -392,6 +560,11 @@ foreach ($name in $scenarios) {
             $p.Refresh()
             $exitCode = $p.ExitCode
             $p.Dispose()
+            if ($foregroundFailure) {
+                # This runs after the PresentMon status/CSV flush. The outer
+                # recorder wrapper can now archive all failure diagnostics.
+                throw $foregroundFailure
+            }
             if ($exitCode -ne 0) {
                 throw "A7_RUN_FAIL scenario=$name seed=$seed rep=$r code=$exitCode"
             }

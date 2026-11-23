@@ -61,7 +61,8 @@ def analyze(root: Path) -> dict:
             "frame_intervals_over_20":sum(int(x.get("frame_intervals_over_20_ms",0)) for x in xs),
             "frame_intervals_over_33":sum(int(x.get("frame_intervals_over_33_ms",0)) for x in xs),
             "minimum_meshed_probe_hits":min(int(x.get("min_radial_probe_hits_8",8)) for x in xs),
-            "screen_capture_overhead":any(bool(x.get("capture")) for x in xs)
+            "screen_capture_overhead":any(int(x.get("screenshots",0))>0 for x in xs),
+            "evidence_capture_mode":any(bool(x.get("capture")) for x in xs)
         }
     edited = {}
     for name, xs in sorted(edit_groups.items()):
@@ -93,8 +94,12 @@ def analyze(root: Path) -> dict:
         warnings.append("Baseline checkpoint mismatch.")
     if any(bool(x.get("ci_smoke")) for x in routes+edits):
         warnings.append("Headless smoke cannot qualify visuals or frame performance.")
-    if any(bool(x.get("capture")) for x in routes+edits):
-        warnings.append("Screenshot readback introduces measurement overhead.")
+    in_engine_readbacks = any(int(x.get("screenshots",0))>0 for x in routes) or any(
+        int(x.get("screenshot_count",0))>0 for x in edits)
+    if in_engine_readbacks:
+        warnings.append("In-engine PNG readback introduces non-comparable frame stalls.")
+    elif any(bool(x.get("capture")) for x in routes+edits):
+        warnings.append("Evidence capture mode without in-engine PNG readback remains non-comparable to strict PERF-60.")
     if any(x["minimum_meshed_probe_hits"] < 8 for x in timed.values()):
         warnings.append("At least one mesh radial probe incomplete; potential coverage issue.")
     if any(x["frame_intervals_over_16_7"] for x in timed.values()):

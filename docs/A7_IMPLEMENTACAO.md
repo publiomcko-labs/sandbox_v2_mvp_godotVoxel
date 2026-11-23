@@ -46,3 +46,9 @@ FAIL: resultado comprovado que viola a meta (ex.: aplicação de brush >100ms).
 NOT_QUALIFIED: falta evidência essencial; NÃO é PASS.
 
 Aprovação funcional A3–A5 não constitui qualificação dos quatro gates inegociáveis.
+
+## Encerramento funcional A7.2 e sequência de qualificação
+
+A A7.2 foi encerrada em 23/11/2026 como **`FUNCTIONAL_COMPLETE_WITH_LIMITATIONS`**; ver [termo formal e matriz de evidências](A7_2_ENCERRAMENTO_FUNCIONAL.md). Foram realizadas 300/300 chamadas aceitas (100 em repouso, 100 em movimento, 100 em fronteiras), com persistência SQLite e sincronização visual de marcadores. O analisador A7.3 extraiu candidatos de alteração local de pixels das gravações existentes, sem provar o primeiro pixel **correto**.
+
+**Nenhuma campanha A7.2 deve ser repetida por rotina.** Continuam em `NOT_QUALIFIED`: `PERF-60`, `STREAM-18`, `VIEW-130` e `EDIT-100`. A próxima direção, **A7.4**, é um piloto de referência geométrica independente e sincronização de pixels corretos, antes de qualquer nova campanha ampla; os demais três gates exigem suas próprias provas. A etapa A7 como um todo **não** foi formalmente aprovada ou promovida. Baseline A5/CPU16 e PR #16 draft preservadas.
