@@ -205,6 +205,36 @@ probe={"streams":[{"width":1920,"height":1080,"avg_frame_rate":"60/1"}],
 decoded=_video.decode_probe_json(json.dumps(probe))
 assert decoded["frames"]==120
 assert abs(decoded["observed_fps"]-60)<0.01
+assert decoded["duplicated_timestamp_pairs"]==0
+assert decoded["timestamp_strictly_increasing"] is True
+# Actual NVIDIA capture may retain duplicate frame PTS (millisecond timebase).
+# Preserve all frames for marker correlation; count defects without PASS.
+probe["frames"][19]["best_effort_timestamp_time"]=probe["frames"][18]["best_effort_timestamp_time"]
+dupes=_video.decode_probe_json(json.dumps(probe))
+assert dupes["frames"]==120
+assert dupes["duplicated_timestamp_pairs"]==1
+assert dupes["timestamp_strictly_increasing"] is False
+route_pts=[float(i/60) for i in range(181)]
+route_expected=[
+    {"index":0,"color":"green","event_epoch_s":1700000000.01},
+    {"index":1,"color":"magenta","event_epoch_s":1700000001.01},
+    {"index":2,"color":"green","event_epoch_s":1700000002.01},
+]
+route_observed=[
+    {"frame_index":0,"pts_s":route_pts[0],"color":"green"},
+    {"frame_index":60,"pts_s":route_pts[60],"color":"magenta"},
+    {"frame_index":120,"pts_s":route_pts[120],"color":"green"},
+]
+route_align=_video.correlate_markers(route_expected,route_observed)
+assert route_align["alignment_verified"],route_align
+route_window=_video.route_movement_window(route_pts,route_expected,route_align)
+assert route_window["frames"]==121
+assert abs(route_window["observed_fps"]-60)<0.01,route_window
+assert route_window["duplicated_pts_pairs"]==0
+route_pts[90]=route_pts[89]
+route_window=_video.route_movement_window(route_pts,route_expected,route_align)
+assert route_window["duplicated_pts_pairs"]==1
+assert route_window["frames"]==121
 probe["streams"][0]["width"]=1280
 try:
     _video.decode_probe_json(json.dumps(probe))
