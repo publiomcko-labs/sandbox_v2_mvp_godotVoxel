@@ -3,7 +3,8 @@ param(
     [string] $Scenario = 'straight_18mps_600s',
     [ValidateRange(10,90)] [int] $Duration = 30,
     [ValidateRange(100,10000)] [int] $WarmupFrames = 1000,
-    [int] $Seed = 20261119
+    [int] $Seed = 20261119,
+    [switch] $SpikeTrace
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -27,7 +28,10 @@ try {
     # Reuse the A7 runner, its identical per-frame sampling and its isolated
     # A5 CPU16 world. This is one diagnostic GPU run, not the A7 Full campaign.
     # Capture/ETW are deliberately OFF: they change the rendering workload.
-    & $a7 -Scenario $Scenario -Seeds @($Seed) -Duration $Duration -Warmup 0 -WarmupFrames $WarmupFrames
+    if ($SpikeTrace -and $WarmupFrames -ne 1000) {
+        throw 'A8_SPIKE_TRACE_REQUIRES_EXACTLY_1000_FRAMES'
+    }
+    & $a7 -Scenario $Scenario -Seeds @($Seed) -Duration $Duration -Warmup 0 -WarmupFrames $WarmupFrames -A8SpikeTrace:$SpikeTrace
     if (-not $?) { throw 'A8_A7_ROUTE_RUNNER_FAILED' }
     & python $reporter $folder
     if ($LASTEXITCODE -ne 0) { throw "A8_TRIAGE_FAILED exit=$LASTEXITCODE" }
@@ -47,7 +51,9 @@ $routeFolder = Get-ChildItem -LiteralPath $folder -Directory |
     Where-Object { $_.Name -like ($Scenario + '_seed*') } |
     Select-Object -First 1
 if ($null -eq $routeFolder) { throw 'A8_ROUTE_REPORT_FOLDER_MISSING' }
-foreach ($name in @('a7_route.json','a7_route.jsonl')) {
+$expectedEvidence = @('a7_route.json','a7_route.jsonl')
+if ($SpikeTrace) { $expectedEvidence += 'a8_frame_spikes.json' }
+foreach ($name in $expectedEvidence) {
     $source = Join-Path $routeFolder.FullName $name
     if (-not (Test-Path -LiteralPath $source)) { throw "A8_ROUTE_EVIDENCE_MISSING $name" }
     Copy-Item -LiteralPath $source -Destination $upload -Force
