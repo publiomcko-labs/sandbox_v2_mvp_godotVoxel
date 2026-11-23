@@ -96,6 +96,9 @@ jobs:
       - name: A7.1/A7.2 independent visual and edit evidence contracts
         shell: powershell
         run: python tests/check_a7_visual_edit_evidence.py
+      - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
+        shell: powershell
+        run: python tests/check_a7_pixel_roi_review.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
