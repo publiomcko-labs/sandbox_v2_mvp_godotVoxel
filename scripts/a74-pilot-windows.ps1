@@ -2,6 +2,7 @@ param(
     [ValidateSet('static_remove','static_add','boundary_remove','boundary_add')]
     [string] $Scenario = 'static_remove',
     [ValidateRange(5,180)] [int] $Warmup = 45,
+    [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
     [int] $Seed = 20261119,
     [string] $FfmpegExe = '',
     [string] $OutputDirectory = ''
@@ -65,6 +66,9 @@ $foregroundOk = $false
 $focusObserved = $false
 $focusError = $null
 $runnerError = $null
+$warmupObservedFrames = $null
+$warmupObservedMs = $null
+$recorderHandshakeOk = $false
 try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $ff
@@ -76,18 +80,41 @@ try {
         '-f lavfi -i "ddagrab=output_idx=0:framerate=60:video_size=1920x1080:' +
         'offset_x=0:offset_y=0:draw_mouse=0:dup_frames=0" ' +
         '-fps_mode passthrough -c:v h264_nvenc -preset p1 -cq 18 -bf 0 "' + $video + '"')
-    $recording = New-Object System.Diagnostics.Process
-    $recording.StartInfo = $psi
-    if (-not $recording.Start()) { throw 'A74_FFMPEG_START_FAILED' }
-    Start-Sleep -Seconds 2
-    if ($recording.HasExited) { throw 'A74_FFMPEG_EXITED_EARLY' }
+    # Start Godot first. The 1000 rendered-frame warmup happens without video
+    # capture/encoding. Once its immutable SDF reference is ready, start FFmpeg,
+    # then release Godot to show the eight clock markers and one edit.
     $args = @('--path', ('"' + $project + '"'), '--script', 'res://tests/a74_pilot.gd',
-        '--', "--scenario=$Scenario", "--warmup=$Warmup", "--seed=$Seed")
+        '--', "--scenario=$Scenario", "--warmup=$Warmup",
+        "--warmup-frames=$WarmupFrames", "--seed=$Seed")
     $game = Start-Process -FilePath $godot -ArgumentList $args -WorkingDirectory $root -PassThru
-    Write-Host "A74_PILOT_START scenario=$Scenario game_pid=$($game.Id) recorder_pid=$($recording.Id)"
+    Write-Host "A74_PILOT_START scenario=$Scenario game_pid=$($game.Id) warmup_frames=$WarmupFrames"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $focusWaitUntil = 15.0
+    $readyPath = Join-Path $folder 'a74_ready.json'
+    $releasePath = Join-Path $folder 'a74_capture_start.flag'
     while (-not $game.HasExited) {
+        if (-not $recorderHandshakeOk -and (Test-Path -LiteralPath $readyPath)) {
+            $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
+            if ($ready.schema -ne 'a74_capture_ready_v1' -or
+                $ready.scenario -ne $Scenario -or $ready.seed -ne $Seed -or
+                $ready.camera_fixed -ne $true -or $ready.reference_written -ne $true -or
+                $ready.warmup_frames_requested -ne $WarmupFrames) {
+                throw 'A74_INVALID_CAPTURE_READY_HANDSHAKE'
+            }
+            $warmupObservedFrames = [int]$ready.warmup_frames_observed
+            $warmupObservedMs = [int]$ready.warmup_elapsed_ms
+            if ($WarmupFrames -gt 0 -and $warmupObservedFrames -lt $WarmupFrames) {
+                throw 'A74_WARMUP_INSUFFICIENT_DRAWN_FRAMES'
+            }
+            $recording = New-Object System.Diagnostics.Process
+            $recording.StartInfo = $psi
+            if (-not $recording.Start()) { throw 'A74_FFMPEG_START_FAILED' }
+            Start-Sleep -Seconds 2
+            if ($recording.HasExited) { throw 'A74_FFMPEG_EXITED_EARLY' }
+            Set-Content -LiteralPath $releasePath -Value 'A74_CAPTURE_READY' -Encoding ASCII
+            $recorderHandshakeOk = $true
+            Write-Host "A74_VIDEO_AFTER_WARMUP_OK pid=$($recording.Id) drawn_frames=$warmupObservedFrames warmup_ms=$warmupObservedMs"
+        }
         $h = [A74Window]::GetForegroundWindow()
         [uint32] $activePid = 0
         [void][A74Window]::GetWindowThreadProcessId($h, [ref]$activePid)
@@ -114,11 +141,12 @@ try {
             $focusError = "A74_GAME_NEVER_FOREGROUND expected=$($game.Id)"
             break
         }
-        if ($clock.Elapsed.TotalSeconds -gt ($Warmup + 70)) {
+        $watchdogSeconds = if ($WarmupFrames -gt 0) { 240.0 } else { $Warmup + 70.0 }
+        if ($clock.Elapsed.TotalSeconds -gt $watchdogSeconds) {
             $runnerError = 'A74_PILOT_TIMEOUT'
             break
         }
-        if ($recording.HasExited) {
+        if ($null -ne $recording -and $recording.HasExited) {
             $runnerError = 'A74_RECORDER_EXITED_DURING_GAME'
             break
         }
@@ -131,6 +159,7 @@ try {
     if (-not $game.HasExited) { [void]$game.WaitForExit(15000) }
     $gameExit = $game.ExitCode
     $foregroundOk = [bool]($focusObserved -and -not $focusError)
+    if (-not $recorderHandshakeOk) { $runnerError = 'A74_RECORDER_HANDSHAKE_MISSING' }
 } catch {
     $runnerError = $_.Exception.Message
     if ($null -ne $game -and -not $game.HasExited) {
@@ -165,7 +194,11 @@ try {
         schema = 'a74_capture_manifest_v1'
         scenario = $Scenario
         seed = $Seed
-        warmup_s = $Warmup
+        warmup_s = $(if ($WarmupFrames -eq 0) { $Warmup } else { $null })
+        warmup_frames_requested = $WarmupFrames
+        warmup_frames_observed = $warmupObservedFrames
+        warmup_elapsed_ms = $warmupObservedMs
+        recording_started_after_warmup = [bool]$recorderHandshakeOk
         git_sha = (& git -C $root rev-parse HEAD).Trim()
         game_exit_code = $gameExit
         ffmpeg_exit_code = $recorderExit
