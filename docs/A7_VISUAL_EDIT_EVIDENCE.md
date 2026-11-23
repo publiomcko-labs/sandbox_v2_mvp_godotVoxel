@@ -22,7 +22,7 @@ Nenhum gate `PERF-60`, `STREAM-18`, `VIEW-130` ou `EDIT-100`
 
 ## A7.1 — fluxo visual
 
-`godot/tests/a7_route_runtime.gd` em `--capture` admite PNG
+`godot/tests/a7_route_runtime.gd` em `--capture` emite um marcador verde/magenta por segundo, com eventos UTC para sincronização temporal do vídeo. Admite PNG
 1080p com intervalo configurável (padrão 30s), posição do jogador, câmera,
 timestamp Unix, ticks monotônicos e resultado das 8 sondas a 130m.
 **Quando há vídeo externo, o intervalo é 0 e nenhum PNG é lido dentro do Godot.**
@@ -51,18 +51,34 @@ git switch --detach FETCH_HEAD
 python .\tests\check_a7_visual_edit_evidence.py
 ```
 
-Para encontrar FFmpeg previamente instalado:
+**FFmpeg portátil automático:** não é necessário instalar o programa
+no Windows ou alterar o PATH. No primeiro teste gráfico, o script baixa
+a versão 7.1.1 para \`reports/tools/\` e valida seu SHA-256 contra o
+manifesto público versionado de \`microsoft/winget-pkgs\`.
 
-```powershell
-Get-Command ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object Source
-```
+A7.1 com vídeo externo de 60fps (sem capturas dentro do Godot):
 
-Depois, caso esteja instalado, usar o caminho real retornado no argumento
-`-FfmpegExe`. Exemplo de sintaxe (substitua pelo caminho efetivo):
+\`\`\`powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Route -Scenario shoreline_180s -Duration 30 -Warmup 20
+\`\`\`
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Route -Scenario shoreline_180s -Duration 30 -Warmup 20 -FfmpegExe "CAMINHO_REAL_DO_FFMPEG_EXE"
-```
+A7.2 com vídeo externo e PresentMon ETW do mesmo processo:
+
+\`\`\`powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Edit -Scenario boundary_edit_100 -Warmup 45 -PresentMonExe ".\PresentMon.exe"
+\`\`\`
+
+A indexação temporal do vídeo (no runner CPU ou outra máquina, sem reserva
+da GTX 1050 Ti), após transferir os arquivos de evidência, utiliza:
+
+\`\`\`powershell
+python .\scripts\a7_video_timeline.py "CAMINHO_REAL_DA_PASTA_EVIDENCE" --ffmpeg "CAMINHO_FFMPEG_PORTATIL" --ffprobe "CAMINHO_FFPROBE_PORTATIL"
+\`\`\`
+
+O arquivo \`a7_video_timeline.json\` registra os timestamps PTS de cada
+frame, cadência e o marcador verde/magenta de sincronização. Sua correlação
+com o relógio do Godot é aproximada; não substitui a verificação dos pixels
+alterados nem profundidade a 130 m.
 
 Para validar sem FFmpeg, `-SkipVideo` salva apenas PNGs espaçados **15s**
 (aproximadamente 3 para rota de 30s), eventos e manifesto. Esses PNGs ainda
@@ -145,3 +161,7 @@ Correção: gravador externo não executa `get_image()`; `-SkipVideo`
 reduz amostragem a 15 s, com opção `-NoStills` para zero readbacks.
 
 Mantenha vídeo, PNG, ETW e desempenho estrito em braços separados.
+
+## Implementação da indexação temporal
+
+O FFmpeg 7.1.1 portátil é distribuído somente na pasta de trabalho, com SHA-256 fixado a partir do manifesto Microsoft winget 7.1.1. O analisador offline `scripts/a7_video_timeline.py` decodifica exclusivamente um recorte 8×8px por frame para ler os marcadores e usa `ffprobe` para medir os PTS. Retorna `NOT_QUALIFIED` para todas as metas gráficas até revisão dos pixels do mundo e profundidade. A carga de análise pode ser executada no runner `cpu-only`.
