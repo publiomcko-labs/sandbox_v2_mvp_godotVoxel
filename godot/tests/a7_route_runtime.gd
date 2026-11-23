@@ -11,6 +11,13 @@ var capture := false
 # Zero means no in-engine GPU readback; use external desktop recorder.
 # The old 1Hz PNG readback induced large stalls on GTX 1050 Ti.
 var screenshot_interval_s := 30.0
+# Route visualization only: keep camera above the actual terrain surface.
+# The canonical 18m/s benchmark route remains unchanged.
+var visual_surface_follow := false
+var _surface_tool: VoxelTool
+var _surface_hits := 0
+var _surface_misses := 0
+var _minimum_clearance_m := INF
 var vsync_off_requested := false
 var voxel_threads_requested := 0
 
@@ -64,6 +71,12 @@ func _ready() -> void:
     _player.set_process_unhandled_input(false)
     _player.global_position = Routes.position_for(route, 0.0)
     _camera_initial_fov = _camera.fov
+    if visual_surface_follow:
+        _surface_tool = _terrain.get_voxel_tool()
+        if _surface_tool == null:
+            push_error("A7_EVIDENCE_SURFACE_TOOL_UNAVAILABLE")
+            get_tree().quit(2)
+            return
     if capture and DisplayServer.get_name() != "headless":
         # Compact solid sync patch remains visible in desktop video. Its
         # transitions anchor *video* PTS to Godot events, not terrain pixels.
@@ -85,6 +98,8 @@ func _ready() -> void:
         "viewport_px":str(get_viewport().get_visible_rect().size),
         "fov_degrees":_camera_initial_fov, "headless":DisplayServer.get_name()=="headless",
         "capture":capture, "screenshot_interval_s":screenshot_interval_s,
+        "visual_surface_follow":visual_surface_follow,
+        "visual_clearance_target_m":5.0 if visual_surface_follow else null,
         "video_sync_marker_crop_xywh":[1888,42,8,8] if capture else null,
         "video_sync_marker_gate":"CLOCK_ALIGNMENT_ONLY",
         "ci_smoke":ci_smoke,
@@ -131,6 +146,9 @@ func _sample(phase: String, t: float) -> void:
         "type":"sample", "phase":phase, "t_s":snappedf(t,0.001),
         "player_x":_player.global_position.x, "player_y":_player.global_position.y,
         "player_z":_player.global_position.z, "meshed_radial_probes":hits,
+        "surface_follow_hits":_surface_hits,
+        "surface_follow_misses":_surface_misses,
+        "surface_follow_min_clearance_m":_minimum_clearance_m if is_finite(_minimum_clearance_m) else null,
         "mesh_blocks":_terrain.debug_get_mesh_block_count(),
         "data_blocks":_terrain.debug_get_data_block_count(),
         "rocks_instanced":_instancer.debug_get_instance_counts(),
@@ -148,7 +166,22 @@ func _sample(phase: String, t: float) -> void:
     _samples += 1
 
 func _set_path(t: float) -> void:
-    _player.global_position = Routes.position_for(route,t)
+    var target: Vector3 = Routes.position_for(route,t)
+    if visual_surface_follow:
+        # Raycast against the loaded SDF data in the player's neighborhood.
+        # This is EVIDENCE ONLY, never a gameplay or performance change.
+        # It prevents a fixed y=7 path crossing terrain hills and displaying
+        # the underside of meshes as if rocks or water had vanished.
+        var above := Vector3(target.x,80.0,target.z)
+        var hit: VoxelRaycastResult = _surface_tool.raycast(above,Vector3.DOWN,160.0)
+        if hit == null:
+            _surface_misses += 1
+        else:
+            var surface_y: float = above.y-hit.distance
+            target.y = maxf(target.y,surface_y+5.0)
+            _surface_hits += 1
+            _minimum_clearance_m = minf(_minimum_clearance_m,target.y-surface_y)
+    _player.global_position = target
     if Routes.is_stationary(route):
         # 360-degree coverage rotation over eight fixed headings.
         _player.rotation.y = -TAU * fposmod(t,45.0)/45.0
@@ -287,6 +320,10 @@ func _finish() -> void:
         "first_eight_mesh_probes_ms":_ready_at_ms,
         "samples":_samples,
         "screenshots":_captures,
+        "visual_surface_follow":visual_surface_follow,
+        "surface_follow_hits":_surface_hits,
+        "surface_follow_misses":_surface_misses,
+        "minimum_surface_clearance_m":_minimum_clearance_m if is_finite(_minimum_clearance_m) else null,
         "frame_start_interval_target_16_7":
             "EXCEEDED" if _over16>0 else "NOT_EXCEEDED",
         "perf_60_full_present_gate":"NOT_QUALIFIED",
