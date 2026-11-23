@@ -266,6 +266,22 @@ def run(root: Path, ffmpeg: str, ffprobe: str) -> dict:
             manifest.get("ffmpeg_exit_code") != 0 or
             manifest.get("video_container_valid") is not True):
         raise ValueError("Capture provenance invalid; no pilot conclusion")
+    # New fast-batch capture: demand 1000 *actually drawn* warmup frames,
+    # then an explicit recorder handshake; never silently fall back to seconds.
+    warmup_target = manifest.get("warmup_frames_requested", 0)
+    if type(warmup_target) is not int or warmup_target < 0 or warmup_target > 10000:
+        raise ValueError("Invalid warmup provenance")
+    if warmup_target:
+        ready = read_json(root / "a74_ready.json")
+        if (ready.get("schema") != "a74_capture_ready_v1" or
+                ready.get("scenario") != manifest.get("scenario") or
+                ready.get("seed") != manifest.get("seed") or
+                ready.get("warmup_mode") != "rendered_frames" or
+                ready.get("warmup_frames_requested") != warmup_target or
+                ready.get("warmup_frames_observed", 0) < warmup_target or
+                manifest.get("recording_started_after_warmup") is not True or
+                manifest.get("warmup_frames_observed") != ready.get("warmup_frames_observed")):
+            raise ValueError("Incomplete drawn-frame warmup / recorder handshake")
     ref = read_json(root / "a74_reference.json")
     validate_reference(ref)
     result = read_json(root / "a74_result.json")
@@ -316,6 +332,8 @@ def run(root: Path, ffmpeg: str, ffprobe: str) -> dict:
         edits[0]["brush_call_epoch_s"], alignment["video_epoch_offset_s"])
     report = {
         "schema": SCHEMA, "scenario": ref["scenario"],
+        "warmup_frames_requested": warmup_target,
+        "warmup_frames_observed": manifest.get("warmup_frames_observed"),
         "pilot_status": observations["status"],
         "reference_source": "pre-edit SDF samples plus analytic CSG, NOT rendered mesh",
         "video_frame_count": info["frames"],
