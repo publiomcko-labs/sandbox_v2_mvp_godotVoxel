@@ -445,6 +445,56 @@ public static class A7NativeFocus {
                         [A7NativeFocus]::GetForegroundWindow(),[ref]$watchForegroundPid)
                     $foregroundStatus.checks = [int]$foregroundStatus.checks + 1
                     if ($watchForegroundPid -ne $p.Id) {
+                        # The foreground PID changes legitimately when Godot
+                        # exits, sometimes before WaitForExit(200) notices.
+                        # boundary_edit_100 20261123-140948 produced 100/100
+                        # synced markers; the browser returned only AFTER the
+                        # final edit and A7_EDIT_REPORT_OK. Distinguish normal
+                        # completion from genuine occlusion, without weakening
+                        # the watchdog during the actual edit workload.
+                        $reportName = if ($isEdit) { 'a7_edits.json' } else { 'a7_route.json' }
+                        $endReportPath = Join-Path $folder $reportName
+                        $completedWorkload = $false
+                        if (Test-Path -LiteralPath $endReportPath -PathType Leaf) {
+                            try {
+                                $endReport = Get-Content -LiteralPath $endReportPath -Raw | ConvertFrom-Json
+                                if ($isEdit) {
+                                    $completedWorkload = (
+                                        $endReport.schema -eq 'a7_edit_v1' -and
+                                        $endReport.scenario -eq $name -and
+                                        $endReport.seed -eq $seed -and
+                                        $endReport.requested_count -eq 100 -and
+                                        $endReport.accepted_count -eq 100 -and
+                                        $endReport.all_accepted -eq $true -and
+                                        $endReport.sqlite_saved -eq $true -and
+                                        $endReport.edit_100_gate -eq 'NOT_QUALIFIED'
+                                    )
+                                } else {
+                                    $completedWorkload = (
+                                        $endReport.schema -eq 'a7_route_v1' -and
+                                        $endReport.route -eq $name -and
+                                        $endReport.seed -eq $seed -and
+                                        $endReport.frame_count -gt 0 -and
+                                        $endReport.perf_60_full_present_gate -eq 'NOT_QUALIFIED'
+                                    )
+                                }
+                            } catch {
+                                # An incomplete report is never evidence of a
+                                # legitimate end-of-run focus transfer.
+                                $completedWorkload = $false
+                            }
+                        }
+                        if ($completedWorkload -and $p.WaitForExit(1500)) {
+                            $p.Refresh()
+                            if ($p.ExitCode -eq 0) {
+                                $foregroundStatus['exit_focus_transfer_accepted'] = $true
+                                $foregroundStatus['exit_foreground_pid'] = [int]$watchForegroundPid
+                                $foregroundStatus['exit_epoch_s'] = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                                $foregroundStatus['note'] = 'Godot retained foreground during watched workload; complete report and successful process exit observed before accepting normal end-of-run focus transfer. Pixel review still required.'
+                                Write-Host "A7_EVIDENCE_NORMAL_EXIT_FOCUS_TRANSFER game=$($p.Id) foreground=$watchForegroundPid report=$reportName"
+                                break
+                            }
+                        }
                         $foregroundStatus.foreground_loss_detected = $true
                         $foregroundStatus.verified = $false
                         $foregroundStatus.foreground_pid = [int]$watchForegroundPid
@@ -452,7 +502,7 @@ public static class A7NativeFocus {
                         $foregroundStatus | ConvertTo-Json -Depth 4 |
                             Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
                         Write-Warning "A7_EVIDENCE_FOREGROUND_LOST game=$($p.Id) actual=$watchForegroundPid"
-                        $foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST: another process assumed focus; the recorded game may be obscured and the campaign is invalid'
+                        $foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST: another process assumed focus before verified normal completion; campaign invalid'
                         try { if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit() } } catch {}
                         break # Always finalize PresentMon before propagating failure
                     }
