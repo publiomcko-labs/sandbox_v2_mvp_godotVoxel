@@ -165,3 +165,52 @@ Mantenha vídeo, PNG, ETW e desempenho estrito em braços separados.
 ## Implementação da indexação temporal
 
 O FFmpeg 7.1.1 portátil é distribuído somente na pasta de trabalho, com SHA-256 fixado a partir do manifesto Microsoft winget 7.1.1. O analisador offline `scripts/a7_video_timeline.py` decodifica exclusivamente um recorte 8×8px por frame para ler os marcadores e usa `ffprobe` para medir os PTS. Retorna `NOT_QUALIFIED` para todas as metas gráficas até revisão dos pixels do mundo e profundidade. A carga de análise pode ser executada no runner `cpu-only`.
+
+## A7.1 — revisão do vídeo da campanha 20261122-211708
+
+Arquivo recebido: `evidence-20261122-211708-65708.zip`. Condições:
+- `git_sha=561657922abed374e576ea45dd5c196e6f2e0f78`;
+- GDI/CPU x264, 1920x1080, FFmpeg H264, tamanho 32.669.963 bytes;
+- vídeo: 54,7 s, **1625 frames efetivamente codificados**, cadência real **29,69fps**,
+  apesar do cabeçalho nominal `60/1`. P99 da distância entre PTS: 50ms;
+  máximo 67ms. Não utilizar o FPS nominal para qualificar continuidade;
+- 31 transições do marcador detectadas no vídeo e 31 eventos `video_sync`
+  correlacionados em ordem; offset por mediana, maior resíduo ~18ms;
+- Godot: 30s de movimento, 540m em X, 1800 frames, p99 start-to-start
+  18,009ms, máximo 22,298ms, 0 intervalos >33ms, 8/8 sondas de malha;
+- amostras visuais próximas aos instantes do vídeo 28s e 50s apresentam
+  rochas aparentemente suspensas e geometria observada pelo lado de baixo.
+  A rota canônica `shoreline_180s` usa y=7 fixo, sem ajustar a câmera à
+  elevação do relevo: a câmera pode entrar no terreno. Não concluir automaticamente
+  que esses quadros são falhas de streaming/recursos.
+- aprovação formal `STREAM-18`, `VIEW-130`, `EDIT-100`, `PERF-60`:
+  **NOT_QUALIFIED**. Não confundir cobertura 8/8 mesh com pixels 130m.
+
+### Ajuste de aquisição — sem tocar na implementação A5
+
+O gravador passa a usar por padrão `-RecorderMode ddagrab_nvenc`:
+Desktop Duplication (D3D11) e encoder NVIDIA NVENC em hardware,
+`framerate=60`, `dup_frames=0`, `fps_mode=passthrough`, com recorte
+1920x1080 do monitor principal. Não alterar a resolução do Windows.
+O modo `gdigrab_x264` é diagnóstico de compatibilidade e **não**
+pode sozinho comprovar 60fps. Se NVENC/ddagrab não funcionar, o teste
+falha explicitamente em vez de usar fallback silencioso. Confirmar FPS
+**efetivo** e lacunas pelos PTS após cada campanha.
+
+Somente na **aquisição visual**, não no benchmark, os cenários
+`shoreline_180s` e `rocks_water_180s` acompanham a superfície
+via raycast SDF com altura mínima `superfície + 5m` para a câmera
+não atravessar o terreno. Movimento XZ preservado em 18 m/s, e
+`surface_follow_hits` / `surface_follow_misses` e a folga mínima
+são registrados. Qualquer `surface_follow_misses > 0` impede a
+validação visual desse trecho. As rotas canônicas sem esse flag
+permanecem **inalteradas**.
+
+A7.1 com gravador novo, após atualizar a branch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a7-record-evidence-windows.ps1" -Mode Route -Scenario shoreline_180s -Duration 30 -Warmup 20
+```
+
+Esse teste requer a GTX 1050 Ti, pois usa o desktop real; análises de
+arquivo, validação do código e smokes headless continuam no `cpu-only`.
