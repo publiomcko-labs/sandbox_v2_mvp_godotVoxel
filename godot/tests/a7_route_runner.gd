@@ -29,6 +29,7 @@ func _start() -> void:
     var seed := int(_arg("seed","20261119"))
     var ci := _flag("ci-smoke")
     var capture := _flag("capture")
+    var a8_spike_trace := _flag("a8-spike-trace")
     var visual_follow := _flag("visual-surface-follow")
     var screenshot_interval := float(_arg("screenshot-interval-s","30.0"))
     var vsync_off := _flag("vsync-off")
@@ -48,6 +49,9 @@ func _start() -> void:
         return
     if warmup_frames < 0 or warmup_frames > 10000 or (warmup_frames > 0 and (headless or ci or capture)):
         _fail("rendered-frame warmup only for real GPU telemetry route, 1..10000 frames")
+        return
+    if a8_spike_trace and (headless or ci or capture or warmup_frames != 1000 or duration > 90.0 or vsync_off or voxel_threads_requested != 0):
+        _fail("A8 frame-spike trace requires real GPU, 1000-frame warmup, normal VSync, <=90s and no capture")
         return
     if headless and (not ci or capture or duration>3.0 or warmup>1.0):
         _fail("headless only allowed as <=3s CPU smoke, not performance evidence")
@@ -87,6 +91,7 @@ func _start() -> void:
     runner.duration_s=duration
     runner.warmup_s=warmup
     runner.warmup_drawn_frames=warmup_frames
+    runner.a8_spike_trace_enabled=a8_spike_trace
     runner.seed_value=seed
     runner.ci_smoke=ci
     runner.capture=capture
