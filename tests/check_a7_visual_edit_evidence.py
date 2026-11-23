@@ -66,6 +66,15 @@ assert "A7_EVIDENCE_FOREGROUND_LOST" in runner_foreground
 assert "continuous_watchdog=True" in runner_foreground
 assert "while (-not $p.WaitForExit(200))" in runner_foreground
 assert "$foregroundFailure = $null" in runner_foreground
+assert "A7_EVIDENCE_NORMAL_EXIT_FOCUS_TRANSFER" in runner_foreground
+assert "$completedWorkload -and $p.WaitForExit(1500)" in runner_foreground
+assert "$p.ExitCode -eq 0" in runner_foreground
+assert "$endReport.accepted_count -eq 100" in runner_foreground
+assert "$endReport.sqlite_saved -eq $true" in runner_foreground
+assert "$endReport.edit_100_gate -eq 'NOT_QUALIFIED'" in runner_foreground
+assert "$foregroundStatus['exit_focus_transfer_accepted'] = $true" in runner_foreground
+assert runner_foreground.index("if ($completedWorkload -and $p.WaitForExit(1500))") < runner_foreground.index("$foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST")
+assert "$foregroundStatus['continuity_verified'] = $false" in runner_foreground
 assert "$foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST" in runner_foreground
 assert "break # Always finalize PresentMon before propagating failure" in runner_foreground
 assert "if ($foregroundFailure) {" in runner_foreground
