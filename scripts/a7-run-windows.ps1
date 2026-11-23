@@ -210,6 +210,10 @@ foreach ($name in $scenarios) {
                 throw "A7_RUN_START_FAIL scenario=$name seed=$seed rep=$r"
             }
             $gameTimer = [System.Diagnostics.Stopwatch]::StartNew()
+            # Preserve the focus failure until the owned PresentMon collector
+            # has fully stopped/flushed the CSV. Throwing from the watchdog
+            # previously skipped collector cleanup and locked ZIP archiving.
+            $foregroundFailure = $null
             if ($Capture -and -not $CiSmoke) {
                 # Desktop Duplication records whatever is in the foreground.
                 # The A7.2 capture of 2026-11-23 only saw 68/100 color
@@ -448,15 +452,18 @@ public static class A7NativeFocus {
                         $foregroundStatus | ConvertTo-Json -Depth 4 |
                             Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
                         Write-Warning "A7_EVIDENCE_FOREGROUND_LOST game=$($p.Id) actual=$watchForegroundPid"
+                        $foregroundFailure = 'A7_EVIDENCE_FOREGROUND_LOST: another process assumed focus; the recorded game may be obscured and the campaign is invalid'
                         try { if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit() } } catch {}
-                        throw 'A7_EVIDENCE_FOREGROUND_LOST: browser or another window obscured the recorded game; campaign aborted before accepting invalid evidence'
+                        break # Always finalize PresentMon before propagating failure
                     }
                 }
-                $foregroundStatus.continuity_verified = $true
-                $foregroundStatus.completed_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
-                $foregroundStatus | ConvertTo-Json -Depth 4 |
-                    Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
-                Write-Host "A7_EVIDENCE_FOREGROUND_CONTINUITY_CONFIRMED checks=$($foregroundStatus.checks)"
+                if (-not $foregroundFailure) {
+                    $foregroundStatus.continuity_verified = $true
+                    $foregroundStatus.completed_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                    $foregroundStatus | ConvertTo-Json -Depth 4 |
+                        Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                    Write-Host "A7_EVIDENCE_FOREGROUND_CONTINUITY_CONFIRMED checks=$($foregroundStatus.checks)"
+                }
             } else {
                 $p.WaitForExit()
             }
@@ -503,6 +510,11 @@ public static class A7NativeFocus {
             $p.Refresh()
             $exitCode = $p.ExitCode
             $p.Dispose()
+            if ($foregroundFailure) {
+                # This runs after the PresentMon status/CSV flush. The outer
+                # recorder wrapper can now archive all failure diagnostics.
+                throw $foregroundFailure
+            }
             if ($exitCode -ne 0) {
                 throw "A7_RUN_FAIL scenario=$name seed=$seed rep=$r code=$exitCode"
             }
