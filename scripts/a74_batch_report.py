@@ -61,7 +61,8 @@ def inspect_trial(root: Path, row: dict) -> dict:
         "runner_exit_code": row.get("runner_exit_code"),
         "acquisition": "INVALID", "failure_reason": None,
         "visual_diagnostic": None, "native_apply_ms": None,
-        "candidate_video_latency_ms": None, "mean_expected_luma": None,
+        "candidate_video_latency_ms": None, "video_timing_valid": False,
+        "visual_signal_without_timing": False, "mean_expected_luma": None,
         "mean_control_luma": None, "expected_rays": None, "control_rays": None,
         "edit_100_gate": "NOT_QUALIFIED",
     }
@@ -94,26 +95,39 @@ def inspect_trial(root: Path, row: dict) -> dict:
         if ms is None or ms < 0:
             raise ValueError("Missing or nonfinite native apply duration")
         observation = review.get("observations")
-        if not isinstance(observation, dict) or observation.get("edit_window_invalid_pts") is True:
-            raise ValueError("Invalid edit-window timestamps")
+        if not isinstance(observation, dict):
+            raise ValueError("Missing frame diagnostics")
         if review.get("pilot_status") != observation.get("status"):
             raise ValueError("Inconsistent diagnostic status")
-        if observation.get("status") not in (
+        status = observation.get("status")
+        if status not in (
                 "ORACLE_CONSISTENT_LUMA_CANDIDATE", "NO_CONSISTENT_LUMA_SIGNAL",
-                "INSUFFICIENT_INDEPENDENT_RAYS"):
+                "INSUFFICIENT_INDEPENDENT_RAYS", "TIMING_AMBIGUOUS"):
             raise ValueError("Unrecognized diagnostic status")
+        invalid_pts = observation.get("edit_window_invalid_pts")
+        if type(invalid_pts) is not bool:
+            raise ValueError("Missing edit-window PTS validation")
+        if (status == "TIMING_AMBIGUOUS") != invalid_pts:
+            raise ValueError("Contradictory edit-window timing classification")
         candidate = number(observation.get("first_oracle_consistent_candidate_ms"))
-        if observation.get("status") == "ORACLE_CONSISTENT_LUMA_CANDIDATE" and candidate is None:
+        if status == "ORACLE_CONSISTENT_LUMA_CANDIDATE" and candidate is None:
             raise ValueError("Visual candidate without approximate time")
+        if status != "ORACLE_CONSISTENT_LUMA_CANDIDATE" and candidate is not None:
+            raise ValueError("Candidate timing not permitted for ambiguous/no-signal runs")
         frames = observation.get("frames_reviewed", [])
-        if not isinstance(frames, list):
+        if not isinstance(frames, list) or any(not isinstance(f, dict) for f in frames):
             raise ValueError("Invalid frame diagnostics")
+        visible_without_time = (status == "TIMING_AMBIGUOUS" and
+                                any(f.get("oracle_consistent_luma_candidate") is True
+                                    for f in frames))
         strongest = max(frames, key=lambda f: float(f.get("predicted_mean_abs_luma") or 0.0),
                         default={})
         result.update(
             acquisition="VALID_DIAGNOSTIC_ONLY",
-            visual_diagnostic=observation["status"],
+            visual_diagnostic=status,
             native_apply_ms=ms,
+            video_timing_valid=not invalid_pts,
+            visual_signal_without_timing=visible_without_time,
             candidate_video_latency_ms=candidate,
             mean_expected_luma=number(strongest.get("predicted_mean_abs_luma")),
             mean_control_luma=number(strongest.get("control_mean_abs_luma")),
@@ -142,13 +156,17 @@ def summarize(root: Path) -> dict:
         counts = {kind: sum(r["visual_diagnostic"] == kind for r in valid)
                   for kind in ("ORACLE_CONSISTENT_LUMA_CANDIDATE",
                                "NO_CONSISTENT_LUMA_SIGNAL",
-                               "INSUFFICIENT_INDEPENDENT_RAYS")}
+                               "INSUFFICIENT_INDEPENDENT_RAYS", "TIMING_AMBIGUOUS")}
         scenarios[scenario] = {
             "requested": len(rows), "valid_diagnostic_runs": len(valid),
             "invalid_runs": len(rows)-len(valid),
             "visual_candidates": counts["ORACLE_CONSISTENT_LUMA_CANDIDATE"],
             "visual_no_signal": counts["NO_CONSISTENT_LUMA_SIGNAL"],
             "insufficient_geometry_rays": counts["INSUFFICIENT_INDEPENDENT_RAYS"],
+            "timing_ambiguous": counts["TIMING_AMBIGUOUS"],
+            "visual_signal_without_usable_timing": sum(
+                r["visual_signal_without_timing"] for r in valid),
+            "valid_video_timing_runs": sum(r["video_timing_valid"] for r in valid),
             "candidate_rate_among_valid": round(
                 counts["ORACLE_CONSISTENT_LUMA_CANDIDATE"]/len(valid),3) if valid else None,
             "native_apply_ms": stats([r["native_apply_ms"] for r in valid]),
@@ -167,6 +185,8 @@ def summarize(root: Path) -> dict:
         "collection_complete": bool(
             manifest.get("collection_complete") and complete == len(checked) and
             len(checked) == manifest.get("expected_runs")),
+        "video_timing_ambiguous_runs": sum(
+            r["visual_diagnostic"] == "TIMING_AMBIGUOUS" for r in checked),
         "sampling_policy": manifest.get("sampling_policy"),
         "scenarios": scenarios, "trials": checked,
         "automatic_acceptance": False, "edit_100_gate": "NOT_QUALIFIED",
@@ -178,6 +198,7 @@ def summarize(root: Path) -> dict:
             "Scripted brush invocation is not raw HID input",
             "Video timestamp candidates do not certify the first correct presented pixel",
             "The CSG oracle is based on the Godot pre-edit SDF",
+            "Timing-ambiguous frames retain valid native brush duration but no video latency estimate",
             "Candidate-only timing averages exclude missing/no-signal runs; never impute zero",
             "NVENC recordings are excluded from the canonical PERF-60 benchmark",
         ]
@@ -186,7 +207,8 @@ def summarize(root: Path) -> dict:
         json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
     fields = ("scenario","seed","repeat","relative_path","runner_exit_code",
               "acquisition","failure_reason","visual_diagnostic","native_apply_ms",
-              "candidate_video_latency_ms","mean_expected_luma","mean_control_luma",
+              "candidate_video_latency_ms","video_timing_valid","visual_signal_without_timing",
+              "mean_expected_luma","mean_control_luma",
               "expected_rays","control_rays","edit_100_gate")
     with (root/"a74_batch_trials.csv").open("w",encoding="utf-8-sig",newline="") as f:
         writer=csv.DictWriter(f,fieldnames=fields)
