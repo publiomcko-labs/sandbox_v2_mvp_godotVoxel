@@ -99,7 +99,7 @@ jobs:
       - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
         shell: powershell
         run: python tests/check_a7_pixel_roi_review.py
-      - name: A8 short GPU-route warmup and triage fail-closed contracts (CPU fixture)
+      - name: A8 1000-frame route and bounded spike-event fail-closed contracts (CPU fixture)
         shell: powershell
         run: python tests/check_a8_route_triage.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
