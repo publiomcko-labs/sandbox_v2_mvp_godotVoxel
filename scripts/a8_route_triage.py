@@ -124,6 +124,82 @@ def summarize(folder: Path) -> dict:
             raise ValueError("Nonmonotonic route samples or missing coordinates")
         horizontal = math.hypot(positions[2]-positions[0], positions[3]-positions[1])
         speeds.append(horizontal/(t2-t1))
+    # A8-P1: a small in-memory event buffer, flushed only on game exit.
+    # The worker/LOD state attached to events is an older 1Hz observation,
+    # and must never be represented as an instantaneous causal measurement.
+    spike_trace_requested = manifest.get("a8_spike_trace_requested", False)
+    if type(spike_trace_requested) is not bool:
+        raise ValueError("Invalid spike-trace request provenance")
+    if report.get("a8_spike_trace_enabled", False) is not spike_trace_requested:
+        raise ValueError("Missing or inconsistent A8 spike-trace enablement")
+    spike_diagnostics = None
+    spike_path = trials[0].with_name("a8_frame_spikes.json")
+    if spike_trace_requested:
+        if not spike_path.is_file():
+            raise ValueError("Missing A8 event trace (requested but not recorded)")
+        spike = read(spike_path)
+        events = spike.get("events")
+        if (spike.get("schema") != "a8_frame_spikes_v1" or
+                spike.get("route") != route or spike.get("seed") != seed or
+                spike.get("threshold_ms") != 18.0 or
+                spike.get("gpu_present_qualified") is not False or
+                spike.get("worker_attribution") !=
+                    "LAST_1HZ_SAMPLE_ONLY_NO_INSTANT_CAUSALITY" or
+                spike.get("warmup_drawn_frames_observed") != 1000 or
+                not isinstance(events, list) or
+                spike.get("events_recorded") != len(events) or
+                spike.get("intervals_over_threshold") !=
+                    report.get("a8_spike_interval_total") or
+                report.get("a8_spike_event_count") != len(events) or
+                spike.get("events_dropped") != report.get("a8_spike_events_dropped") or
+                spike.get("events_dropped") != 0 or
+                spike["intervals_over_threshold"] != len(events)):
+            raise ValueError("Incomplete/invalid bounded spike event evidence")
+        prev_index = -1
+        prev_time = -1.0
+        for e in events:
+            if not isinstance(e, dict):
+                raise ValueError("Invalid event")
+            idx = e.get("frame_index")
+            ms = finite(e.get("start_interval_ms"))
+            t = finite(e.get("route_t_s"))
+            position = e.get("player_xyz")
+            if (type(idx) is not int or idx <= prev_index or idx >= report["frame_count"] or
+                    ms is None or ms < 18.0 or
+                    t is None or t < prev_time or t < 0 or t > report["duration_s"]+0.1 or
+                    not isinstance(position, list) or len(position) != 3 or
+                    any(finite(x) is None for x in position)):
+                raise ValueError("Nonmonotonic/invalid spike index, time, duration or position")
+            age = e.get("queue_sample_age_s")
+            if age is not None and (finite(age) is None or age < 0 or age > 1.5):
+                raise ValueError("Spike queue sample age invalid")
+            prev_index, prev_time = idx, t
+        # An exact count cross-check matters more than a pretty scatter plot.
+        if (sum(e["start_interval_ms"] > 20.0 for e in events) !=
+                report.get("frame_intervals_over_20_ms") or
+                sum(e["start_interval_ms"] > 33.0 for e in events) !=
+                report.get("frame_intervals_over_33_ms")):
+            raise ValueError("Spike trace contradicts frame-time counters")
+        spike_diagnostics = {
+            "events_18ms_or_more": len(events),
+            "events_over_20ms": sum(e["start_interval_ms"] > 20 for e in events),
+            "events_over_33ms": sum(e["start_interval_ms"] > 33 for e in events),
+            "max_recorded_interval_ms": max(
+                (e["start_interval_ms"] for e in events), default=None),
+            "events_with_recent_1hz_worker_backlog": sum(
+                e.get("queue_sample_age_s") is not None and
+                0 <= e["queue_sample_age_s"] <= 1.1 and
+                e.get("queue_last_1hz", -1) > 0 for e in events),
+            "events_with_recent_1hz_blocked_lods": sum(
+                e.get("queue_sample_age_s") is not None and
+                0 <= e["queue_sample_age_s"] <= 1.1 and
+                e.get("blocked_lods_last_1hz", -1) > 0 for e in events),
+            "timestamps_are_independent_present_events": False,
+            "worker_snapshots_are_instantaneous": False,
+            "evidence_file": "a8_frame_spikes.json",
+        }
+    elif spike_path.exists():
+        raise ValueError("Unexpected spike trace in non-spike campaign")
     if any(not 0 <= v <= 60 for v in speeds):
         raise ValueError("Impossible sampled horizontal speeds")
     try:
@@ -165,6 +241,7 @@ def summarize(folder: Path) -> dict:
         "mesh_probe_samples": len(probes),
         "max_voxel_worker_queue": max(queue) if queue else None,
         "max_active_workers": max(active) if active else None,
+        "frame_spike_diagnostics": spike_diagnostics,
         "diagnostic_flags": {
             "frame_start_budget_exceeded": over16 > 0,
             "mesh_probes_incomplete": any(p < 8 for p in probes),
@@ -183,7 +260,8 @@ def summarize(folder: Path) -> dict:
             "Eight mesh-ready probes at 130m do not verify correct geometry pixels, seams, water or rocks",
             "No screen video in the performance arm; cannot certify zero flicker at 18mps",
             "One seed and one short run are for triage, not canonical acceptance",
-            "Worker queue and frame spikes are correlations only, not proven causal bottlenecks"
+            "Worker queue and frame spikes are correlations only, not proven causal bottlenecks",
+            "A8.1 bounded spike trace is conditional and records last 1Hz queue values, not an instantaneous cause"
         ]
     }
     (folder/"a8_triage.json").write_text(
