@@ -78,3 +78,7 @@ Comandos em docs/A7_IMPLEMENTACAO.md. Entrada individual curta (não qualificat�
 Campanha completa (90 execuções gráficas): powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a7-run-windows.ps1 -Full -Repeats 3 -Seeds 20261119,20261120,20261121 -Warmup 45
 
 O relatório não marca as metas PERF-60 / STREAM-18 / VIEW-130 / EDIT-100 como aprovadas sem evidência específica. Limitações de A4/A5 permanecem documentadas; não há alteração do terreno, CPU16, água, física ou streaming.
+
+## A7.4 repeated visual diagnostic (experimental)
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a74-batch-windows.ps1 -Repeats 3 -Warmup 45` runs the four add/remove x static/boundary scenarios three times each in separate GPU desktop sessions, saving isolated video/SQLite/oracle evidence and a compact `a74_batch_summary.zip`. Statistics cover native brush time and visual candidate detection separately; strict EDIT-100 and all other graphical gates remain NOT_QUALIFIED. See `docs/A7_4_GEOMETRIC_REFERENCE_PILOT.md`. Draft only; baseline A5/CPU16 is unchanged.
