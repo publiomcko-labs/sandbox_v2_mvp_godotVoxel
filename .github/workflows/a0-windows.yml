@@ -102,10 +102,13 @@ jobs:
       - name: A7.4 independent geometric reference and video false-positive contract
         shell: powershell
         run: python tests/check_a74_geometry_pilot.py
+      - name: A7.4 repeated-run statistical aggregation and provenance regression
+        shell: powershell
+        run: python tests/check_a74_batch_report.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a74-pilot-windows.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a74-pilot-windows.ps1', 'scripts/a74-batch-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null
