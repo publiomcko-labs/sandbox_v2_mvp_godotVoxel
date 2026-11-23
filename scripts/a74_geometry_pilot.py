@@ -136,14 +136,15 @@ def first_surface_t(ref: dict, ray: dict, after: bool) -> float | None:
     # Ignore the end boundary to leave room for the trilinear stencil.
     def sdf(t: float) -> float:
         return expected_sdf(ref, tuple(o[i]+d[i]*t for i in range(3)), after)
-    previous_t = start + 1e-5
+    base_t = start + 1e-5
+    previous_t = base_t
     previous = sdf(previous_t)
     if previous < 0.0:
         # Cannot assign a visible front face if the ray starts inside material.
         return None
-    n = int(math.ceil((end-previous_t)/STEP_M))
+    n = int(math.ceil((end-base_t)/STEP_M))
     for k in range(1, n+1):
-        t = min(end-1e-5, previous_t+k*STEP_M)
+        t = min(end-1e-5, base_t+k*STEP_M)
         if t <= previous_t:
             break
         current = sdf(t)
