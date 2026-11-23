@@ -88,3 +88,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-pilot-windows.p
 ```
 
 1.000 frames de warmup realmente desenhados, 30 s de trajeto reto a 18 m/s, sem vídeo/PNG/ETW, relatório e ZIP resumido em `reports/generated/a8/`. Ver [escopo e limitações](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md).
+
+## A8-P1 — atribuição de picos isolados de frame
+
+Após a A8-P0 apontar dois intervalos start-to-start >20ms, a branch experimental A8-P1 registra somente os eventos >=18ms, mantendo 1000 frames de warmup e o mesmo percurso de 30 segundos. Os valores de queue/LOD associados são os **últimos snapshots a 1Hz**, não o estado instantâneo; gates gráficos continuam NOT_QUALIFIED.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-pilot-windows.ps1 -SpikeTrace
+```
+
+Ver `docs/A8_1_FRAME_SPIKE_ATTRIBUTION.md`. Não foi alterada a baseline A5/CPU16.
