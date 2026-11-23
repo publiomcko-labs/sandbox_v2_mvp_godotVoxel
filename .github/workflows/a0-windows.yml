@@ -105,6 +105,9 @@ jobs:
       - name: A7.4 repeated-run statistical aggregation and provenance regression
         shell: powershell
         run: python tests/check_a74_batch_report.py
+      - name: A7.4 1000 rendered-frame warmup and recorder handshake source contract
+        shell: powershell
+        run: python tests/check_a74_warmup_contract.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
