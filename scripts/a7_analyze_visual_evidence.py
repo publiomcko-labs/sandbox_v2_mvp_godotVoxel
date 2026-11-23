@@ -130,6 +130,8 @@ def analyze(folder: Path) -> dict:
     if len(runs) != 1 or len(traces) != 1 or runs[0].parent != traces[0].parent:
         raise ValueError("Expected exactly one complete, matched game route/edit trace")
     summary = read_json(runs[0])
+    fg_path = runs[0].parent / "a7_foreground.json"
+    foreground_status = read_json(fg_path) if fg_path.is_file() else None
     if summary.get("seed") != seed:
         raise ValueError("Seed mismatch between video and game trace")
     if mode == "Route" and summary.get("route") != scenario:
@@ -160,6 +162,8 @@ def analyze(folder: Path) -> dict:
                 "pixel_depth_verified": False,
             })
     video = manifest.get("video_path")
+    if video and (foreground_status is None or foreground_status.get("verified") is not True):
+        problems.append("No verified foreground Godot window at start of desktop capture")
     video_size = None
     if video:
         path = Path(video)
@@ -280,6 +284,8 @@ def analyze(folder: Path) -> dict:
         "mode": mode, "scenario": scenario, "seed": seed,
         "video_container_available": video_valid,
         "video_bytes_observed": video_size,
+        "godot_foreground_verified_at_start": foreground_status is not None and foreground_status.get("verified") is True,
+        "godot_foreground_provenance": foreground_status,
         "video_timeline": video_timeline,
         "screenshots": screenshots,
         "screenshot_count": len(screenshots),
