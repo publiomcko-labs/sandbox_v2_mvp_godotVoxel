@@ -29,6 +29,7 @@ func _start() -> void:
     var seed := int(_arg("seed","20261119"))
     var ci := _flag("ci-smoke")
     var capture := _flag("capture")
+    var a8_visual_evidence := _flag("a8-visual-evidence")
     var visual_follow := _flag("visual-surface-follow")
     var screenshot_interval := float(_arg("screenshot-interval-s","30.0"))
     var vsync_off := _flag("vsync-off")
@@ -46,8 +47,11 @@ func _start() -> void:
     if normal<1.0 or duration<=0.0 or duration>normal or warmup<0.0 or warmup>180.0:
         _fail("unknown route or invalid duration/warmup")
         return
-    if warmup_frames < 0 or warmup_frames > 10000 or (warmup_frames > 0 and (headless or ci or capture)):
-        _fail("rendered-frame warmup only for real GPU telemetry route, 1..10000 frames")
+    if a8_visual_evidence and (headless or ci or not capture or warmup_frames != 1000 or duration > 90.0 or vsync_off or voxel_threads_requested != 0):
+        _fail("A8 visual route requires GPU, capture, exactly 1000 drawn frames, <=90s, standard VSync")
+        return
+    if warmup_frames < 0 or warmup_frames > 10000 or (warmup_frames > 0 and (headless or ci or (capture and not a8_visual_evidence))):
+        _fail("rendered-frame warmup only for real GPU A8 route or explicit A8 visual evidence")
         return
     if headless and (not ci or capture or duration>3.0 or warmup>1.0):
         _fail("headless only allowed as <=3s CPU smoke, not performance evidence")
@@ -87,6 +91,7 @@ func _start() -> void:
     runner.duration_s=duration
     runner.warmup_s=warmup
     runner.warmup_drawn_frames=warmup_frames
+    runner.a8_visual_evidence=a8_visual_evidence
     runner.seed_value=seed
     runner.ci_smoke=ci
     runner.capture=capture
