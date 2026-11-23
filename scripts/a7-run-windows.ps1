@@ -258,9 +258,13 @@ public static class A7NativeFocus {
                     verified=$true
                     note='Foreground PID verified at startup only. Occlusion later still requires independent video review.'
                 }
+                $foregroundStatus | Add-Member -NotePropertyName 'continuity_verified' -NotePropertyValue $false
+                $foregroundStatus | Add-Member -NotePropertyName 'continuous_check_interval_ms' -NotePropertyValue 200
+                $foregroundStatus | Add-Member -NotePropertyName 'checks' -NotePropertyValue 0
+                $foregroundStatus | Add-Member -NotePropertyName 'foreground_loss_detected' -NotePropertyValue $false
                 $foregroundStatus | ConvertTo-Json -Depth 4 |
                     Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
-                Write-Host "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED pid=$($p.Id)"
+                Write-Host "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED pid=$($p.Id) continuous_watchdog=True"
             }
             $pmProcess = $null
             $pmCsv = Join-Path $folder 'a7_presentmon.csv'
@@ -422,6 +426,34 @@ public static class A7NativeFocus {
                 $resourceSummary | ConvertTo-Json -Depth 4 |
                     Set-Content -LiteralPath $resourceSummaryPath -Encoding UTF8
                 Write-Host "A7_RESOURCE_TELEMETRY_WRITTEN samples=$count path=$resourceSummaryPath"
+            } elseif ($Capture -and -not $CiSmoke) {
+                # Enforce foreground continuity throughout warmup and edit.
+                # The old check covered only startup. In boundary_edit_100 the
+                # browser obscured all 100 video markers after startup.
+                # Detect focus loss promptly and stop, rather than recording
+                # private desktop content or presenting invalid visual evidence.
+                while (-not $p.WaitForExit(200)) {
+                    [uint32]$watchForegroundPid = 0
+                    [void][A7NativeFocus]::GetWindowThreadProcessId(
+                        [A7NativeFocus]::GetForegroundWindow(),[ref]$watchForegroundPid)
+                    $foregroundStatus.checks = [int]$foregroundStatus.checks + 1
+                    if ($watchForegroundPid -ne $p.Id) {
+                        $foregroundStatus.foreground_loss_detected = $true
+                        $foregroundStatus.verified = $false
+                        $foregroundStatus.foreground_pid = [int]$watchForegroundPid
+                        $foregroundStatus.lost_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                        $foregroundStatus | ConvertTo-Json -Depth 4 |
+                            Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                        Write-Warning "A7_EVIDENCE_FOREGROUND_LOST game=$($p.Id) actual=$watchForegroundPid"
+                        try { if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit() } } catch {}
+                        throw 'A7_EVIDENCE_FOREGROUND_LOST: browser or another window obscured the recorded game; campaign aborted before accepting invalid evidence'
+                    }
+                }
+                $foregroundStatus.continuity_verified = $true
+                $foregroundStatus.completed_epoch_s = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                $foregroundStatus | ConvertTo-Json -Depth 4 |
+                    Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                Write-Host "A7_EVIDENCE_FOREGROUND_CONTINUITY_CONFIRMED checks=$($foregroundStatus.checks)"
             } else {
                 $p.WaitForExit()
             }
