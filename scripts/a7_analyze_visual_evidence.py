@@ -206,12 +206,18 @@ def analyze(folder: Path) -> dict:
             problems.append("Under-eight geometry probes on moving path")
         if gaps:
             problems.append("Screenshot readback failures")
+        if summary.get("visual_surface_follow") and summary.get("surface_follow_misses",0)>0:
+            problems.append("Terrain-follow evidence camera had unverified surface probes")
         route_result = {
             "moving_samples": len(moving_samples),
             "radial_probe_below_eight_count": len(radial_low),
             "radial_probe_below_eight_t_s": radial_low,
             "screenshot_failures": len(gaps),
             "frame_count": summary.get("frame_count"),
+            "visual_surface_follow": summary.get("visual_surface_follow",False),
+            "surface_follow_hits": summary.get("surface_follow_hits",0),
+            "surface_follow_misses": summary.get("surface_follow_misses",0),
+            "minimum_surface_clearance_m": summary.get("minimum_surface_clearance_m"),
             "note": "8/8 mesh probes is NOT equivalent to presented 130m pixel/depth coverage.",
         }
         edit_result = None
