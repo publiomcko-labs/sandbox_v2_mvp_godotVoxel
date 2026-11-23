@@ -210,6 +210,58 @@ foreach ($name in $scenarios) {
                 throw "A7_RUN_START_FAIL scenario=$name seed=$seed rep=$r"
             }
             $gameTimer = [System.Diagnostics.Stopwatch]::StartNew()
+            if ($Capture -and -not $CiSmoke) {
+                # Desktop Duplication records whatever is in the foreground.
+                # The A7.2 capture of 2026-11-23 only saw 68/100 color
+                # changes because an unrelated desktop window obscured Godot.
+                # Pin the real game window to foreground before warmup/edits.
+                if (-not ('A7NativeFocus' -as [type])) {
+                    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class A7NativeFocus {
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+                }
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                $windowReady = $false
+                while ([DateTime]::UtcNow -lt $deadline -and -not $p.HasExited) {
+                    $p.Refresh()
+                    $handle = $p.MainWindowHandle
+                    if ($handle -ne [IntPtr]::Zero) {
+                        [void][A7NativeFocus]::ShowWindowAsync($handle,9)
+                        [void][A7NativeFocus]::SetForegroundWindow($handle)
+                        Start-Sleep -Milliseconds 200
+                        [uint32]$frontPid = 0
+                        [void][A7NativeFocus]::GetWindowThreadProcessId(
+                            [A7NativeFocus]::GetForegroundWindow(),[ref]$frontPid)
+                        if ($frontPid -eq $p.Id) {
+                            $windowReady = $true
+                            break
+                        }
+                    }
+                    Start-Sleep -Milliseconds 250
+                }
+                if (-not $windowReady) {
+                    try { if (-not $p.HasExited) { $p.Kill() } } catch {}
+                    throw "A7_EVIDENCE_GAME_FOREGROUND_REQUIRED scenario=$name pid=$($p.Id): cannot verify unobstructed capture; close other windows and run in interactive desktop"
+                }
+                $foregroundStatus = [ordered]@{
+                    schema='a7_foreground_v1'
+                    game_pid=$p.Id
+                    foreground_pid=$frontPid
+                    foreground_verified_epoch_s=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                    verified=$true
+                    note='Foreground PID verified at startup only. Occlusion later still requires independent video review.'
+                }
+                $foregroundStatus | ConvertTo-Json -Depth 4 |
+                    Set-Content -LiteralPath (Join-Path $folder 'a7_foreground.json') -Encoding UTF8
+                Write-Host "A7_EVIDENCE_GAME_FOREGROUND_CONFIRMED pid=$($p.Id)"
+            }
             $pmProcess = $null
             $pmCsv = Join-Path $folder 'a7_presentmon.csv'
             $pmStatusPath = Join-Path $folder 'a7_presentmon_status.json'
