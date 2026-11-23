@@ -120,7 +120,7 @@ foreach ($trial in $trials) {
     $to = Join-Path $summaryDir ($trial.relative_path.Replace('/', [string][IO.Path]::DirectorySeparatorChar))
     New-Item -ItemType Directory -Force -Path $to | Out-Null
     foreach ($name in @('a74_capture_manifest.json','a74_events.jsonl',
-                        'a74_reference.json','a74_result.json','a74_pilot_review.json')) {
+                        'a74_reference.json','a74_ready.json','a74_result.json','a74_pilot_review.json')) {
         $p = Join-Path $from $name
         if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination $to }
     }
