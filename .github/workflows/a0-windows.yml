@@ -105,6 +105,9 @@ jobs:
       - name: A8-P2 independent visual evidence and 1000 drawn frames (CPU fixture)
         shell: powershell
         run: python tests/check_a8_visual_evidence.py
+      - name: A8-P3 frozen video targets and 130m SDF depth fail-closed contracts
+        shell: powershell
+        run: python tests/check_a8_p3_depth_report.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
@@ -150,6 +153,24 @@ jobs:
       - name: A7 short headless route/edit integrity smoke (not visual or perf qualification)
         shell: powershell
         run: ./scripts/a7-smoke-windows.ps1
+      - name: A8-P3 independent generator SDF rays on CPU-only headless Godot
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p3-ci'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:A8_P3_OUTPUT_DIR = $out
+          & .\.tools\godot.exe --headless --path .\godot --script res://tests/a8_p3_depth_oracle.gd
+          if ($LASTEXITCODE -ne 0) { throw "A8_P3_HEADLESS_SDF_ORACLE_FAILED exit=$LASTEXITCODE" }
+          python .\scripts\a8_p3_depth_report.py (Join-Path $out 'a8_p3_procedural_depth.json')
+          if ($LASTEXITCODE -ne 0) { throw "A8_P3_SDF_REPORT_FAILED exit=$LASTEXITCODE" }
+          Write-Host "A8_P3_SDF_ONLY_COMPLETED strict=NOT_QUALIFIED"
+      - name: Archive independent A8-P3 depth-oracle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-p3-procedural-depth
+          if-no-files-found: warn
+          path: a0-integration-isolated/reports/generated/a8p3-ci/*.json
       - name: Publish bootstrap build logs
         if: always()
         uses: actions/upload-artifact@v4
