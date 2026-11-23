@@ -62,6 +62,8 @@ assert "A7NativeFocus" in runner_foreground
 assert "SetForegroundWindow" in runner_foreground
 assert "GetForegroundWindow" in runner_foreground
 assert "a7_foreground.json" in runner_foreground
+assert "godot_foreground_verified_at_start" in script.read_text(encoding="utf-8")
+assert "No verified foreground Godot window" in script.read_text(encoding="utf-8")
 assert "recorder_mode =" in recorder
 assert "$params.VisualSurfaceFollow = $true" in recorder
 assert "evidence_camera_surface_follow =" in recorder
