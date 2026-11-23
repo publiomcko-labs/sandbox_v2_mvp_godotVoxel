@@ -24,6 +24,16 @@ var _surface_misses := 0
 var _minimum_clearance_m := INF
 var vsync_off_requested := false
 var voxel_threads_requested := 0
+# A8-P1 conditional lightweight event trace: no GPU readback, no per-frame I/O.
+const A8_SPIKE_THRESHOLD_MS := 18.0
+const A8_SPIKE_MAX_EVENTS := 256
+var a8_spike_trace_enabled := false
+var _a8_spike_events: Array[Dictionary] = []
+var _a8_spike_dropped := 0
+var _a8_queue_last_1hz := -1
+var _a8_active_last_1hz := -1
+var _a8_blocked_last_1hz := -1
+var _a8_sample_time_last_1hz := -1.0
 
 var _world: Node3D
 var _terrain: VoxelLodTerrain
@@ -98,6 +108,7 @@ func _ready() -> void:
         "type":"metadata", "schema":"a7_route_v1",
         "route":route, "seed":seed_value, "warmup_s":warmup_s,
         "warmup_drawn_frames_requested":warmup_drawn_frames,
+        "a8_spike_trace_enabled":a8_spike_trace_enabled,
         "duration_s":duration_s, "speed_mps":Routes.SPEED_MPS,
         "render_method":RenderingServer.get_current_rendering_method(),
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
@@ -148,6 +159,12 @@ func _sample(phase: String, t: float) -> void:
     var voxel_stats: Dictionary = VoxelEngine.get_stats()
     var pools: Dictionary = voxel_stats.get("thread_pools", {})
     var general_pool: Dictionary = pools.get("general", {})
+    var terrain_stats: Dictionary = _terrain.get_statistics()
+    if phase == "moving" and a8_spike_trace_enabled:
+        _a8_queue_last_1hz = int(general_pool.get("tasks", -1))
+        _a8_active_last_1hz = int(general_pool.get("active_threads", -1))
+        _a8_blocked_last_1hz = int(terrain_stats.get("blocked_lods", -1))
+        _a8_sample_time_last_1hz = t
     _emit({
         "type":"sample", "phase":phase, "t_s":snappedf(t,0.001),
         "player_x":_player.global_position.x, "player_y":_player.global_position.y,
@@ -167,7 +184,7 @@ func _sample(phase: String, t: float) -> void:
         "physics_ms":1000.0*Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS),
         "viewport_render_cpu_ms":RenderingServer.viewport_get_measured_render_time_cpu(rid) if not ci_smoke else 0.0,
         "viewport_render_gpu_ms":RenderingServer.viewport_get_measured_render_time_gpu(rid) if not ci_smoke else 0.0,
-        "terrain":_terrain.get_statistics()
+        "terrain":terrain_stats
     })
     _samples += 1
 
@@ -290,6 +307,25 @@ func _process(_delta: float) -> void:
             var gpu := RenderingServer.viewport_get_measured_render_time_gpu(rid)
             if cpu>0.0: _render_cpu_ms.append(cpu)
             if gpu>0.0: _render_gpu_ms.append(gpu)
+    if a8_spike_trace_enabled and dt_ms >= A8_SPIKE_THRESHOLD_MS:
+        # Snapshot only existing counters; worker/LOD figures are last 1Hz
+        # measurements, NOT state at the exact slow frame. No disk writes.
+        if _a8_spike_events.size() < A8_SPIKE_MAX_EVENTS:
+            var frame_rid := get_viewport().get_viewport_rid()
+            _a8_spike_events.append({
+                "frame_index":_intervals.size()-1,
+                "route_t_s":snappedf(t,0.000001),
+                "start_interval_ms":dt_ms,
+                "player_xyz":[_player.global_position.x,_player.global_position.y,_player.global_position.z],
+                "viewport_cpu_ms_observed":RenderingServer.viewport_get_measured_render_time_cpu(frame_rid),
+                "viewport_gpu_ms_observed":RenderingServer.viewport_get_measured_render_time_gpu(frame_rid),
+                "queue_last_1hz":_a8_queue_last_1hz,
+                "active_workers_last_1hz":_a8_active_last_1hz,
+                "blocked_lods_last_1hz":_a8_blocked_last_1hz,
+                "queue_sample_age_s":t-_a8_sample_time_last_1hz if _a8_sample_time_last_1hz >= 0.0 else null
+            })
+        else:
+            _a8_spike_dropped+=1
     if t>=_next_sample_s:
         _sample("moving",t)
         _next_sample_s+=1.0
@@ -327,6 +363,9 @@ func _finish() -> void:
         "measurement_epoch_begin_s":_measurement_epoch_begin,
         "measurement_epoch_end_s":Time.get_unix_time_from_system(),
         "frame_count":_intervals.size(),
+        "a8_spike_trace_enabled":a8_spike_trace_enabled,
+        "a8_spike_event_count":_a8_spike_events.size(),
+        "a8_spike_events_dropped":_a8_spike_dropped,
         "frame_start_p50_ms":_percentile(_intervals,0.5),
         "frame_start_p95_ms":_percentile(_intervals,0.95),
         "frame_start_p99_ms":_percentile(_intervals,0.99),
@@ -352,6 +391,25 @@ func _finish() -> void:
         "stream_18_pixel_gate":"NOT_QUALIFIED",
         "view_130_pixel_depth_gate":"NOT_QUALIFIED"
     }
+    if a8_spike_trace_enabled:
+        var spike_file := FileAccess.open(_outdir.path_join("a8_frame_spikes.json"),FileAccess.WRITE)
+        if spike_file == null:
+            push_error("A8_SPIKE_TRACE_SAVE_FAILED")
+            _trace.close()
+            _trace=null
+            get_tree().quit(2)
+            return
+        spike_file.store_string(JSON.stringify({
+            "schema":"a8_frame_spikes_v1", "route":route,
+            "seed":seed_value, "threshold_ms":A8_SPIKE_THRESHOLD_MS,
+            "warmup_drawn_frames_observed":_warmup_observed_frames,
+            "events_recorded":_a8_spike_events.size(),
+            "events_dropped":_a8_spike_dropped,
+            "events":_a8_spike_events,
+            "worker_attribution":"LAST_1HZ_SAMPLE_ONLY_NO_INSTANT_CAUSALITY",
+            "gpu_present_qualified":false
+        },"  "))
+        spike_file.close()
     _emit({"type":"summary","stats":summary})
     _trace.close()
     _trace=null
