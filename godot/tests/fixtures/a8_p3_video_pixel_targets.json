@@ -1,0 +1,301 @@
+{
+  "schema": "a8_p3_video_pixel_targets_v1",
+  "source_video_sha256": "1488b6208f47d62f8c9070cf8896e2af0d97c2cbdf440d1bf7df5377f99f621b",
+  "source_analysis": "From original A8-P2 1080p NVENC video, five selected adjacent before/after frames; no replacement frames",
+  "screen_px": [
+    1920,
+    1080
+  ],
+  "downscaled_analysis_px": [
+    960,
+    540
+  ],
+  "pixel_selection": "Before pixel neutral grey approximately (75,75,75) ±5 each RGB channel; after green G>1.15R, G>1.04B and G>90, within x=20..939, y=100..214 on 960x540 downscale. Six equal-width bands, select two quantiles (30%,70%) within each band; coordinates upscaled to centers of 2x2 source pixels.",
+  "event_count": 5,
+  "ray_samples_per_event": 12,
+  "seed": 20261119,
+  "route": "turns_18mps_300s",
+  "route_duration_s": 30,
+  "events": [
+    {
+      "before_frame": 1288,
+      "after_frame": 1289,
+      "route_t_s": 3.616,
+      "changed_sky_to_terrain_pixels_downscaled": 8562,
+      "pixels_px": [
+        [
+          277,
+          295
+        ],
+        [
+          277,
+          303
+        ],
+        [
+          521,
+          297
+        ],
+        [
+          521,
+          303
+        ],
+        [
+          801,
+          287
+        ],
+        [
+          801,
+          301
+        ],
+        [
+          1165,
+          285
+        ],
+        [
+          1165,
+          297
+        ],
+        [
+          1405,
+          291
+        ],
+        [
+          1405,
+          301
+        ],
+        [
+          1781,
+          309
+        ],
+        [
+          1765,
+          311
+        ]
+      ]
+    },
+    {
+      "before_frame": 1699,
+      "after_frame": 1700,
+      "route_t_s": 10.716,
+      "changed_sky_to_terrain_pixels_downscaled": 4478,
+      "pixels_px": [
+        [
+          263,
+          293
+        ],
+        [
+          263,
+          307
+        ],
+        [
+          501,
+          283
+        ],
+        [
+          501,
+          293
+        ],
+        [
+          857,
+          291
+        ],
+        [
+          877,
+          299
+        ],
+        [
+          1035,
+          293
+        ],
+        [
+          1035,
+          303
+        ],
+        [
+          1387,
+          283
+        ],
+        [
+          1387,
+          297
+        ],
+        [
+          1763,
+          295
+        ],
+        [
+          1763,
+          299
+        ]
+      ]
+    },
+    {
+      "before_frame": 2111,
+      "after_frame": 2112,
+      "route_t_s": 17.816,
+      "changed_sky_to_terrain_pixels_downscaled": 6920,
+      "pixels_px": [
+        [
+          281,
+          291
+        ],
+        [
+          281,
+          301
+        ],
+        [
+          457,
+          297
+        ],
+        [
+          471,
+          303
+        ],
+        [
+          805,
+          293
+        ],
+        [
+          805,
+          301
+        ],
+        [
+          1109,
+          291
+        ],
+        [
+          1115,
+          299
+        ],
+        [
+          1403,
+          291
+        ],
+        [
+          1403,
+          301
+        ],
+        [
+          1677,
+          287
+        ],
+        [
+          1717,
+          303
+        ]
+      ]
+    },
+    {
+      "before_frame": 2380,
+      "after_frame": 2381,
+      "route_t_s": 22.6,
+      "changed_sky_to_terrain_pixels_downscaled": 8907,
+      "pixels_px": [
+        [
+          269,
+          291
+        ],
+        [
+          267,
+          301
+        ],
+        [
+          471,
+          291
+        ],
+        [
+          471,
+          301
+        ],
+        [
+          803,
+          287
+        ],
+        [
+          799,
+          297
+        ],
+        [
+          1121,
+          303
+        ],
+        [
+          1117,
+          305
+        ],
+        [
+          1443,
+          289
+        ],
+        [
+          1443,
+          301
+        ],
+        [
+          1701,
+          287
+        ],
+        [
+          1701,
+          299
+        ]
+      ]
+    },
+    {
+      "before_frame": 2804,
+      "after_frame": 2805,
+      "route_t_s": 29.733,
+      "changed_sky_to_terrain_pixels_downscaled": 6637,
+      "pixels_px": [
+        [
+          269,
+          291
+        ],
+        [
+          269,
+          299
+        ],
+        [
+          447,
+          287
+        ],
+        [
+          447,
+          299
+        ],
+        [
+          707,
+          285
+        ],
+        [
+          707,
+          289
+        ],
+        [
+          1129,
+          287
+        ],
+        [
+          1129,
+          299
+        ],
+        [
+          1349,
+          287
+        ],
+        [
+          1349,
+          297
+        ],
+        [
+          1593,
+          305
+        ],
+        [
+          1593,
+          309
+        ]
+      ]
+    }
+  ]
+}
