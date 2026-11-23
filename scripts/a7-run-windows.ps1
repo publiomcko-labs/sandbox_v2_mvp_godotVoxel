@@ -14,6 +14,7 @@ param(
     [switch] $Capture,
     [ValidateRange(0,300)] [double] $ScreenshotIntervalSeconds = 30.0,
     [switch] $EditNoStills,
+    [switch] $VisualSurfaceFollow,
     [switch] $CiSmoke,
     [switch] $VsyncOff,
     [ValidateRange(0,48)] [int] $VoxelThreads = 0,
@@ -48,6 +49,9 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
 }
 if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
+}
+if ($VisualSurfaceFollow -and (-not $Capture -or $CiSmoke -or $Scenario -notin @('shoreline_180s','rocks_water_180s'))) {
+    throw 'A7_VISUAL_SURFACE_FOLLOW_REQUIRES_EXPLICIT_SHORELINE_OR_ROCKS_EVIDENCE_MODE'
 }
 if ($EditNoStills -and (-not $Capture -or $Scenario -notin @('edit_idle_100','edit_moving_100','boundary_edit_100'))) {
     throw 'A7_EDIT_NO_STILLS_REQUIRES_EVIDENCE_CAPTURE'
@@ -111,6 +115,7 @@ $manifest = [ordered]@{
     ci_smoke=[bool]$CiSmoke; capture=[bool]$Capture
     screenshot_interval_s=$ScreenshotIntervalSeconds
     edit_no_stills=[bool]$EditNoStills
+    visual_surface_follow=[bool]$VisualSurfaceFollow
     resource_diagnostic=[bool]($VsyncOff -or $VoxelThreads -ne 0 -or $ResourceTelemetry)
     vsync_off_requested=[bool]$VsyncOff
     voxel_threads_requested=$VoxelThreads
@@ -181,6 +186,7 @@ foreach ($name in $scenarios) {
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
+            if (-not $isEdit -and $VisualSurfaceFollow) { $argsList += '--visual-surface-follow' }
             if ($isEdit -and $EditNoStills) { $argsList += '--no-stills' }
             if (-not $isEdit -and $Capture) { $argsList += "--screenshot-interval-s=$ScreenshotIntervalSeconds" }
             if ($CiSmoke) { $argsList += '--ci-smoke' }
