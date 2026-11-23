@@ -1,5 +1,7 @@
 # A7.1 / A7.2 — evidência gráfica e edição (branch experimental)
 
+**A7.2 encerrada funcionalmente em 23/11/2026** como `FUNCTIONAL_COMPLETE_WITH_LIMITATIONS`. Leia o [termo de encerramento com matriz de evidências e próximos passos](A7_2_ENCERRAMENTO_FUNCIONAL.md). Os quatro gates estritos permanecem `NOT_QUALIFIED`, e a PR #16 continua draft.
+
 Base: `fix/a7-etw-loss-probe-20261121`. O código funcional do mundo
 A5 CPU16, geometria, água, física, mesher e parâmetros de LOD não mudam.
 Nenhum gate `PERF-60`, `STREAM-18`, `VIEW-130` ou `EDIT-100`
@@ -220,7 +222,7 @@ arquivo, validação do código e smokes headless continuam no `cpu-only`.
 - **Movimento:** `evidence-20261123-104838-40780.zip`, 100/100 edições aceitas, 100 amostras SDF centrais alteradas, max aplicação nativa 16,495 ms, max frame submetido 30,130 ms. ETW processado (3.295 entradas, PID 39028), **100/100 marcadores de vídeo** alinhados por cor e ordem. No intervalo de edição (9,9 s): 579 frames / **58,384 FPS** reais, 55 timestamps repetidos, 64 intervalos acima de 33 ms. Janela observada no vídeo durante edições. Sinaliza funcionalidade e oportunidade de display, mas não aprova o primeiro pixel correto.
 - **Fronteira:** `evidence-20261123-105002-54480.zip`, 100/100 edições aceitas, 99 SDF centrais alteradas, max aplicação nativa 5,622 ms, max frame submetido 16,628 ms. ETW processado (3.295 entradas, PID 52232), porém **0/100 marcadores de edição** no vídeo: navegador ficou no primeiro plano durante todas as edições. A verificação antiga só confirmava o foco no início. Dados de `DisplayedTime` atingiram 688,715 ms durante oclusão, não podendo ser atribuídos diretamente ao jogo A5. Vídeo de fronteira não qualificado.
 - **Corretiva:** watchdog do PID da janela de frente a cada 200 ms, iniciado após a confirmação do foco do Godot e mantido durante o processo. Se o foco mudar, registra a perda, aborta o jogo e a campanha, sem mascarar gravação inválida como sucesso. O analisador exige `continuity_verified` no `a7_foreground.json` para análise de vídeo. Uma perda inferior ao intervalo de amostragem ainda exige revisão independente de vídeo.
-- **Próxima coleta:** somente `boundary_edit_100`, sem necessidade de repetir `edit_moving_100`. Manter o Godot no primeiro plano e não usar o navegador durante a execução. Fechar janelas com conteúdo privado antes de gravar.
+- **Registro histórico superado em 23/11/2026:** a coleta válida de `boundary_edit_100` foi obtida no ZIP `evidence-20261123-140948-49204.zip`, com 100/100 marcadores e somente uma perda de foco pós-execução. **Não repetir.** Orientação histórica: somente `boundary_edit_100`, sem necessidade de repetir `edit_moving_100`. Manter o Godot no primeiro plano e não usar o navegador durante a execução. Fechar janelas com conteúdo privado antes de gravar.
 - Contadores ETW de eventos e buffers perdidos estão `null` nas duas coletas, portanto **não** declarar rastreamento comprovadamente sem perdas.
 - `EDIT-100`, `PERF-60`, `STREAM-18` e `VIEW-130` continuam `NOT_QUALIFIED`. Nenhuma mudança funcional na A5 CPU16.
 
