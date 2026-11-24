@@ -19,6 +19,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A8-P0: diagnóstico de FPS, 18 m/s e sondas de 130 m, com warmup de 1.000 frames](docs/A8_0_PERFORMANCE_STREAMING_DIAGNOSTIC.md)
 - [A8-P2: prova visual de rotas a 18 m/s e revisão manual de 130 m](docs/A8_2_VISUAL_STREAMING_EVIDENCE.md)
 - [A8-P3: oráculo SDF independente para 60 pixels do vídeo e classificação espacial dentro/fora dos 130 m](docs/A8_3_HORIZON_DEPTH_ORACLE.md)
+- [A8-P4: oito direções de profundidade GPU real + validação amostrada de 130 m](docs/A8_4_130M_RENDERED_DEPTH.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
@@ -104,3 +105,13 @@ Resultado: `reports/generated/a7-visual-evidence/evidence-.../a8_visual_evidence
 ## A8-P3 — localização espacial independente, sem nova GPU
 
 A8-P2 encontrou cinco pops no horizonte a intervalos espaciais de aproximadamente 128m. O P3 congela 60 pixels do vídeo e executa um oráculo procedural SDF sobre a câmera/replay da A7 no runner CPU, sem alterar A5 CPU16, LOD ou streaming. O resultado identifica **terreno esperado**, não profundidade realmente desenhada. Ver [`docs/A8_3_HORIZON_DEPTH_ORACLE.md`](docs/A8_3_HORIZON_DEPTH_ORACLE.md). Todos os gates continuam NOT_QUALIFIED.
+
+## A8-P4 — cobertura visual de terreno, profundidade real (sem benchmark)
+
+A8-P3 não encontrou terreno SDF esperado dentro de 130 m nos 60 pixels selecionados; os cinco pops analisados parecem distantes. A8-P4 usa a GTX 1050 Ti para comparar **depth buffer Compatibility realmente renderizado** com terreno SDF esperado, após calibração obrigatória a 25 e 165 m, 1000 frames de warmup e oito orientações de câmera. Captura 280 pixels amostrados com imagens RGB/depth; todos os gates continuam NOT_QUALIFIED.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-p4-depth-windows.ps1
+```
+
+Saída: `reports/generated/a8-p4/pilot-.../a8_p4_depth_evidence.zip`. Consulte a [metodologia e limitações](docs/A8_4_130M_RENDERED_DEPTH.md); sem alterações na A5/CPU16.
