@@ -249,13 +249,37 @@ jobs:
           python .\scripts\a8_p6_oracle_report.py (Join-Path $out 'a8_p6_expected_sdf_60hz.json')
           if ($LASTEXITCODE -ne 0) { throw 'A8_P6_ORACLE_REPORT_REJECTED' }
           Write-Host "A8_P6_NATIVE_EXPECTATIONS_READY grid_60Hz=1800 rays=12600 GPU_not_used=TRUE strict=NOT_QUALIFIED"
+      - name: A8-P6 frozen 11 video silhouette rays — independent CPU SDF
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p6-ci'
+          $env:A8_P6_OUTPUT_DIR = $out
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p6_silhouette_oracle.gd'
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $p) { throw 'A8_P6_BORDER_GODOT_START_FAILED' }
+          try {
+            if (-not $p.WaitForExit(90000)) {
+              $p.Kill()
+              throw 'A8_P6_BORDER_ORACLE_TIMEOUT_90S'
+            }
+            $exit = $p.ExitCode
+          } finally { $p.Dispose() }
+          if ($exit -ne 0) { throw "A8_P6_BORDER_GDSCRIPT_FAILED code=$exit" }
+          python .\scripts\a8_p6_silhouette_report.py (Join-Path $out 'a8_p6_11_silhouette_sdf.json') .\godot\tests\fixtures\a8_p6_silhouette_targets.json
+          if ($LASTEXITCODE -ne 0) { throw 'A8_P6_BORDER_SHA_PIXEL_ORACLE_INVALID' }
+          Write-Host "A8_P6_11_SILHOUETTE_TRIAGE_READY strict=NOT_QUALIFIED GPU_not_used=TRUE"
       - name: Archive independent A8-P6 60Hz native SDF expectations
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: a8-p6-60hz-expected-sdf
           if-no-files-found: warn
-          path: a0-integration-isolated/reports/generated/a8p6-ci/a8_p6_expected_sdf_60hz.json
+          path: a0-integration-isolated/reports/generated/a8p6-ci/*.json
       - name: Archive independent A8-P3 depth-oracle evidence
         if: always()
         uses: actions/upload-artifact@v4
