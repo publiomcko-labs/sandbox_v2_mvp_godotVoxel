@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))
 from a8_p6_oracle_report import validate,EXPECTED_PIXELS
 from a8_p6_offline_review import (category,route_time,matching_grid_index,
-    confidence_reason,verify_source,SCHEMA,GREEN,BLUE,RED,UNKNOWN)
+    confidence_reason,stable_temporal_sdf,verify_source,SCHEMA,GREEN,BLUE,RED,UNKNOWN)
 
 d={
     "schema":"a8_p6_sdf_60hz_v1","seed":20261119,
@@ -69,6 +69,16 @@ assert confidence_reason(5.0,300,pts,299,100,1800)=="HUD_MARKER_BOUNDARY"
 dup=pts[:];dup[306]=dup[305]
 assert confidence_reason(5.1,306,dup,305,100,1800)=="DUPLICATE_VIDEO_PTS"
 assert confidence_reason(30.0,1799,pts,1798,100,1800)=="UNMAPPED_END_WINDOW"
+
+# Native SDF jumps 40m inside one 60Hz tick at the 20s turn.
+# Its source-video frame must remain UNKNOWN rather than a false hole.
+near=[[10756,10756,10756,10756,10756,10756,10756] for _ in range(1800)]
+assert stable_temporal_sdf(near,1216,0,10756) is True
+near[1217][0]=14721
+assert stable_temporal_sdf(near,1216,0,10756) is False
+near[1217][0]=10756
+near[1217][1]=-1
+assert stable_temporal_sdf(near,1216,1,10756) is False
 
 runtime=(Path(__file__).resolve().parents[1]/"godot/tests/a8_p6_sdf_frame_oracle.gd").read_text()
 assert 'const FRAME_COUNT := FPS * DURATION_S' in runtime
