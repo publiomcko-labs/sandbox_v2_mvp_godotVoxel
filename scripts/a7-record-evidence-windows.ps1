@@ -10,6 +10,7 @@ param(
     [ValidateRange(0,180)] [double] $Warmup = 20,
     [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
     [switch] $A8VisualEvidence,
+    [switch] $A8P5DepthVideo,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
     [ValidateSet('ddagrab_nvenc','gdigrab_x264')]
@@ -26,6 +27,11 @@ $etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
+if ($A8P5DepthVideo -and ($Mode -ne 'Route' -or $Scenario -ne 'turns_18mps_300s' -or
+    $Duration -ne 30 -or -not $A8VisualEvidence -or $WarmupFrames -ne 1000 -or
+    $SkipVideo -or $RecorderMode -ne 'ddagrab_nvenc' -or $PresentMonExe)) {
+    throw 'A8_P5_DEPTH_REQUIRES_30S_NVENC_1000_FRAMES'
+}
 if ($A8VisualEvidence -and ($Mode -ne 'Route' -or $WarmupFrames -ne 1000 -or
     $Duration -lt 10 -or $Duration -gt 90 -or $SkipVideo -or $PresentMonExe -or
     $RecorderMode -ne 'ddagrab_nvenc' -or $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
@@ -179,6 +185,7 @@ try {
         Capture = $true
         WarmupFrames = $WarmupFrames
         A8VisualEvidence = [bool]$A8VisualEvidence
+        A8P5DepthVideo = [bool]$A8P5DepthVideo
     }
     if ($Mode -eq 'Route') {
         $params.Duration = $Duration
@@ -262,6 +269,7 @@ try {
         warmup_s = $Warmup
         warmup_frames_requested = $WarmupFrames
         a8_visual_evidence_requested = [bool]$A8VisualEvidence
+        a8_p5_depth_video_requested = [bool]$A8P5DepthVideo
         duration_override_s = $(if ($Mode -eq 'Route') { $Duration } else { $null })
         git_sha = (& git -C $root rev-parse HEAD).Trim()
         recording_process_started_epoch_s = $recordingStartedEpochS
