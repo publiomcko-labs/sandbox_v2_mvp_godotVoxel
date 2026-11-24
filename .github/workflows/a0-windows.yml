@@ -114,6 +114,9 @@ jobs:
       - name: A8-P5 dynamic depth video, marker and paired-arm fail-closed contracts
         shell: powershell
         run: python tests/check_a8_p5_dynamic_depth.py
+      - name: A8-P6 1800-frame SDF native oracle and offline PTS fail-closed fixture
+        shell: powershell
+        run: python tests/check_a8_p6_offline_contract.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
@@ -221,6 +224,38 @@ jobs:
           } finally { $proc.Dispose() }
           if ($exit -ne 0) { throw "A8_P5_GDSCRIPT_CONTRACT_FAILED code=$exit" }
           Write-Host 'A8_P5_MODULE_PARSE_PASS real_depth_and_video_not_measured=TRUE'
+      - name: A8-P6 independent 60Hz native SDF over 30s — CPU ONLY
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p6-ci'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:A8_P6_OUTPUT_DIR = $out
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p6_sdf_frame_oracle.gd'
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $p) { throw 'A8_P6_GODOT_START_FAILED' }
+          try {
+            if (-not $p.WaitForExit(240000)) {
+              $p.Kill()
+              throw 'A8_P6_SDF_ORACLE_TIMEOUT_240S'
+            }
+            $exit = $p.ExitCode
+          } finally { $p.Dispose() }
+          if ($exit -ne 0) { throw "A8_P6_SDF_ORACLE_FAILED code=$exit" }
+          python .\scripts\a8_p6_oracle_report.py (Join-Path $out 'a8_p6_expected_sdf_60hz.json')
+          if ($LASTEXITCODE -ne 0) { throw 'A8_P6_ORACLE_REPORT_REJECTED' }
+          Write-Host "A8_P6_NATIVE_EXPECTATIONS_READY grid_60Hz=1800 rays=12600 GPU_not_used=TRUE strict=NOT_QUALIFIED"
+      - name: Archive independent A8-P6 60Hz native SDF expectations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-p6-60hz-expected-sdf
+          if-no-files-found: warn
+          path: a0-integration-isolated/reports/generated/a8p6-ci/a8_p6_expected_sdf_60hz.json
       - name: Archive independent A8-P3 depth-oracle evidence
         if: always()
         uses: actions/upload-artifact@v4
