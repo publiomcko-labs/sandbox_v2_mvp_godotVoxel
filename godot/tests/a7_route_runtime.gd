@@ -2,11 +2,15 @@ extends Node
 # A7 telemetry is enabled for *every* route. Screenshots are separate evidence
 # runs and are never mixed into performance data.
 const Routes = preload("res://tests/a7_routes.gd")
+const P5DepthVideo = preload("res://tests/a8_p5_depth_video.gd")
 var route: String = ""
 var duration_s := 0.0
 var warmup_s := 45.0
 var warmup_drawn_frames := 0
 var a8_visual_evidence := false
+var a8_p5_depth_video := false
+var _p5_depth_module: Variant = null
+var _p5_calibrating := false
 var _warmup_initial_drawn := 0
 var _warmup_observed_frames := 0
 var _warmup_observed_s := 0.0
@@ -95,11 +99,23 @@ func _ready() -> void:
         RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
     _begin_us = Time.get_ticks_usec()
     _warmup_initial_drawn = Engine.get_frames_drawn()
+    if a8_p5_depth_video:
+        if not capture or ci_smoke or not a8_visual_evidence or warmup_drawn_frames!=1000:
+            _p5_abort("P5 depth-video provenance invalid")
+            return
+        _p5_depth_module=P5DepthVideo.new()
+        _world.add_child(_p5_depth_module)
+        if not _p5_depth_module.setup(_player,_camera,seed_value):
+            _p5_abort("P5 depth shader / SDF setup failed")
+            return
+        _p5_calibrating=true
+        call_deferred("_p5_prepare")
     _emit({
         "type":"metadata", "schema":"a7_route_v1",
         "route":route, "seed":seed_value, "warmup_s":warmup_s,
         "warmup_drawn_frames_requested":warmup_drawn_frames,
         "a8_visual_evidence":a8_visual_evidence,
+        "a8_p5_depth_video":a8_p5_depth_video,
         "duration_s":duration_s, "speed_mps":Routes.SPEED_MPS,
         "render_method":RenderingServer.get_current_rendering_method(),
         "render_driver":RenderingServer.get_current_rendering_driver_name(),
@@ -125,6 +141,27 @@ func _ready() -> void:
     })
     print("A7_ROUTE_START route=", route, " seed=", seed_value,
           " warmup_s=", warmup_s, " run_s=", duration_s, " capture=", capture)
+
+func _p5_abort(reason: String) -> void:
+    push_error("A8_P5_FAIL "+reason)
+    _emit({"type":"a8_p5_failure","reason":reason})
+    if _trace!=null:
+        _trace.close()
+        _trace=null
+    get_tree().quit(2)
+
+func _p5_prepare() -> void:
+    var valid: bool = await _p5_depth_module.calibrate()
+    if not valid:
+        _p5_abort("P5 real GL depth 25m/165m calibration failed")
+        return
+    for row in _p5_depth_module.calibrations:
+        _emit({"type":"a8_p5_depth_calibration","data":row})
+    # Exact 1000 drawn frames start AFTER the one-time GPU calibration.
+    _begin_us=Time.get_ticks_usec()
+    _warmup_initial_drawn=Engine.get_frames_drawn()
+    _next_sample_s=0.0
+    _p5_calibrating=false
 
 func _emit(record: Dictionary) -> void:
     if _trace != null:
@@ -171,6 +208,8 @@ func _sample(phase: String, t: float) -> void:
         "viewport_render_gpu_ms":RenderingServer.viewport_get_measured_render_time_gpu(rid) if not ci_smoke else 0.0,
         "terrain":_terrain.get_statistics()
     })
+    if a8_p5_depth_video and phase=="moving":
+        _emit(_p5_depth_module.expectation(t))
     _samples += 1
 
 func _set_path(t: float) -> void:
@@ -228,6 +267,8 @@ func _capture(t: float) -> void:
         _emit({"type":"screenshot_failed","t_s":t,"error":err})
 
 func _process(_delta: float) -> void:
+    if _p5_calibrating:
+        return
     if _trace == null:
         return
     var now := Time.get_ticks_usec()
@@ -251,6 +292,8 @@ func _process(_delta: float) -> void:
         _warmup_observed_s = age
         _movement_begin_us=now
         _measurement_epoch_begin=Time.get_unix_time_from_system()
+        if a8_p5_depth_video:
+            _p5_depth_module.begin_video()
         _previous_us=now
         _next_sample_s=0.0
         _next_screenshot_s=0.0
@@ -320,6 +363,9 @@ func _finish() -> void:
         "warmup_drawn_frames_observed":_warmup_observed_frames,
         "warmup_observed_s":_warmup_observed_s,
         "a8_visual_evidence":a8_visual_evidence,
+        "a8_p5_depth_video":a8_p5_depth_video,
+        "a8_p5_sdf_samples":_p5_depth_module.sample_count if a8_p5_depth_video else 0,
+        "a8_p5_depth_calibrations":_p5_depth_module.calibrations if a8_p5_depth_video else [],
         "ci_smoke":ci_smoke, "capture":capture,
         "screenshot_interval_s":screenshot_interval_s,
         "vsync_off_requested":vsync_off_requested,
