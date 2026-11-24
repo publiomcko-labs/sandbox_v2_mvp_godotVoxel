@@ -111,10 +111,13 @@ jobs:
       - name: A8-P4 real depth evidence/PNG, calibration and 130m pixel fail-closed contracts
         shell: powershell
         run: python tests/check_a8_p4_depth_report.py
+      - name: A8-P5 dynamic depth video, marker and paired-arm fail-closed contracts
+        shell: powershell
+        run: python tests/check_a8_p5_dynamic_depth.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1', 'scripts/a8-p2-visual-windows.ps1', 'scripts/a8-p4-depth-windows.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1', 'scripts/a8-p2-visual-windows.ps1', 'scripts/a8-p4-depth-windows.ps1', 'scripts/a8-p5-dynamic-depth-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null
@@ -201,6 +204,23 @@ jobs:
           } finally { $p.Dispose() }
           if ($code -ne 0) { throw "A8_P4_GDSCRIPT_CI_CONTRACT_FAILED code=$code" }
           Write-Host 'A8_P4_HEADLESS_SOURCE_ONLY_PASS real_GPU_depth_not_measured=TRUE strict=NOT_QUALIFIED'
+      - name: A8-P5 headless parse-only depth-video module contract
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p5_contract.gd'
+          $psi.UseShellExecute = $false
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $proc) { throw 'A8_P5_CI_GODOT_START_FAILED' }
+          try {
+            if (-not $proc.WaitForExit(60000)) { $proc.Kill(); throw 'A8_P5_CI_TIMEOUT' }
+            $exit = $proc.ExitCode
+          } finally { $proc.Dispose() }
+          if ($exit -ne 0) { throw "A8_P5_GDSCRIPT_CONTRACT_FAILED code=$exit" }
+          Write-Host 'A8_P5_MODULE_PARSE_PASS real_depth_and_video_not_measured=TRUE'
       - name: Archive independent A8-P3 depth-oracle evidence
         if: always()
         uses: actions/upload-artifact@v4
