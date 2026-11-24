@@ -287,7 +287,7 @@ def scan(evidence:Path,oracle_path:Path,out:Path,ffprobe:str="ffprobe") -> dict:
                 "sdf_conservative_strict_inside_m":120.0,
                 "sdf_time_guard_plus_minus_frames":3,
                 "sdf_first_hit_max_stable_delta_m":8.0,
-                "temporal_occlusion_or_silhouette_jump_is_unknown":true,
+                "temporal_occlusion_or_silhouette_jump_is_unknown":True,
                 "rendered_depth_inside_green_upper_m":129.0,
                 "pixel_counts":dict(counts),
                 "route_frame_confidence":dict(Counter(x["map_confidence"] for x in all_rows)),
