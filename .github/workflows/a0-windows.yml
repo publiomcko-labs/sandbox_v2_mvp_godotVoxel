@@ -120,10 +120,13 @@ jobs:
       - name: A8-P7 extreme-frame ETW pilot, fail-closed clock and attribution contracts
         shell: powershell
         run: python tests/check_a8_p7_present.py
+
+      - name: A8-P8 edit evidence contract (CPU only)
+        run: python tests/check_a8_p8_edit.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
-          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1', 'scripts/a8-p2-visual-windows.ps1', 'scripts/a8-p4-depth-windows.ps1', 'scripts/a8-p5-dynamic-depth-windows.ps1', 'scripts/a8-p7-present-windows.ps1')
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1', 'scripts/a8-p2-visual-windows.ps1', 'scripts/a8-p4-depth-windows.ps1', 'scripts/a8-p5-dynamic-depth-windows.ps1', 'scripts/a8-p7-present-windows.ps1', 'scripts/a8-p8-edit-windows.ps1')
           foreach ($name in $names) {
             $tokens = $null
             $parseErrors = $null
