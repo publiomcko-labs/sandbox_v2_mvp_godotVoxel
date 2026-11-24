@@ -14,6 +14,10 @@ Continuar a investigação do raio visual de 130m **sem nova gravação GPU, sem
 
 **Margem de segurança:** trata somente SDF esperado **<120m** como área segura para comparação categórica com depth verde (<129m). A folga de 9m não comprova os últimos 10m do requisito de 130m; PTS/HUD e reconstrução da pose podem diferir. Classificação vermelho/azul quando SDF <120m é **candidato de ausência** (não falha comprovada); amarelo/cores H264 ambíguas são desconhecidos. Nada fora desses pontos transforma ausência de candidato em PASS.
 
+**Controle de estabilidade temporal SDF:** além da margem espacial de 10m, o revisor verifica **±3 instantes do oráculo 60Hz (±50ms)**. Se o primeiro hit mudar mais de 8m ou deixar de ser esperado com segurança <120m, o pixel vira `UNKNOWN_SDF_TEMPORAL_DEPTH_EDGE`; não pode ser classificado como lacuna nem como amostra aprovada. O controle evita atribuir uma troca brusca de silhueta (mudança de oclusão em um frame) a bug de streaming quando o marcador HUD/PTS tem erro de alinhamento.
+
+**Triagem espacial dos eventos reais:** depois de processar os frames com a máscara, foram congelados **11 pixels de vídeo original 1080p** que efetivamente trocaram de verde para azul, em nove pares de quadros (arquivo `godot/tests/fixtures/a8_p6_silhouette_targets.json`, SHA-256 do MKV fixado). O script `a8_p6_silhouette_oracle.gd` reexecuta SDF nos tempos/raios exatos dos eventos, incluindo instantes **±1 frame**; classifica separadamente interior seguro estável <120m, externo estável >140m ou fronteira/oclusão desconhecida. A contagem validada é publicada junto ao artefato do oráculo de 60Hz; não confundir com depth rasterizado novo.
+
 **Scan visual temporal auxiliar:** cada frame é também reduzido a 480×270 por nearest-neighbor, capturando quantidade de mudanças verde→azul e verde→vermelho em ROI sem HUD. Essa heurística localiza janelas a examinar, mas não diagnostica lacunas em resolução nativa sem oráculo SDF nos respectivos pixels. RGB e depth são **dois percursos diferentes**, não pares de mesmo frame.
 
 ## Execução
