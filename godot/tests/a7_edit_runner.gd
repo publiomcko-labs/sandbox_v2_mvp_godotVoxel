@@ -54,6 +54,7 @@ func _run() -> void:
     var seed := int(_arg("seed","20261119"))
     var count := int(_arg("count","100"))
     var warmup := float(_arg("warmup","45"))
+    var pilot := _flag("a8-p8-edit")
     var ci := _flag("ci-smoke")
     var evidence := _flag("capture")
     # Keep the per-edit color marker and timestamps in external-video mode,
@@ -126,6 +127,12 @@ func _run() -> void:
     var warming := Time.get_ticks_usec()
     while float(Time.get_ticks_usec()-warming)/1000000.0<warmup:
         await process_frame
+    if pilot:
+        if ci or not evidence or evidence_stills or count!=12:
+            _fail("A8-P8 requires 12 external-video edits")
+            return
+        for frame_idx in range(1000):
+            await RenderingServer.frame_post_draw
     var trace:=FileAccess.open(folder.path_join("a7_edits.jsonl"),FileAccess.WRITE)
     if trace==null:
         _fail("cannot open event file")
@@ -134,6 +141,7 @@ func _run() -> void:
         "type":"metadata","schema":"a7_edit_v1","scenario":scenario,
         "seed":seed,"count":count,"rate_hz":10.0,
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
+        "a8_p8_pilot":pilot,"warmup_drawn_frames":1000 if pilot else 0,
         "input":"scripted brush invocation; no raw OS HID timestamp",
         "visual_evidence_marker":evidence,
         "in_engine_stills_enabled":evidence_stills,
@@ -151,12 +159,16 @@ func _run() -> void:
     var start:=Time.get_ticks_usec()
     for i in range(count):
         var target_t:=float(i)*RATE_S
+        if pilot:
+            target_t=float(i)*1.5
         while float(Time.get_ticks_usec()-start)/1000000.0<target_t:
             await process_frame
         var t:=float(Time.get_ticks_usec()-start)/1000000.0
         if scenario=="edit_moving_100":
             player.global_position=Vector3(t*18.0,22.0,15.0)
         var center:=_center_for(scenario,i,t,tool)
+        if pilot:
+            center=_center_for("boundary_edit_100" if i>=8 else "edit_idle_100",i,t,tool)
         var add:=i%2==1
         var row: Dictionary={
             "type":"edit","index":i,"target_t_s":target_t,"actual_t_s":t,
@@ -186,6 +198,10 @@ func _run() -> void:
             # terrain pixels can be reviewed in the full-frame desktop video.
             camera.look_at(center,Vector3.UP)
             await process_frame
+            if pilot:
+                for settle in range(12):
+                    await RenderingServer.frame_post_draw
+                row["camera_transform"] = str(camera.global_transform)
             row["camera_targeted_for_video"]=true
             row["target_behind_camera"]=camera.is_position_behind(center)
             var target_px: Vector2=camera.unproject_position(center)
@@ -265,6 +281,12 @@ func _run() -> void:
                             })
         else:
             await process_frame
+        if pilot:
+            # Keep the target stationary beyond the 100 ms measurement window.
+            var hold_start:=Time.get_ticks_usec()
+            while Time.get_ticks_usec()-hold_start<350000:
+                await RenderingServer.frame_post_draw
+            row["camera_hold_end_epoch_s"]=Time.get_unix_time_from_system()
         trace.store_line(JSON.stringify(row))
     trace.close()
     # Save asynchronously then flush. Independent reopen is tested by
