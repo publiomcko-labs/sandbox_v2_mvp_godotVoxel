@@ -56,7 +56,10 @@ if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) {
 # Explicitly forbid accidental execution on main/default branches.
 $currentBranchOutput = & git -C $root branch --show-current
 if ($LASTEXITCODE -ne 0) { throw 'A8_P7_GIT_BRANCH_QUERY_FAILED' }
-$currentBranch = ([string]$currentBranchOutput).Trim()
+$currentBranch = ''
+if ($null -ne $currentBranchOutput) {
+    $currentBranch = $currentBranchOutput
+}
 if ($currentBranch -eq 'main' -or $currentBranch -eq 'master') {
     throw 'A8_P7_REFUSES_TO_BENCHMARK_OR_MODIFY_MAIN'
 }
