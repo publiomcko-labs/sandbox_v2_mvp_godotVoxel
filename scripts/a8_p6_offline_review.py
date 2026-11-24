@@ -135,6 +135,18 @@ def confidence_reason(t:float,idx:int,pts:list[float],previous_index:int,
         return "SDF_GRID_TIME_MISALIGNMENT"
     return "MAPPED_WITH_CONSERVATIVE_10M_MARGIN"
 
+def stable_temporal_sdf(rays_cm:list,grid_index:int,pixel_index:int,cm:int) -> bool:
+    # A first SDF hit can jump sharply between two adjacent 60Hz poses
+    # when a ray crosses a hill/silhouette. The NVENC/HUD alignment has
+    # ~22ms p99 uncertainty, so a 40m SDF jump in one 16.7ms step is not
+    # evidence of streaming failure. Reject ±3 grid frames (50ms each side)
+    # if the ray is absent, crosses 120m or varies by >8m horizontally.
+    neighbours=[rays_cm[i][pixel_index] for i in
+                range(max(0,grid_index-3),min(1800,grid_index+4))]
+    return (len(neighbours)>=4 and all(type(v) is int and
+            0<=v<12000 for v in neighbours) and
+            max(neighbours)-min(neighbours)<=800)
+
 def scan(evidence:Path,oracle_path:Path,out:Path,ffprobe:str="ffprobe") -> dict:
     import cv2
     import numpy as np
@@ -191,6 +203,8 @@ def scan(evidence:Path,oracle_path:Path,out:Path,ffprobe:str="ffprobe") -> dict:
                         elif cm<12000: # 10m spatial guard for uncertainty
                             if why!="MAPPED_WITH_CONSERVATIVE_10M_MARGIN":
                                 ptypes["UNKNOWN_FRAME_ALIGNMENT"]+=1
+                            elif not stable_temporal_sdf(expected["rays_cm"],oracle_idx,k,cm):
+                                ptypes["UNKNOWN_SDF_TEMPORAL_DEPTH_EDGE"]+=1
                             elif observed==GREEN:
                                 ptypes["EXPECTED_INSIDE_120_MATCHED"]+=1
                             elif observed==UNKNOWN or observed==YELLOW:
@@ -236,6 +250,7 @@ def scan(evidence:Path,oracle_path:Path,out:Path,ffprobe:str="ffprobe") -> dict:
                             "EXPECTED_INSIDE_120_MATCHED",
                             "POTENTIAL_MISSING_INSIDE_120",
                             "UNKNOWN_FRAME_ALIGNMENT",
+                            "UNKNOWN_SDF_TEMPORAL_DEPTH_EDGE",
                             "UNKNOWN_H264_OR_THRESHOLD",
                             "GROUND_NOT_EXPECTED_OR_UNKNOWN",
                             "SDF_OUTSIDE_SAFE_RADIUS")}
@@ -270,6 +285,9 @@ def scan(evidence:Path,oracle_path:Path,out:Path,ffprobe:str="ffprobe") -> dict:
                 "depth_calibration_from_A8_P5":"PASS_25M_AND_165M",
                 "sampled_rays_per_decoded_frame":len(EXPECTED_PIXELS),
                 "sdf_conservative_strict_inside_m":120.0,
+                "sdf_time_guard_plus_minus_frames":3,
+                "sdf_first_hit_max_stable_delta_m":8.0,
+                "temporal_occlusion_or_silhouette_jump_is_unknown":true,
                 "rendered_depth_inside_green_upper_m":129.0,
                 "pixel_counts":dict(counts),
                 "route_frame_confidence":dict(Counter(x["map_confidence"] for x in all_rows)),
