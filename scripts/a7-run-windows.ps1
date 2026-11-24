@@ -12,6 +12,7 @@ param(
     [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
     [switch] $A8VisualEvidence,
     [switch] $A8P5DepthVideo,
+    [switch] $A8P7Performance,
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
@@ -53,6 +54,15 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
 if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
 }
+
+if ($A8P7Performance -and (-not $PresentMonExe -or -not $ResourceTelemetry -or
+    $WarmupFrames -ne 1000 -or $Duration -ne 30 -or $Warmup -ne 0 -or
+    $Scenario -ne 'turns_18mps_300s' -or $Seeds.Count -ne 1 -or
+    $Seeds[0] -ne 20261119 -or $Full -or $Capture -or $CiSmoke -or
+    $VoxelThreads -ne 0 -or $PresentMonNoGpu -or
+    $PresentMonStartDelaySeconds -ne 0 -or $PresentMonCaptureSeconds -ne 0)) {
+    throw 'A8_P7_REQUIRES_FULL_ETW_30S_GPU_NO_CAPTURE_WARMUP_1000_SEED_20261119'
+}
 if ($A8P5DepthVideo -and (-not $A8VisualEvidence -or -not $Capture -or $WarmupFrames -ne 1000 -or
     $Scenario -ne 'turns_18mps_300s' -or $Duration -ne 30 -or $Full -or $CiSmoke -or
     $VsyncOff -or $VoxelThreads -ne 0 -or $PresentMonExe)) {
@@ -63,7 +73,7 @@ if ($A8VisualEvidence -and (-not $Capture -or $WarmupFrames -ne 1000 -or $Full -
     $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
     throw 'A8_VISUAL_EVIDENCE_REQUIRES_SEPARATE_CAPTURE_1000_FRAMES_NORMAL_VSYNC'
 }
-if ($WarmupFrames -gt 0 -and ($Full -or $CiSmoke -or ($Capture -and -not $A8VisualEvidence) -or $PresentMonExe -or
+if ($WarmupFrames -gt 0 -and ($Full -or $CiSmoke -or ($Capture -and -not $A8VisualEvidence) -or ($PresentMonExe -and -not $A8P7Performance) -or
     $Scenario -notin @('straight_18mps_600s','turns_18mps_300s','out_and_back_18mps_300s'))) {
     throw 'A8_FRAME_WARMUP_RESTRICTED_TO_REAL_GPU_UNRECORDED_SHORT_ROUTE'
 }
@@ -146,7 +156,7 @@ $manifest = [ordered]@{
     requested_view_distance_m=192; visual_radius_target_m=130
     mesh_block_voxels=16; lod_count=4; lod_distance=48
     seeds=@($runSeeds); repeats=$reps; scenarios=@($scenarios)
-    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; a8_visual_evidence_requested=[bool]$A8VisualEvidence; a8_p5_depth_video_requested=[bool]$A8P5DepthVideo; duration_override_s=$Duration
+    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; a8_visual_evidence_requested=[bool]$A8VisualEvidence; a8_p5_depth_video_requested=[bool]$A8P5DepthVideo; a8_p7_performance_requested=[bool]$A8P7Performance; duration_override_s=$Duration
     windows_version=[Environment]::OSVersion.VersionString
     cpu=$env:PROCESSOR_IDENTIFIER; gpu=@($adapter)
     notes='Main-game A5 is unmodified; CI and frame intervals cannot prove full GPU+present, pixels or EDIT-100.'
@@ -203,6 +213,7 @@ foreach ($name in $scenarios) {
                 if ($WarmupFrames -gt 0) { $argsList += "--warmup-frames=$WarmupFrames" }
                 if ($A8VisualEvidence) { $argsList += '--a8-visual-evidence' }
                 if ($A8P5DepthVideo) { $argsList += '--a8-p5-depth-video' }
+                if ($A8P7Performance) { $argsList += '--a8-p7-performance' }
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
@@ -330,6 +341,10 @@ public static class A7NativeFocus {
                     # if --terminate_on_proc_exit did not close the collector immediately.
                     $pmTimedSeconds = if ($PresentMonCaptureSeconds -gt 0) {
                         [int][Math]::Ceiling($PresentMonCaptureSeconds)
+                    } elseif ($A8P7Performance) {
+                        # 1000 actually drawn warmup frames are wall-clock variable;
+                        # stop upon exact target PID exit rather than a short fixed 38s.
+                        [int][Math]::Ceiling($Duration + 120.0)
                     } elseif ($isEdit -and $EvidenceOnlyPresentMon) {
                         # 100 scripted edits at 10Hz plus startup. PresentMon
                         # will terminate early on game PID exit if appropriate.
@@ -546,11 +561,21 @@ public static class A7NativeFocus {
                     try {
                         # Allow the finite PresentMon timer to expire and ETW output to flush.
                         # Retain fail-closed behavior if even the bounded deadline fails.
-                        if (-not $pmProcess.WaitForExit(30000)) {
+                        $pmJoinMs = 30000
+                        if ($A8P7Performance) {
+                            # Respect the owned collector's finite timer, even when
+                            # OpenGL target exit does not trigger automatic shutdown.
+                            $remainingSeconds = [double]$pmStatus.capture_window_end_epoch_s -
+                                ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0)
+                            $pmJoinMs = [int][Math]::Ceiling(
+                                [Math]::Max(30.0, $remainingSeconds + 30.0) * 1000.0)
+                            Write-Host "A8_P7_PRESENTMON_DRAIN_WAIT_MS=$pmJoinMs"
+                        }
+                        if (-not $pmProcess.WaitForExit($pmJoinMs)) {
                             # Stop only this child collector, not unrelated ETW sessions.
                             $pmProcess.Kill()
                             $pmProcess.WaitForExit()
-                            $pmStatus.capture_error='PRESENTMON_GRACEFUL_TIMEOUT_AFTER_30S'
+                            $pmStatus.capture_error="PRESENTMON_GRACEFUL_TIMEOUT_AFTER_${pmJoinMs}MS"
                         }
                         $pmProcess.Refresh()
                         $pmStatus.exit_code=$pmProcess.ExitCode

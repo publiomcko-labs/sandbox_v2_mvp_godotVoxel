@@ -31,6 +31,7 @@ func _start() -> void:
     var capture := _flag("capture")
     var a8_visual_evidence := _flag("a8-visual-evidence")
     var a8_p5_depth_video := _flag("a8-p5-depth-video")
+    var a8_p7_performance := _flag("a8-p7-performance")
     var visual_follow := _flag("visual-surface-follow")
     var screenshot_interval := float(_arg("screenshot-interval-s","30.0"))
     var vsync_off := _flag("vsync-off")
@@ -47,6 +48,11 @@ func _start() -> void:
         return
     if normal<1.0 or duration<=0.0 or duration>normal or warmup<0.0 or warmup>180.0:
         _fail("unknown route or invalid duration/warmup")
+        return
+    if a8_p7_performance and (headless or ci or capture or a8_visual_evidence or a8_p5_depth_video or
+            warmup_frames!=1000 or warmup!=0.0 or duration!=30.0 or route!="turns_18mps_300s" or
+            seed!=20261119 or voxel_threads_requested!=0):
+        _fail("A8-P7 requires exactly 1000 drawn warmup frames, GPU, fixed 30s route/seed, no screenshots")
         return
     if a8_p5_depth_video and (not a8_visual_evidence or headless or ci or not capture or warmup_frames != 1000 or route != "turns_18mps_300s" or duration != 30.0 or vsync_off or voxel_threads_requested != 0):
         _fail("A8-P5 depth video requires one 30s real-GPU turning route, 1000 frames, recorder and normal VSync")
@@ -97,6 +103,7 @@ func _start() -> void:
     runner.warmup_drawn_frames=warmup_frames
     runner.a8_visual_evidence=a8_visual_evidence
     runner.a8_p5_depth_video=a8_p5_depth_video
+    runner.a8_p7_performance=a8_p7_performance
     runner.seed_value=seed
     runner.ci_smoke=ci
     runner.capture=capture
