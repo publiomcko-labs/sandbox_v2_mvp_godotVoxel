@@ -202,6 +202,15 @@ func _run() -> void:
                 for settle in range(12):
                     await RenderingServer.frame_post_draw
                 row["camera_transform"] = str(camera.global_transform)
+                row["camera_origin"] = [camera.global_position.x,camera.global_position.y,camera.global_position.z]
+                row["camera_fov"] = camera.fov
+                row["probe_rays"] = []
+                for offset in [Vector2(-24,-24),Vector2(0,-24),Vector2(24,-24),Vector2(-24,0),Vector2(0,0),Vector2(24,0),Vector2(-24,24),Vector2(0,24),Vector2(24,24)]:
+                    var pixel: Vector2 = camera.unproject_position(center)+offset
+                    var origin: Vector3 = camera.project_ray_origin(pixel)
+                    var direction: Vector3 = camera.project_ray_normal(pixel)
+                    var hit: VoxelRaycastResult = tool.raycast(origin,direction,100.0)
+                    row["probe_rays"].append({"pixel":[pixel.x,pixel.y],"origin":[origin.x,origin.y,origin.z],"direction":[direction.x,direction.y,direction.z],"before_m":hit.distance if hit!=null else null})
             row["camera_targeted_for_video"]=true
             row["target_behind_camera"]=camera.is_position_behind(center)
             var target_px: Vector2=camera.unproject_position(center)
@@ -247,6 +256,13 @@ func _run() -> void:
         row["native_apply_ms"]=elapsed_cpu
         row["sdf_before"]=before
         row["sdf_after"]=tool.get_voxel_f(sample)
+        if pilot:
+            for probe in row["probe_rays"]:
+                var origin := Vector3(float(probe["origin"][0]),float(probe["origin"][1]),float(probe["origin"][2]))
+                var direction := Vector3(float(probe["direction"][0]),float(probe["direction"][1]),float(probe["direction"][2]))
+                var hit: VoxelRaycastResult=tool.raycast(origin,direction,100.0)
+                probe["after_m"]=hit.distance if hit!=null else null
+            row["probe_kind"]="LIVE_SDF_REFERENCE_NOT_RENDERED_DEPTH"
         if absf(float(row["sdf_after"])-before)>0.05:
             sdf_changed+=1
             row["sdf_changed"]=true
