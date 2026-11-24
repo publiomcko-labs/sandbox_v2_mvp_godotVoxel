@@ -1,4 +1,4 @@
-param([string]$PresentMonExe='')
+param([string]$PresentMonExe='', [switch]$Depth)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -12,7 +12,7 @@ $before=@()
 if (Test-Path $base) { $before=@(Get-ChildItem -LiteralPath $base -Directory | ForEach-Object FullName) }
 $failure=$null
 try {
-    & (Join-Path $PSScriptRoot 'a7-record-evidence-windows.ps1') -Mode Edit -Scenario edit_idle_100 -Seed 20261119 -Warmup 0 -WarmupFrames 1000 -A8P8Edit -PresentMonExe $PresentMonExe
+    & (Join-Path $PSScriptRoot 'a7-record-evidence-windows.ps1') -Mode Edit -Scenario edit_idle_100 -Seed 20261119 -Warmup 0 -WarmupFrames 1000 -A8P8Edit -A8P81Depth:$Depth -PresentMonExe $PresentMonExe
 } catch { $failure=$_.Exception.Message }
 if (-not (Test-Path $base)) { throw "A8_P8_NO_EVIDENCE $failure" }
 $created=@(Get-ChildItem -LiteralPath $base -Directory | Where-Object { $before -notcontains $_.FullName })
@@ -21,13 +21,15 @@ $campaign=$created[0].FullName
 if (-not $failure) {
     $ff=Join-Path $root 'reports/tools/a7-ffmpeg-7.1.1/ffmpeg-7.1.1-essentials_build/bin/ffmpeg.exe'
     $fp=Join-Path (Split-Path -Parent $ff) 'ffprobe.exe'
-    & python (Join-Path $PSScriptRoot 'a8_p8_edit_report.py') $campaign --ffmpeg $ff --ffprobe $fp
+    $reporter = if ($Depth) { 'a8_p81_depth_report.py' } else { 'a8_p8_edit_report.py' }
+    & python (Join-Path $PSScriptRoot $reporter) $campaign --ffmpeg $ff --ffprobe $fp
     if ($LASTEXITCODE -ne 0) { $failure='A8_P8_OFFLINE_REPORT_FAILED' }
 }
 if ($failure) { $failure | Set-Content -LiteralPath (Join-Path $campaign 'a8_p8_error.txt') -Encoding UTF8 }
 $zip=$campaign+'.zip'
 Compress-Archive -Path (Join-Path $campaign '*') -DestinationPath $zip -CompressionLevel Fastest
-$final=Join-Path $campaign 'a8_p8_edit_evidence.zip'
+$archiveName = if ($Depth) { 'a8_p81_depth_evidence.zip' } else { 'a8_p8_edit_evidence.zip' }
+$final=Join-Path $campaign $archiveName
 Move-Item -LiteralPath $zip -Destination $final
 Write-Host "A8_P8_EVIDENCE=$final"
 if ($failure) { throw $failure }
