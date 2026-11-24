@@ -561,11 +561,21 @@ public static class A7NativeFocus {
                     try {
                         # Allow the finite PresentMon timer to expire and ETW output to flush.
                         # Retain fail-closed behavior if even the bounded deadline fails.
-                        if (-not $pmProcess.WaitForExit(30000)) {
+                        $pmJoinMs = 30000
+                        if ($A8P7Performance) {
+                            # Respect the owned collector's finite timer, even when
+                            # OpenGL target exit does not trigger automatic shutdown.
+                            $remainingSeconds = [double]$pmStatus.capture_window_end_epoch_s -
+                                ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0)
+                            $pmJoinMs = [int][Math]::Ceiling(
+                                [Math]::Max(30.0, $remainingSeconds + 30.0) * 1000.0)
+                            Write-Host "A8_P7_PRESENTMON_DRAIN_WAIT_MS=$pmJoinMs"
+                        }
+                        if (-not $pmProcess.WaitForExit($pmJoinMs)) {
                             # Stop only this child collector, not unrelated ETW sessions.
                             $pmProcess.Kill()
                             $pmProcess.WaitForExit()
-                            $pmStatus.capture_error='PRESENTMON_GRACEFUL_TIMEOUT_AFTER_30S'
+                            $pmStatus.capture_error="PRESENTMON_GRACEFUL_TIMEOUT_AFTER_${pmJoinMs}MS"
                         }
                         $pmProcess.Refresh()
                         $pmStatus.exit_code=$pmProcess.ExitCode
