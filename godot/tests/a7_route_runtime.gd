@@ -9,6 +9,11 @@ var warmup_s := 45.0
 var warmup_drawn_frames := 0
 var a8_visual_evidence := false
 var a8_p5_depth_video := false
+var a8_p7_performance := false
+var _p7_frame_spikes: Array = []
+var _p7_spike_overflow := 0
+const P7_MAX_SPIKES := 4096
+const P7_BUDGET_MS := 16.7
 var _p5_depth_module: Variant = null
 var _p5_calibrating := false
 var _warmup_initial_drawn := 0
@@ -327,6 +332,15 @@ func _process(_delta: float) -> void:
     if dt_ms>0.0:
         _intervals.append(dt_ms)
         if dt_ms>16.7: _over16+=1
+        if a8_p7_performance and dt_ms>P7_BUDGET_MS:
+            # Store only over-budget callbacks, with no per-event JSONL or disk IO.
+            # Relative clock (same monotonic t as the route): EVENT CORRELATION
+            # only, never proof a specific GPU-present frame belongs to a spike.
+            if _p7_frame_spikes.size()<P7_MAX_SPIKES:
+                _p7_frame_spikes.append([snappedf(t,0.0001),
+                                        snappedf(dt_ms,0.001),_intervals.size()])
+            else:
+                _p7_spike_overflow+=1
         if dt_ms>20.0: _over20+=1
         if dt_ms>33.0: _over33+=1
         if not ci_smoke and DisplayServer.get_name()!="headless":
@@ -364,6 +378,9 @@ func _finish() -> void:
         "warmup_observed_s":_warmup_observed_s,
         "a8_visual_evidence":a8_visual_evidence,
         "a8_p5_depth_video":a8_p5_depth_video,
+        "a8_p7_performance":a8_p7_performance,
+        "a8_p7_over_16_7_buffered":_p7_frame_spikes.size(),
+        "a8_p7_over_16_7_overflow":_p7_spike_overflow,
         "a8_p5_sdf_samples":_p5_depth_module.sample_count if a8_p5_depth_video else 0,
         "a8_p5_depth_calibrations":_p5_depth_module.calibrations if a8_p5_depth_video else [],
         "ci_smoke":ci_smoke, "capture":capture,
@@ -411,6 +428,26 @@ func _finish() -> void:
         return
     f.store_string(JSON.stringify(summary,"  "))
     f.close()
+    if a8_p7_performance:
+        var p7 := FileAccess.open(_outdir.path_join("a8_p7_spikes.json"),FileAccess.WRITE)
+        if p7==null:
+            push_error("A8_P7_SPIKE_FILE_WRITE_FAILED")
+            get_tree().quit(2)
+            return
+        p7.store_string(JSON.stringify({
+            "schema":"a8_p7_spikes_v1",
+            "seed":seed_value,"route":route,
+            "duration_s":duration_s,
+            "measurement_epoch_begin_s":_measurement_epoch_begin,
+            "frame_count":_intervals.size(),
+            "threshold_ms":P7_BUDGET_MS,
+            "events":_p7_frame_spikes,
+            "over_16_7_total":_over16,
+            "overflow":_p7_spike_overflow,
+            "note":"Measured callback start-to-start, NOT ETW display changes, CPU/GPU full frame or pixel present",
+            "strict_perf_60":"NOT_QUALIFIED"
+        }))
+        p7.close()
     print("A7_ROUTE_REPORT_OK route=",route," seed=",seed_value,
           " frames=",summary["frame_count"]," over16.7=",_over16,
           " min_probes=",_min_probe," full_present=NOT_QUALIFIED")
