@@ -31,7 +31,12 @@ assert "PresentMonExe" in source and "a7_presentmon_status.json" in source
 assert "--session_name " in source and "--v2_metrics" in source
 # A7 must not kill the collector before --timed reaches its own bounded stop.
 assert "Ceiling($Warmup + $Duration + 8.0)" in source
-assert "$pmProcess.WaitForExit(30000)" in source
+assert "$pmJoinMs = 30000" in source
+assert "$pmProcess.WaitForExit($pmJoinMs)" in source
+assert "if ($A8P7Performance -or $A8P8Edit)" in source
+assert "$pmStatus.capture_window_end_epoch_s" in source
+assert "[Math]::Max(30.0, $remainingSeconds + 30.0)" in source
+assert source.index("$pmProcess.WaitForExit($pmJoinMs)") < source.index("$pmProcess.Kill()", source.index("$pmProcess.WaitForExit($pmJoinMs)"))
 assert "Ceiling($Warmup+$Duration+45)" not in source
 assert "$pmProcess.WaitForExit(15000)" not in source
 assert "a7_presentmon_stderr.txt" in source
