@@ -21,6 +21,8 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A8-P3: oráculo SDF independente para 60 pixels do vídeo e classificação espacial dentro/fora dos 130 m](docs/A8_3_HORIZON_DEPTH_ORACLE.md)
 - [A8-P4: oito direções de profundidade GPU real + validação amostrada de 130 m](docs/A8_4_130M_RENDERED_DEPTH.md)
 - [A8-P5: continuidade dinâmica 18m/s, vídeos pareados RGB/depth e 1050 amostras SDF](docs/A8_5_DYNAMIC_DEPTH_VIDEO.md)
+- [A8-P6: 1764 frames originais, oráculo SDF nativo 60 Hz e auditoria offline](docs/A8_6_OFFLINE_ALL_FRAMES.md)
+- [Pós-MVP: escalabilidade de 10k–1M edições e rochas promovidas](docs/FUTURE_EDITS_AND_ROCKS_SCALE.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
