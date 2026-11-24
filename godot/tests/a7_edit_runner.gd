@@ -55,6 +55,9 @@ func _run() -> void:
     var count := int(_arg("count","100"))
     var warmup := float(_arg("warmup","45"))
     var pilot := _flag("a8-p8-edit")
+    var depth_pilot := pilot and _flag("a8-p81-depth")
+    var depth: Node
+    var observation_end: float=0.0
     var ci := _flag("ci-smoke")
     var evidence := _flag("capture")
     # Keep the per-edit color marker and timestamps in external-video mode,
@@ -124,6 +127,13 @@ func _run() -> void:
     if tool==null or not bool(world.call("is_voxel_ready")):
         _fail("native brush/terrain unavailable")
         return
+    if depth_pilot:
+        depth=load("res://tests/a8_p81_metric_depth.gd").new()
+        world.add_child(depth)
+        if not depth.setup(camera,world.get_node("HUD")) or not await depth.calibrate(folder):
+            _fail("A8-P8.1 depth calibration failed")
+            return
+        depth.enable_depth()
     var warming := Time.get_ticks_usec()
     while float(Time.get_ticks_usec()-warming)/1000000.0<warmup:
         await process_frame
@@ -142,6 +152,7 @@ func _run() -> void:
         "seed":seed,"count":count,"rate_hz":10.0,
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
         "a8_p8_pilot":pilot,"warmup_drawn_frames":1000 if pilot else 0,
+        "a8_p81_depth":depth_pilot,"depth_calibration":depth.calibrations if depth_pilot else [],
         "input":"scripted brush invocation; no raw OS HID timestamp",
         "visual_evidence_marker":evidence,
         "in_engine_stills_enabled":evidence_stills,
@@ -201,6 +212,9 @@ func _run() -> void:
             if pilot:
                 for settle in range(12):
                     await RenderingServer.frame_post_draw
+                if depth_pilot:
+                    depth.stamp(i*64+1)
+                    await RenderingServer.frame_post_draw
                 row["camera_transform"] = str(camera.global_transform)
                 row["camera_origin"] = [camera.global_position.x,camera.global_position.y,camera.global_position.z]
                 row["camera_fov"] = camera.fov
@@ -226,6 +240,10 @@ func _run() -> void:
                         "pixel_gate":"REVIEW_REQUIRED"
                     }
         # Input-equivalent accepted call begins here, NOT from OS device.
+        if depth_pilot:
+            depth.stamp(i*64+2)
+            row["depth_frames"]=[]
+            row["first_depth_stamp_epoch_s"]=Time.get_unix_time_from_system()
         var begun:=Time.get_ticks_usec()
         row["brush_call_epoch_s"]=Time.get_unix_time_from_system()
         row["brush_call_ticks_us"]=begun
@@ -256,7 +274,7 @@ func _run() -> void:
         row["native_apply_ms"]=elapsed_cpu
         row["sdf_before"]=before
         row["sdf_after"]=tool.get_voxel_f(sample)
-        if pilot:
+        if pilot and not depth_pilot:
             for probe in row["probe_rays"]:
                 var origin := Vector3(float(probe["origin"][0]),float(probe["origin"][1]),float(probe["origin"][2]))
                 var direction := Vector3(float(probe["direction"][0]),float(probe["direction"][1]),float(probe["direction"][2]))
@@ -270,6 +288,8 @@ func _run() -> void:
             row["sdf_changed"]=false
         if DisplayServer.get_name()!="headless":
             await RenderingServer.frame_post_draw
+            if depth_pilot:
+                row["depth_frames"].append({"id":i*64+2,"post_draw_epoch_s":Time.get_unix_time_from_system(),"pre_draw_epoch_s":row["first_depth_stamp_epoch_s"]})
             var frame_proxy:=float(Time.get_ticks_usec()-begun)/1000.0
             row["first_submitted_frame_proxy_ms"]=frame_proxy
             max_submitted=maxf(max_submitted,frame_proxy)
@@ -300,9 +320,28 @@ func _run() -> void:
         if pilot:
             # Keep the target stationary beyond the 100 ms measurement window.
             var hold_start:=Time.get_ticks_usec()
+            var stamp_id:=i*64+3
             while Time.get_ticks_usec()-hold_start<350000:
-                await RenderingServer.frame_post_draw
+                if depth_pilot:
+                    if stamp_id>=i*64+64:
+                        _fail("depth frame ID overflow")
+                        return
+                    depth.stamp(stamp_id)
+                    var pre:=Time.get_unix_time_from_system()
+                    await RenderingServer.frame_post_draw
+                    row["depth_frames"].append({"id":stamp_id,"pre_draw_epoch_s":pre,"post_draw_epoch_s":Time.get_unix_time_from_system()})
+                    stamp_id+=1
+                else:
+                    await RenderingServer.frame_post_draw
             row["camera_hold_end_epoch_s"]=Time.get_unix_time_from_system()
+            observation_end=float(row["camera_hold_end_epoch_s"])
+            if depth_pilot:
+                for probe in row["probe_rays"]:
+                    var origin:=Vector3(float(probe["origin"][0]),float(probe["origin"][1]),float(probe["origin"][2]))
+                    var direction:=Vector3(float(probe["direction"][0]),float(probe["direction"][1]),float(probe["direction"][2]))
+                    var hit:VoxelRaycastResult=tool.raycast(origin,direction,100.0)
+                    probe["after_m"]=hit.distance if hit!=null else null
+                row["probe_kind"]="LIVE_SDF_REFERENCE_NOT_RENDERED_DEPTH"
         trace.store_line(JSON.stringify(row))
     trace.close()
     # Save asynchronously then flush. Independent reopen is tested by
@@ -324,6 +363,7 @@ func _run() -> void:
     var summary: Dictionary={
         "schema":"a7_edit_v1","scenario":scenario,"seed":seed,
         "ci_smoke":ci,"requested_count":count,
+        "a8_p8_observation_end_epoch_s":observation_end,
         "accepted_count":accepted,"rejected_count":rejected,
         "sdf_changed_count":sdf_changed,
         "native_apply_over_100_count":slow_apply,
