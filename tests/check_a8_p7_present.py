@@ -167,7 +167,16 @@ with tempfile.TemporaryDirectory() as tmp:
     rejected(arm/"a7_route.json",lambda x:x.update({"warmup_drawn_frames_observed":999}))
     rejected(arm/"a8_p7_spikes.json",lambda x:x.update({"events":[]}))
     rejected(arm/"a8_p7_spikes.json",lambda x:x.update({"overflow":-1}))
-    rejected(arm/"a7_presentmon_status.json",lambda x:x.update({"etw_events_lost":1}))
+    # ETW loss is fail-closed as NOT_QUALIFIED, not necessarily an exception.
+    original_status=(arm/"a7_presentmon_status.json").read_bytes()
+    status_lost=json.loads(original_status.decode())
+    status_lost["etw_events_lost"]=1
+    emit(arm/"a7_presentmon_status.json",status_lost)
+    missing=audit(root)
+    assert missing["presentmon_etw_status"]=="ETW_INCOMPLETE"
+    assert missing["frame_presentation_cadence"] is None
+    assert missing["strict_perf_60"]=="NOT_QUALIFIED"
+    (arm/"a7_presentmon_status.json").write_bytes(original_status)
     rejected(arm/"a7_presentmon_status.json",lambda x:x.update({"gpu_tracking_requested":False}))
 
 print("A8_P7_PRESENTMON_EXTREME_TAILS_AND_FAIL_CLOSED_PASS GPU_NOT_MEASURED")
