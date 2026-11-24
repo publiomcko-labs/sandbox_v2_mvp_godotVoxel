@@ -54,7 +54,9 @@ if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) {
     throw 'A8_P7_GIT_SHA_NOT_VERIFIED'
 }
 # Explicitly forbid accidental execution on main/default branches.
-$currentBranch=(& git -C $root branch --show-current).Trim()
+$currentBranchOutput = & git -C $root branch --show-current
+if ($LASTEXITCODE -ne 0) { throw 'A8_P7_GIT_BRANCH_QUERY_FAILED' }
+$currentBranch = ([string]$currentBranchOutput).Trim()
 if ($currentBranch -eq 'main' -or $currentBranch -eq 'master') {
     throw 'A8_P7_REFUSES_TO_BENCHMARK_OR_MODIFY_MAIN'
 }
