@@ -326,6 +326,7 @@ public static class A7NativeFocus {
                 capture_requested_duration_s=$PresentMonCaptureSeconds
                 capture_started_epoch_s=$null
                 capture_window_end_epoch_s=$null
+                capture_host_utc_offset_s=[TimeZoneInfo]::Local.GetUtcOffset([DateTime]::Now).TotalSeconds
                 etw_events_lost=$null
                 etw_buffers_lost=$null
                 stderr_path=(Join-Path $folder 'a7_presentmon_stderr.txt')
@@ -506,12 +507,17 @@ public static class A7NativeFocus {
                                         $endReport.schema -eq 'a7_edit_v1' -and
                                         $endReport.scenario -eq $name -and
                                         $endReport.seed -eq $seed -and
-                                        $endReport.requested_count -eq 100 -and
-                                        $endReport.accepted_count -eq 100 -and
+                                        $endReport.requested_count -eq $count -and
+                                        $endReport.accepted_count -eq $count -and
                                         $endReport.all_accepted -eq $true -and
                                         $endReport.sqlite_saved -eq $true -and
                                         $endReport.edit_100_gate -eq 'NOT_QUALIFIED'
                                     )
+                                    if ($A8P8Edit -and $completedWorkload) {
+                                        $focusObservedEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+                                        $completedWorkload = ($endReport.a8_p8_observation_end_epoch_s -gt 0 -and
+                                            $endReport.a8_p8_observation_end_epoch_s -le $focusObservedEpoch)
+                                    }
                                 } else {
                                     $completedWorkload = (
                                         $endReport.schema -eq 'a7_route_v1' -and
