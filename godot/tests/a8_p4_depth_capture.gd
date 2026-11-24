@@ -219,9 +219,9 @@ func _start() -> void:
     if _outdir.is_empty() or DirAccess.make_dir_recursive_absolute(_outdir) != OK:
         _fail("dedicated A8_P4_OUTPUT_DIR required")
         return
-    if DisplayServer.get_name() == "headless" or
+    if (DisplayServer.get_name() == "headless" or
             RenderingServer.get_current_rendering_method() != "gl_compatibility" or
-            RenderingServer.get_current_rendering_driver_name().to_lower() != "opengl3":
+            RenderingServer.get_current_rendering_driver_name().to_lower() != "opengl3"):
         _fail("real Compatibility OpenGL3 GPU renderer required")
         return
     DisplayServer.window_set_size(Vector2i(VIEW_X,VIEW_Y))
@@ -239,10 +239,10 @@ func _start() -> void:
     if _terrain == null or _player == null or _camera == null:
         _fail("missing A5 baseline nodes")
         return
-    if _terrain.mesh_block_size != 16 or _terrain.lod_count != 4 or
+    if (_terrain.mesh_block_size != 16 or _terrain.lod_count != 4 or
             _terrain.view_distance != 192 or
             absf(_terrain.lod_distance-48.0) > 0.001 or
-            _terrain.use_gpu_generation or _terrain.world_seed != SEED:
+            _terrain.use_gpu_generation or _terrain.world_seed != SEED):
         _fail("baseline A5 CPU16 mesh4 / view192 mismatch")
         return
     var savepath := OS.get_environment("A3_SAVE_PATH")
@@ -289,7 +289,8 @@ func _start() -> void:
             return
     _warmup_observed = Engine.get_frames_drawn()-initial_frames
     _warmup_s = float(Time.get_ticks_msec()-warmup_begin)/1000.0
-    if not await _calibrate():
+    var calibration_ok: bool = await _calibrate()
+    if not calibration_ok:
         _fail("actual GL depth reconstruction failed calibrated 25m/165m panels")
         return
     var headings: Array = []
