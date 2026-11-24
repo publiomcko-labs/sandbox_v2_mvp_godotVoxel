@@ -20,6 +20,7 @@ MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 in
 - [A8-P2: prova visual de rotas a 18 m/s e revisão manual de 130 m](docs/A8_2_VISUAL_STREAMING_EVIDENCE.md)
 - [A8-P3: oráculo SDF independente para 60 pixels do vídeo e classificação espacial dentro/fora dos 130 m](docs/A8_3_HORIZON_DEPTH_ORACLE.md)
 - [A8-P4: oito direções de profundidade GPU real + validação amostrada de 130 m](docs/A8_4_130M_RENDERED_DEPTH.md)
+- [A8-P5: continuidade dinâmica 18m/s, vídeos pareados RGB/depth e 1050 amostras SDF](docs/A8_5_DYNAMIC_DEPTH_VIDEO.md)
 
 ## A0 Windows (PowerShell)
 Pré-requisitos: MSVC Build Tools x64, Python 3.12, Git e SCons 4.10.0.
@@ -115,3 +116,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-p4-depth-window
 ```
 
 Saída: `reports/generated/a8-p4/pilot-.../a8_p4_depth_evidence.zip`. Consulte a [metodologia e limitações](docs/A8_4_130M_RENDERED_DEPTH.md); sem alterações na A5/CPU16.
+
+## A8-P5 — rota de 18m/s com RGB e profundidade no vídeo
+
+A8-P4 comprovou 216/216 amostras estáticas de terreno esperado dentro de 130m com depth compatível. A8-P5 investiga uma única rota de 30s com curva, seed 20261119, gravando dois braços NVENC independentes (RGB original e depth OpenGL). O depth é calibrado a 25/165m, com 1000 frames desenhados por braço e expectativa SDF em 35 pixels a 1Hz. Nenhuma alteração no streamer, mesher, workers ou baseline A5 CPU16. O CI não substitui teste de profundidade GPU e todos os gates estritos continuam NOT_QUALIFIED.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\a8-p5-dynamic-depth-windows.ps1
+```
+
+Saída: `reports/generated/a8-p5/pilot-.../a8_p5_dynamic_depth_evidence.zip`. Veja [metodologia e limitações](docs/A8_5_DYNAMIC_DEPTH_VIDEO.md).
