@@ -11,6 +11,7 @@ param(
     [double] $Warmup = 45,
     [ValidateRange(0,10000)] [int] $WarmupFrames = 0,
     [switch] $A8VisualEvidence,
+    [switch] $A8P5DepthVideo,
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
@@ -51,6 +52,11 @@ if ($PresentMonStartDelaySeconds -gt 0 -or $PresentMonCaptureSeconds -gt 0) {
 }
 if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnlyPresentMon) -or $VoxelThreads -ne 0)) {
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
+}
+if ($A8P5DepthVideo -and (-not $A8VisualEvidence -or -not $Capture -or $WarmupFrames -ne 1000 -or
+    $Scenario -ne 'turns_18mps_300s' -or $Duration -ne 30 -or $Full -or $CiSmoke -or
+    $VsyncOff -or $VoxelThreads -ne 0 -or $PresentMonExe)) {
+    throw 'A8_P5_DEPTH_REQUIRES_EXPLICIT_30S_GPU_VIDEO_1000_FRAMES'
 }
 if ($A8VisualEvidence -and (-not $Capture -or $WarmupFrames -ne 1000 -or $Full -or $CiSmoke -or
     $PresentMonExe -or $VsyncOff -or $VoxelThreads -ne 0 -or $Duration -lt 10 -or $Duration -gt 90 -or
@@ -140,7 +146,7 @@ $manifest = [ordered]@{
     requested_view_distance_m=192; visual_radius_target_m=130
     mesh_block_voxels=16; lod_count=4; lod_distance=48
     seeds=@($runSeeds); repeats=$reps; scenarios=@($scenarios)
-    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; a8_visual_evidence_requested=[bool]$A8VisualEvidence; duration_override_s=$Duration
+    warmup_s=$Warmup; warmup_frames_requested=$WarmupFrames; a8_visual_evidence_requested=[bool]$A8VisualEvidence; a8_p5_depth_video_requested=[bool]$A8P5DepthVideo; duration_override_s=$Duration
     windows_version=[Environment]::OSVersion.VersionString
     cpu=$env:PROCESSOR_IDENTIFIER; gpu=@($adapter)
     notes='Main-game A5 is unmodified; CI and frame intervals cannot prove full GPU+present, pixels or EDIT-100.'
@@ -196,6 +202,7 @@ foreach ($name in $scenarios) {
                 $argsList += @("--route=$name","--seed=$seed","--warmup=$Warmup")
                 if ($WarmupFrames -gt 0) { $argsList += "--warmup-frames=$WarmupFrames" }
                 if ($A8VisualEvidence) { $argsList += '--a8-visual-evidence' }
+                if ($A8P5DepthVideo) { $argsList += '--a8-p5-depth-video' }
                 if ($Duration -gt 0) { $argsList += "--duration=$Duration" }
             }
             if ($Capture) { $argsList += '--capture' }
