@@ -56,6 +56,7 @@ func _run() -> void:
     var warmup := float(_arg("warmup","45"))
     var pilot := _flag("a8-p8-edit")
     var depth_pilot := pilot and _flag("a8-p81-depth")
+    var precision_pilot := depth_pilot and _flag("a8-p82")
     var depth: Node
     var observation_end: float=0.0
     var ci := _flag("ci-smoke")
@@ -130,7 +131,7 @@ func _run() -> void:
     if depth_pilot:
         depth=load("res://tests/a8_p81_metric_depth.gd").new()
         world.add_child(depth)
-        if not depth.setup(camera,world.get_node("HUD")) or not await depth.calibrate(folder):
+        if not depth.setup(camera,world.get_node("HUD"),precision_pilot) or not await depth.calibrate(folder):
             _fail("A8-P8.1 depth calibration failed")
             return
         depth.enable_depth()
@@ -152,7 +153,7 @@ func _run() -> void:
         "seed":seed,"count":count,"rate_hz":10.0,
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
         "a8_p8_pilot":pilot,"warmup_drawn_frames":1000 if pilot else 0,
-        "a8_p81_depth":depth_pilot,"depth_calibration":depth.calibrations if depth_pilot else [],
+        "a8_p81_depth":depth_pilot,"a8_p82_precision":precision_pilot,"depth_calibration":depth.calibrations if depth_pilot else [],
         "input":"scripted brush invocation; no raw OS HID timestamp",
         "visual_evidence_marker":evidence,
         "in_engine_stills_enabled":evidence_stills,
@@ -212,6 +213,10 @@ func _run() -> void:
             if pilot:
                 for settle in range(12):
                     await RenderingServer.frame_post_draw
+                if precision_pilot:
+                    row["depth_range_start_m"]=maxf(0.0,camera.global_position.distance_to(center)-4.0)
+                    depth.set_range_start(float(row["depth_range_start_m"]))
+                    row["pre_sdf_lattice"]=depth.snapshot(tool,center,RADIUS_M)
                 if depth_pilot:
                     depth.stamp(i*64+1)
                     await RenderingServer.frame_post_draw
@@ -289,7 +294,7 @@ func _run() -> void:
         if DisplayServer.get_name()!="headless":
             await RenderingServer.frame_post_draw
             if depth_pilot:
-                row["depth_frames"].append({"id":i*64+2,"post_draw_epoch_s":Time.get_unix_time_from_system(),"pre_draw_epoch_s":row["first_depth_stamp_epoch_s"]})
+                row["depth_frames"].append({"id":i*64+2,"post_draw_epoch_s":Time.get_unix_time_from_system(),"pre_draw_epoch_s":row["first_depth_stamp_epoch_s"],"drawn_frame":Engine.get_frames_drawn(),"post_draw_ticks_us":Time.get_ticks_usec()})
             var frame_proxy:=float(Time.get_ticks_usec()-begun)/1000.0
             row["first_submitted_frame_proxy_ms"]=frame_proxy
             max_submitted=maxf(max_submitted,frame_proxy)
@@ -329,13 +334,18 @@ func _run() -> void:
                     depth.stamp(stamp_id)
                     var pre:=Time.get_unix_time_from_system()
                     await RenderingServer.frame_post_draw
-                    row["depth_frames"].append({"id":stamp_id,"pre_draw_epoch_s":pre,"post_draw_epoch_s":Time.get_unix_time_from_system()})
+                    row["depth_frames"].append({"id":stamp_id,"pre_draw_epoch_s":pre,"post_draw_epoch_s":Time.get_unix_time_from_system(),"drawn_frame":Engine.get_frames_drawn(),"post_draw_ticks_us":Time.get_ticks_usec()})
                     stamp_id+=1
                 else:
                     await RenderingServer.frame_post_draw
             row["camera_hold_end_epoch_s"]=Time.get_unix_time_from_system()
             observation_end=float(row["camera_hold_end_epoch_s"])
             if depth_pilot:
+                depth.invalidate_stamp()
+                await RenderingServer.frame_post_draw
+                row["stamp_invalidated_epoch_s"]=Time.get_unix_time_from_system()
+                if precision_pilot:
+                    row["post_sdf_lattice"]=depth.snapshot(tool,center,RADIUS_M)
                 for probe in row["probe_rays"]:
                     var origin:=Vector3(float(probe["origin"][0]),float(probe["origin"][1]),float(probe["origin"][2]))
                     var direction:=Vector3(float(probe["direction"][0]),float(probe["direction"][1]),float(probe["direction"][2]))

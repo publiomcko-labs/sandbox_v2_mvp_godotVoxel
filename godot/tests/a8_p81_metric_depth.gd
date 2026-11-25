@@ -5,11 +5,14 @@ var calibrations: Array = []
 var camera: Camera3D
 var hud: Node
 var bits: Array[ColorRect] = []
+var precise: bool = false
 
-func setup(cam: Camera3D, hud_node: Node) -> bool:
+func setup(cam: Camera3D, hud_node: Node, precision_mode: bool = false) -> bool:
+    precise=precision_mode
     camera=cam
     hud=hud_node
-    var shader: Shader=load("res://shaders/a8_p81_metric_depth.gdshader") as Shader
+    var shader_path: String = "res://shaders/a8_p82_metric_depth.gdshader" if precise else "res://shaders/a8_p81_metric_depth.gdshader"
+    var shader: Shader=load(shader_path) as Shader
     if shader==null:
         return false
     var mat:=ShaderMaterial.new()
@@ -43,6 +46,28 @@ func stamp(id: int) -> void:
         bits[i+1].color=Color.WHITE if (id & (1<<i))!=0 else Color.BLACK
     bits[13].color=Color.BLACK
 
+func invalidate_stamp() -> void:
+    for b in bits:
+        b.color=Color.BLACK
+
+func set_range_start(value: float) -> void:
+    if precise:
+        var material: ShaderMaterial=overlay.material_override as ShaderMaterial
+        material.set_shader_parameter("range_start_m",value)
+
+func snapshot(tool: VoxelTool, center: Vector3, radius: float) -> Dictionary:
+    # All points are inside can_edit_sphere's radius+2 editable extent.
+    # Capture pre-brush integer SDF lattice, independently evaluate CSG offline.
+    var extent: float=radius+1.0
+    var lo:=Vector3i(floori(center.x-extent),floori(center.y-extent),floori(center.z-extent))
+    var hi:=Vector3i(ceili(center.x+extent),ceili(center.y+extent),ceili(center.z+extent))
+    var values: Array=[]
+    for z in range(lo.z,hi.z+1):
+        for y in range(lo.y,hi.y+1):
+            for x in range(lo.x,hi.x+1):
+                values.append(tool.get_voxel_f(Vector3i(x,y,z)))
+    return {"lo":[lo.x,lo.y,lo.z],"hi":[hi.x,hi.y,hi.z],"values":values,"order":"zyx_x_fastest"}
+
 func calibrate(folder: String) -> bool:
     var panel:=MeshInstance3D.new()
     var box:=BoxMesh.new()
@@ -58,10 +83,18 @@ func calibrate(folder: String) -> bool:
     overlay.visible=true
     var valid:=true
     var last:float=-1
-    for distance in [5.0,10.0,15.0,20.0,25.0,30.0,35.0]:
+    var distances: Array = [10.0,11.0,12.0,13.0,14.0,15.0,16.0] if precise else [5.0,10.0,15.0,20.0,25.0,30.0,35.0]
+    if precise:
+        set_range_start(9.0)
+    for distance in distances:
         panel.position=Vector3(0,0,-distance)
         for i in range(5):
             await RenderingServer.frame_post_draw
+        var cal_id: int=3900+calibrations.size()
+        if precise:
+            stamp(cal_id)
+            for i in range(12):
+                await RenderingServer.frame_post_draw
         var img:Image=get_viewport().get_texture().get_image()
         if img==null or img.is_empty() or img.get_width()!=1920 or img.get_height()!=1080:
             valid=false
@@ -77,8 +110,10 @@ func calibrate(folder: String) -> bool:
         if img.save_png(folder.path_join(filename))!=OK or gray<=last+0.025 or absf(color.r-color.g)>0.03 or absf(color.r-color.b)>0.03:
             valid=false
             break
-        calibrations.append({"distance_m":expected,"gray":gray,"pixel":[960,516],"file":filename})
+        calibrations.append({"distance_m":expected,"gray":gray,"pixel":[960,516],"file":filename,"stamp_id":cal_id if precise else null,"range_start_m":9.0 if precise else 0.0})
         last=gray
+        invalidate_stamp()
+        await RenderingServer.frame_post_draw
     panel.queue_free()
     camera.rotation=original
     overlay.visible=false

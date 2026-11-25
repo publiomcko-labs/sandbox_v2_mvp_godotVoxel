@@ -15,6 +15,7 @@ param(
     [switch] $A8P7Performance,
     [switch] $A8P8Edit,
     [switch] $A8P81Depth,
+    [switch] $A8P82Precision,
     [double] $Duration = 0,
     [switch] $Full,
     [switch] $Capture,
@@ -57,6 +58,7 @@ if ($PresentMonExe -and ($CiSmoke -or $Full -or ($Capture -and -not $EvidenceOnl
     throw 'A7 PresentMon ETW is restricted to isolated timed routes or explicit non-performance edit evidence'
 }
 
+if ($A8P82Precision -and -not $A8P81Depth) { throw 'A8_P82_REQUIRES_DEPTH_PILOT' }
 if ($A8P81Depth -and -not $A8P8Edit) { throw 'A8_P81_REQUIRES_EDIT_PILOT' }
 if ($A8P8Edit -and (-not $Capture -or -not $EditNoStills -or -not $EvidenceOnlyPresentMon -or
     -not $PresentMonExe -or $WarmupFrames -ne 1000 -or $Warmup -ne 0 -or
@@ -219,6 +221,7 @@ foreach ($name in $scenarios) {
                 $argsList += @("--scenario=$name","--seed=$seed","--warmup=$editWarmup","--count=$count")
                 if ($A8P8Edit) { $argsList += "--a8-p8-edit" }
                 if ($A8P81Depth) { $argsList += "--a8-p81-depth" }
+                if ($A8P82Precision) { $argsList += "--a8-p82" }
             } else {
                 $argsList += @("--route=$name","--seed=$seed","--warmup=$Warmup")
                 if ($WarmupFrames -gt 0) { $argsList += "--warmup-frames=$WarmupFrames" }

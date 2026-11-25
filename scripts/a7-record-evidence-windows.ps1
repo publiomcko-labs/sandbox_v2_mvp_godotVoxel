@@ -13,6 +13,7 @@ param(
     [switch] $A8P5DepthVideo,
     [switch] $A8P8Edit,
     [switch] $A8P81Depth,
+    [switch] $A8P82Precision,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
     [ValidateSet('ddagrab_nvenc','gdigrab_x264')]
@@ -29,6 +30,7 @@ $etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
+if ($A8P82Precision -and -not $A8P81Depth) { throw 'A8_P82_REQUIRES_DEPTH_PILOT' }
 if ($A8P81Depth -and -not $A8P8Edit) { throw 'A8_P81_REQUIRES_EDIT_PILOT' }
 if ($A8P8Edit -and ($Mode -ne 'Edit' -or $Scenario -ne 'edit_idle_100' -or
     $WarmupFrames -ne 1000 -or $Warmup -ne 0 -or $SkipVideo -or
@@ -196,6 +198,7 @@ try {
         A8P5DepthVideo = [bool]$A8P5DepthVideo
         A8P8Edit = [bool]$A8P8Edit
         A8P81Depth = [bool]$A8P81Depth
+        A8P82Precision = [bool]$A8P82Precision
     }
     if ($Mode -eq 'Route') {
         $params.Duration = $Duration
@@ -281,6 +284,7 @@ try {
         a8_visual_evidence_requested = [bool]$A8VisualEvidence
         a8_p5_depth_video_requested = [bool]$A8P5DepthVideo
         a8_p81_depth_requested = [bool]$A8P81Depth
+        a8_p82_precision_requested = [bool]$A8P82Precision
         duration_override_s = $(if ($Mode -eq 'Route') { $Duration } else { $null })
         git_sha = (& git -C $root rev-parse HEAD).Trim()
         recording_process_started_epoch_s = $recordingStartedEpochS
