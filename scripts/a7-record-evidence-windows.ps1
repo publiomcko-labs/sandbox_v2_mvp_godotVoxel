@@ -14,6 +14,7 @@ param(
     [switch] $A8P8Edit,
     [switch] $A8P81Depth,
     [switch] $A8P82Precision,
+    [switch] $A8P83Semantic,
     [ValidateRange(1,600)] [double] $Duration = 30,
     [string] $FfmpegExe = '',
     [ValidateSet('ddagrab_nvenc','gdigrab_x264')]
@@ -30,6 +31,7 @@ $etwGuard = Join-Path $PSScriptRoot 'a7-etw-session-guard.ps1'
 $routes = @('stationary_180s','straight_18mps_600s','turns_18mps_300s',
     'out_and_back_18mps_300s','shoreline_180s','cave_180s','rocks_water_180s')
 $edits = @('edit_idle_100','edit_moving_100','boundary_edit_100')
+if ($A8P83Semantic -and -not $A8P82Precision) { throw 'A8_P83_REQUIRES_PRECISION_PILOT' }
 if ($A8P82Precision -and -not $A8P81Depth) { throw 'A8_P82_REQUIRES_DEPTH_PILOT' }
 if ($A8P81Depth -and -not $A8P8Edit) { throw 'A8_P81_REQUIRES_EDIT_PILOT' }
 if ($A8P8Edit -and ($Mode -ne 'Edit' -or $Scenario -ne 'edit_idle_100' -or
@@ -157,10 +159,11 @@ try {
         if ($RecorderMode -eq 'ddagrab_nvenc') {
             # FFmpeg 7.1 ddagrab is GPU-native D3D11 Desktop Duplication.
             # dup_frames=0 prevents synthesizing smooth video from stale frames.
+            $cq = if ($A8P83Semantic) { 10 } else { 18 }
             $psi.Arguments = ('-hide_banner -loglevel error -nostats -y ' +
                 '-f lavfi -i "ddagrab=output_idx=0:framerate=60:video_size=1920x1080:' +
                 'offset_x=0:offset_y=0:draw_mouse=0:dup_frames=0" ' +
-                '-fps_mode passthrough -c:v h264_nvenc -preset p1 -cq 18 -bf 0 "' +
+                ("-fps_mode passthrough -c:v h264_nvenc -preset p1 -cq $cq -bf 0 " + '"') +
                 $video + '"')
         } else {
             # Historical compatibility path only, NOT a 60fps qualification:
@@ -199,6 +202,7 @@ try {
         A8P8Edit = [bool]$A8P8Edit
         A8P81Depth = [bool]$A8P81Depth
         A8P82Precision = [bool]$A8P82Precision
+        A8P83Semantic = [bool]$A8P83Semantic
     }
     if ($Mode -eq 'Route') {
         $params.Duration = $Duration
@@ -285,6 +289,8 @@ try {
         a8_p5_depth_video_requested = [bool]$A8P5DepthVideo
         a8_p81_depth_requested = [bool]$A8P81Depth
         a8_p82_precision_requested = [bool]$A8P82Precision
+        a8_p83_semantic_requested = [bool]$A8P83Semantic
+        nvenc_cq_requested = $(if ($RecorderMode -eq 'ddagrab_nvenc') { if ($A8P83Semantic) { 10 } else { 18 } } else { $null })
         duration_override_s = $(if ($Mode -eq 'Route') { $Duration } else { $null })
         git_sha = (& git -C $root rev-parse HEAD).Trim()
         recording_process_started_epoch_s = $recordingStartedEpochS

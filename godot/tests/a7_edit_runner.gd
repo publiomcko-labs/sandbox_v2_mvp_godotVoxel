@@ -57,6 +57,10 @@ func _run() -> void:
     var pilot := _flag("a8-p8-edit")
     var depth_pilot := pilot and _flag("a8-p81-depth")
     var precision_pilot := depth_pilot and _flag("a8-p82")
+    var semantic_pilot := precision_pilot and _flag("a8-p83")
+    if _flag("a8-p83") and not semantic_pilot:
+        _fail("P8.3 requires P8.2 isolated diagnostic")
+        return
     var depth: Node
     var observation_end: float=0.0
     var ci := _flag("ci-smoke")
@@ -102,6 +106,8 @@ func _run() -> void:
     if terrain.mesh_block_size!=16 or terrain.use_gpu_generation:
         _fail("A5 CPU16 baseline changed")
         return
+    if semantic_pilot:
+        terrain.material=preload("res://tests/a8_p83_object_tags.gd").make(Color.GREEN)
     root.add_child(world)
     await process_frame
     # The visible marker is an alignment cue for 60fps desktop recordings,
@@ -131,7 +137,7 @@ func _run() -> void:
     if depth_pilot:
         depth=load("res://tests/a8_p81_metric_depth.gd").new()
         world.add_child(depth)
-        if not depth.setup(camera,world.get_node("HUD"),precision_pilot) or not await depth.calibrate(folder):
+        if not depth.setup(camera,world.get_node("HUD"),precision_pilot,semantic_pilot) or not await depth.calibrate(folder):
             _fail("A8-P8.1 depth calibration failed")
             return
         depth.enable_depth()
@@ -153,7 +159,9 @@ func _run() -> void:
         "seed":seed,"count":count,"rate_hz":10.0,
         "radius_m":RADIUS_M,"ci_smoke":ci,"evidence":evidence,
         "a8_p8_pilot":pilot,"warmup_drawn_frames":1000 if pilot else 0,
-        "a8_p81_depth":depth_pilot,"a8_p82_precision":precision_pilot,"depth_calibration":depth.calibrations if depth_pilot else [],
+        "a8_p81_depth":depth_pilot,"a8_p82_precision":precision_pilot,"a8_p83_semantic":semantic_pilot,
+        "depth_calibration":depth.calibrations if depth_pilot else [],
+        "mask_calibration":depth.mask_calibrations if semantic_pilot else [],
         "input":"scripted brush invocation; no raw OS HID timestamp",
         "visual_evidence_marker":evidence,
         "in_engine_stills_enabled":evidence_stills,
@@ -214,7 +222,7 @@ func _run() -> void:
                 for settle in range(12):
                     await RenderingServer.frame_post_draw
                 if precision_pilot:
-                    row["depth_range_start_m"]=maxf(0.0,camera.global_position.distance_to(center)-4.0)
+                    row["depth_range_start_m"]=maxf(0.0,camera.global_position.distance_to(center)-(2.5 if semantic_pilot else 4.0))
                     depth.set_range_start(float(row["depth_range_start_m"]))
                     row["pre_sdf_lattice"]=depth.snapshot(tool,center,RADIUS_M)
                 if depth_pilot:
@@ -226,7 +234,13 @@ func _run() -> void:
                 row["camera_origin"] = [camera.global_position.x,camera.global_position.y,camera.global_position.z]
                 row["camera_fov"] = camera.fov
                 row["probe_rays"] = []
-                for offset in [Vector2(-24,-24),Vector2(0,-24),Vector2(24,-24),Vector2(-24,0),Vector2(0,0),Vector2(24,0),Vector2(-24,24),Vector2(0,24),Vector2(24,24)]:
+                var offsets: Array=[Vector2(-24,-24),Vector2(0,-24),Vector2(24,-24),Vector2(-24,0),Vector2(0,0),Vector2(24,0),Vector2(-24,24),Vector2(0,24),Vector2(24,24)]
+                if semantic_pilot:
+                    offsets.clear()
+                    for dy in [-32,-16,0,16,32]:
+                        for dx in [-32,-16,0,16,32]:
+                            offsets.append(Vector2(dx,dy))
+                for offset in offsets:
                     var pixel: Vector2 = camera.unproject_position(center)+offset
                     var origin: Vector3 = camera.project_ray_origin(pixel)
                     var direction: Vector3 = camera.project_ray_normal(pixel)

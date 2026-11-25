@@ -6,12 +6,17 @@ var camera: Camera3D
 var hud: Node
 var bits: Array[ColorRect] = []
 var precise: bool = false
+var semantic: bool = false
+var mask_calibrations: Array = []
 
-func setup(cam: Camera3D, hud_node: Node, precision_mode: bool = false) -> bool:
+func setup(cam: Camera3D, hud_node: Node, precision_mode: bool = false, semantic_mode: bool = false) -> bool:
     precise=precision_mode
+    semantic=semantic_mode
     camera=cam
     hud=hud_node
     var shader_path: String = "res://shaders/a8_p82_metric_depth.gdshader" if precise else "res://shaders/a8_p81_metric_depth.gdshader"
+    if semantic:
+        shader_path="res://shaders/a8_p83_semantic_depth.gdshader"
     var shader: Shader=load(shader_path) as Shader
     if shader==null:
         return false
@@ -76,7 +81,7 @@ func calibrate(folder: String) -> bool:
     var mat:=StandardMaterial3D.new()
     mat.shading_mode=BaseMaterial3D.SHADING_MODE_UNSHADED
     mat.albedo_color=Color.WHITE
-    panel.material_override=mat
+    panel.material_override=preload("res://tests/a8_p83_object_tags.gd").make(Color.GREEN) if semantic else mat
     camera.add_child(panel)
     var original:=camera.rotation
     camera.rotation=Vector3(deg_to_rad(25.0),0,0)
@@ -84,6 +89,10 @@ func calibrate(folder: String) -> bool:
     var valid:=true
     var last:float=-1
     var distances: Array = [10.0,11.0,12.0,13.0,14.0,15.0,16.0] if precise else [5.0,10.0,15.0,20.0,25.0,30.0,35.0]
+    if semantic:
+        distances=[]
+        for i in range(11):
+            distances.append(9.4+0.45*i)
     if precise:
         set_range_start(9.0)
     for distance in distances:
@@ -106,7 +115,7 @@ func calibrate(folder: String) -> bool:
         var expected:float=(distance-0.1)/direction.dot(forward)
         var color:=img.get_pixel(960,516)
         var gray:float=(color.r+color.g+color.b)/3.0
-        var filename:="a8_p81_cal_%02d.png"%int(distance)
+        var filename:="a8_p83_cal_%02d.png"%calibrations.size() if semantic else "a8_p81_cal_%02d.png"%int(distance)
         if img.save_png(folder.path_join(filename))!=OK or gray<=last+0.025 or absf(color.r-color.g)>0.03 or absf(color.r-color.b)>0.03:
             valid=false
             break
@@ -114,10 +123,36 @@ func calibrate(folder: String) -> bool:
         last=gray
         invalidate_stamp()
         await RenderingServer.frame_post_draw
+    if semantic and valid:
+        panel.position=Vector3(0,0,-11.5)
+        var tags=preload("res://tests/a8_p83_object_tags.gd")
+        for k in range(3):
+            var label: String=["ROCK","WATER","UNKNOWN"][k]
+            var tag_color: Color=[Color.RED,Color.BLUE,Color(0.5,0.5,0.5)][k]
+            panel.material_override=tags.make(tag_color)
+            for i in range(5):
+                await RenderingServer.frame_post_draw
+            var cal_id: int=3920+k
+            stamp(cal_id)
+            for i in range(12):
+                await RenderingServer.frame_post_draw
+            var img: Image=get_viewport().get_texture().get_image()
+            if img==null or img.is_empty() or img.get_width()!=1920 or img.get_height()!=1080:
+                valid=false
+                break
+            var c: Color=img.get_pixel(960,516)
+            var mask_ok: bool=(c.r>0.8 and c.g<0.2 and c.b<0.2) if k==0 else ((c.b>0.8 and c.r<0.2 and c.g<0.2) if k==1 else (c.r>0.8 and c.b>0.8 and c.g<0.2))
+            var name: String="a8_p83_mask_%02d.png"%k
+            if not mask_ok or img.save_png(folder.path_join(name))!=OK:
+                valid=false
+                break
+            mask_calibrations.append({"stamp_id":cal_id,"expected":label,"pixel":[960,516],"file":name})
+            invalidate_stamp()
+            await RenderingServer.frame_post_draw
     panel.queue_free()
     camera.rotation=original
     overlay.visible=false
-    return valid and calibrations.size()==7
+    return valid and calibrations.size()==(11 if semantic else 7) and (not semantic or mask_calibrations.size()==3)
 
 func enable_depth() -> void:
     overlay.visible=true

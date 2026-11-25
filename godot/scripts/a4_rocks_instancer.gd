@@ -29,7 +29,10 @@ func _enter_tree() -> void:
     var stone := StandardMaterial3D.new()
     stone.albedo_color = Color(0.37, 0.38, 0.39, 1.0)
     stone.roughness = 1.0
-    mesh.material = stone
+    # Opt-in diagnostic tags; static MultiMesh instances retain their mesh,
+    # instance transforms, LOD and native removal callbacks.
+    var tags=preload("res://tests/a8_p83_object_tags.gd")
+    mesh.material = tags.make(Color.RED) if tags.active() else stone
 
     var item := RockItem.new()
     item.name = "a4_stone"

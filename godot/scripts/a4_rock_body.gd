@@ -5,6 +5,10 @@ extends RigidBody3D
 var restored_from_disk: bool = false
 
 func _ready() -> void:
+    var tags=preload("res://tests/a8_p83_object_tags.gd")
+    if tags.active():
+        var visual: MeshInstance3D=get_node("MeshInstance3D") as MeshInstance3D
+        visual.material_override=tags.make(Color.RED)
     # 0.7m radius: geometric volume 1.437m3; at 3600kg the rock sinks
     # in 1000kg/m3 water. Collision scale stays as configured by the scene.
     var s := global_transform.basis.get_scale()
