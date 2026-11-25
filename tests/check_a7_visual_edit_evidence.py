@@ -69,7 +69,9 @@ assert "$foregroundFailure = $null" in runner_foreground
 assert "A7_EVIDENCE_NORMAL_EXIT_FOCUS_TRANSFER" in runner_foreground
 assert "$completedWorkload -and $p.WaitForExit(1500)" in runner_foreground
 assert "$p.ExitCode -eq 0" in runner_foreground
-assert "$endReport.accepted_count -eq 100" in runner_foreground
+assert "$endReport.requested_count -eq $count" in runner_foreground
+assert "$endReport.accepted_count -eq $count" in runner_foreground
+assert "$endReport.a8_p8_observation_end_epoch_s -le $focusObservedEpoch" in runner_foreground
 assert "$endReport.sqlite_saved -eq $true" in runner_foreground
 assert "$endReport.edit_100_gate -eq 'NOT_QUALIFIED'" in runner_foreground
 assert "$foregroundStatus['exit_focus_transfer_accepted'] = $true" in runner_foreground
