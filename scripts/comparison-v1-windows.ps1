@@ -20,16 +20,17 @@ if (!$OutputRoot) { $OutputRoot = Join-Path $root 'reports\comparison-v1' }
 $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
 $run = Join-Path $OutputRoot "godot-$Profile-$stamp"
 New-Item -ItemType Directory -Force -Path $run | Out-Null
-if (!$StateRoot) {
-    if ($Profile -eq 'warm') { throw 'Warm profile requires -StateRoot from previous cold run.' }
-    $StateRoot = Join-Path $run 'world'
+$runState = Join-Path $run 'world'
+New-Item -ItemType Directory -Force -Path $runState | Out-Null
+if ($Profile -eq 'warm') {
+    if (!$StateRoot) { throw 'Warm profile requires -StateRoot from a previous cold run.' }
+    if (!(Test-Path (Join-Path $StateRoot 'terrain.sqlite'))) { throw "Warm save missing: $StateRoot" }
+    Copy-Item -Path (Join-Path $StateRoot '*') -Destination $runState -Recurse -Force
+} elseif ($StateRoot) {
+    throw 'Cold profile always creates a new isolated state. Omit -StateRoot.'
 }
-New-Item -ItemType Directory -Force -Path $StateRoot | Out-Null
-if ($Profile -eq 'warm' -and !(Test-Path (Join-Path $StateRoot 'terrain.sqlite'))) {
-    throw "Warm save missing: $StateRoot"
-}
-$env:A3_SAVE_PATH = Join-Path $StateRoot 'terrain.sqlite'
-$env:A4_ROCK_STATE_PATH = Join-Path $StateRoot 'rocks.json'
+$env:A3_SAVE_PATH = Join-Path $runState 'terrain.sqlite'
+$env:A4_ROCK_STATE_PATH = Join-Path $runState 'rocks.json'
 $env:COMPARISON_V1_CSV = Join-Path $run 'frames.csv'
 $env:COMPARISON_V1_NATIVE_JSON = Join-Path $run 'native.json'
 $cache = Join-Path $project '.godot'
@@ -65,4 +66,4 @@ $contract = Join-Path $root 'benchmarks\comparison-v1.json'
 $result = Join-Path $run 'comparison-v1-result.json'
 & python.exe $reducer --csv $env:COMPARISON_V1_CSV --contract $contract --metadata $metadata --out $result
 if ($LASTEXITCODE -ne 0) { throw 'Comparison reducer rejected Godot data' }
-Write-Host "COMPARISON_V1_DONE report=$run state=$StateRoot"
+Write-Host "COMPARISON_V1_DONE report=$run state=$runState"
