@@ -40,7 +40,7 @@ func _ready() -> void:
     var tags=preload("res://tests/a8_p83_object_tags.gd")
     # In the semantic diagnostic arm only, represent the exact y=0 plane
     # as opaque to identify geometric occlusion, not normal alpha blending.
-    _mesh.material_override = tags.make(Color.BLUE) if tags.active() else material
+    _mesh.material_override = tags.make(Color.BLUE,true) if tags.active() else material
     _mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     add_child(_mesh)
 

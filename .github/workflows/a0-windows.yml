@@ -239,6 +239,23 @@ jobs:
           } finally { $proc.Dispose() }
           if ($exit -ne 0) { throw "A8_P5_GDSCRIPT_CONTRACT_FAILED code=$exit" }
           Write-Host 'A8_P5_MODULE_PARSE_PASS real_depth_and_video_not_measured=TRUE'
+      - name: A8-P8.3 headless semantic resource contract (no GPU claim)
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p83_contract.gd'
+          $psi.UseShellExecute = $false
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $proc) { throw 'A8_P83_CI_GODOT_START_FAILED' }
+          try {
+            if (-not $proc.WaitForExit(60000)) { $proc.Kill(); throw 'A8_P83_CI_TIMEOUT' }
+            $exit = $proc.ExitCode
+          } finally { $proc.Dispose() }
+          if ($exit -ne 0) { throw "A8_P83_GDSCRIPT_CONTRACT_FAILED code=$exit" }
+          Write-Host 'A8_P83_RESOURCE_PARSE_PASS GPU_MASK_NOT_MEASURED'
       - name: A8-P6 independent 60Hz native SDF over 30s — CPU ONLY
         shell: powershell
         run: |
