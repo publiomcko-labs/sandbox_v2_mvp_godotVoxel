@@ -129,6 +129,9 @@ jobs:
 
       - name: A8-P8.2 independent CSG and precision contracts (CPU only)
         run: python tests/check_a8_p82_depth.py
+
+      - name: A8-P8.3 semantic occlusion and holdout precision contracts (CPU only)
+        run: python tests/check_a8_p83_semantic.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
