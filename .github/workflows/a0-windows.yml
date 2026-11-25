@@ -126,6 +126,9 @@ jobs:
 
       - name: A8-P8.1 metric depth and source-clock contracts (CPU only)
         run: python tests/check_a8_p81_depth.py
+
+      - name: A8-P8.2 independent CSG and precision contracts (CPU only)
+        run: python tests/check_a8_p82_depth.py
       - name: A7 PowerShell syntax validation (all diagnostic scripts)
         shell: powershell
         run: |
