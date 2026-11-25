@@ -1,10 +1,13 @@
 # Sandbox V2 — MVP A | Godot + Voxel Tools + C++
 
-**Estado:** A0 build/API/smoke aprovados no CI e renderização local confirmada; A1 em implementação. Metas de desempenho e cobertura real ainda não qualificadas.
+**Estado (25/11/2026):** `MVP_FUNCTIONAL_COMPLETE_WITH_LIMITATIONS` — versão funcional final A5/CPU16. A6–A8 encerradas como investigações diagnósticas, sem promoção de variantes. Os quatro requisitos gráficos estritos continuam `NOT_QUALIFIED`. Consulte o [encerramento final](docs/MVP_A_ENCERRAMENTO_FINAL.md) e o [backlog pós-MVP](docs/POS_MVP.md).
 
 MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 integrado e lógica nativa em C++20. Meta final: 60 FPS/16,7 ms por frame completo, movimento contínuo de 18 m/s sem lacunas, raio visual efetivo de 130 m em 360°, edição visível <=100 ms, rochas físicas, água básica e persistência.
 
 ## Documentos
+- [Checkpoint, resultados e limitações finais](docs/MVP_A_ENCERRAMENTO_FINAL.md)
+- [Backlog pós-MVP](docs/POS_MVP.md)
+- [Matriz de qualificação e proveniência (JSON)](docs/MVP_A_RESULTADOS.json)
 - [Especificação técnica do MVP A](docs/MVP_A_GODOT_VOXEL_TOOLS_CPP.md)
 - [Contrato comum de requisitos e benchmarks](docs/CRITERIOS_COMUNS.md)
 - [A0: bootstrap, execução e gates](docs/A0_IMPLEMENTACAO.md)

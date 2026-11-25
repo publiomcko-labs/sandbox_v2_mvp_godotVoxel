@@ -1,0 +1,87 @@
+{
+  "schema": "mvp_a_functional_closure_v1",
+  "date": "2026-11-25",
+  "status": "MVP_FUNCTIONAL_COMPLETE_WITH_LIMITATIONS",
+  "functional_baseline": "0c3fee959576d0a1faec9ceecffb4b132a65558b",
+  "diagnostic_source": "b38b66e1193c88a5c1976cb99042760bceb97e1b",
+  "strict_gates": {
+    "PERF-60": "NOT_QUALIFIED",
+    "STREAM-18": "NOT_QUALIFIED",
+    "VIEW-130": "NOT_QUALIFIED",
+    "EDIT-100": "NOT_QUALIFIED"
+  },
+  "ci": {
+    "functional_a5_run": 44572157321,
+    "diagnostic_p83_run": 45606170030,
+    "diagnostic_passed_steps": 49
+  },
+  "a7_2": {
+    "accepted": 300,
+    "total": 300,
+    "central_sdf_changed": 287
+  },
+  "p4": {
+    "expected_hits_inside_130m": 216,
+    "matched": 216
+  },
+  "p5": {
+    "expected_hits_inside_125m": 799,
+    "matched": 799
+  },
+  "p7": {
+    "source_zip_sha256": "41a08b756d7f87e07ca7290e39baaa2f2c93e759859b631d70077e924ab5c510",
+    "presented_rows": 1799,
+    "intervals": 1798,
+    "p50_ms": 16.67595,
+    "p99_ms": 16.74962,
+    "max_ms": 17.61818,
+    "over_16_7": 392,
+    "over_20": 0,
+    "dropped_rows": 0,
+    "etw_loss_counters_explicit_zero": false
+  },
+  "p83": {
+    "source_zip_sha256": "30039b05260a386170c047666e3717a64b05f6806398e14e806c07d6e8e0bda6",
+    "video_sha256": "aacc58c4a03a371a85ef477d1d5597e02a084494033463496d74678603bd4265",
+    "trace_sha256": "c30e049e4ee5886626cab0dcb0d266c8201f756c0ef00fade8bb70fb348152ac",
+    "etw_csv_sha256": "986a44d94f025a149f056139d86a93ef6b46cf31433210ec9a5baf62025bcaab",
+    "accepted": 12,
+    "total": 12,
+    "sign_comparisons": 3656,
+    "sign_disagreements": 0,
+    "decoded_frames": 2799,
+    "stable_ids": 241,
+    "missing_ids": 25,
+    "conflicting_ids": 0,
+    "empirical_calibration_budget_m": 0.06090164321102067,
+    "original_report_draw_proxy_ms": {
+      "1": 30.912,
+      "2": null,
+      "3": 32.409,
+      "4": null,
+      "5": 32.455,
+      "6": null,
+      "7": 32.177,
+      "8": 32.244,
+      "9": null,
+      "10": 48.525,
+      "11": 32.49,
+      "12": null
+    },
+    "first_correct_presented_pixel_ms": null
+  },
+  "retrospective_conversation": {
+    "excluded_edit": 11,
+    "reason": "User accepted possible image interference; original result remains preserved.",
+    "considered": 11,
+    "reported_estimates_ms": {
+      "median": 66.75,
+      "max": 83.05,
+      "next_event_max": 99.69
+    },
+    "status": "EXPLORATORY_REPORTED_NOT_IN_ORIGINAL_PACKAGE_NOT_FORMALLY_QUALIFIED"
+  },
+  "new_gpu_campaign_required_for_functional_closure": false,
+  "windows_release_export": "NOT_VALIDATED",
+  "backlog_issue": 27
+}
