@@ -34,4 +34,6 @@ assert geometry_class([None]*9,refs,.45)=="UNKNOWN_DEPTH"
 assert geometry_class([11]*9,refs,.45)=="MIXED_OR_UNCERTAIN"
 assert "depth.invalidate_stamp()" in (root/"godot/tests/a7_edit_runner.gd").read_text()
 assert "range_start_m" in (root/"godot/shaders/a8_p82_metric_depth.gdshader").read_text()
+import a8_p82_legacy_audit
+assert "PRE_DEPTH_UNVERIFIED" in (root/"scripts/a8_p82_depth_report.py").read_text()
 print("A8_P82_CSG_PRECISION_AND_FRAME_ID_CONTRACT_PASS")

@@ -9,3 +9,7 @@ CPU-only regression verifies sphere union/removal, baseline mismatch, ambiguous 
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\a8-p8-edit-windows.ps1" -Precision
 ```
 Output a8_p82_depth_evidence.zip. No baseline A5/CPU16 change, no merge, no strict EDIT-100 promotion. New evidence is needed solely for new encoding and pre/post lattice; not a repetition of old RGB/depth capture.
+
+## Legacy evidence provenance and reproduction
+
+Original ZIP SHA256: b3a1cd802fd2fd8027649210196776b3840d8cee093017dbbc23a3320098c4af. Video SHA256: 1181af0171b279a51a4271bcd893b26a8e530a494de0a2926f4d6424d7ee58a2. Trace SHA256: 7eeb8625696e44f7e7b1f2c680e5ad294a1e511b614d0c8bb9d8c63769e6ba1b. Offline re-decoding found 5148 frames; edit 9 had 10 POST matches at 32–200ms, 8 mixed at 217–349ms. All observations at terminal ID are excluded, even if first looked valid. The standalone legacy re-audit can be run on CPU using scripts/a8_p82_legacy_audit.py EXTRACTED_CAMPAIGN --ffmpeg PATH --ffprobe PATH --output NEW_JSON. The new pilot also holds the PRE stamp for six draw signals and requires depth agreement with the independent baseline before counting post-edit matches. A mismatch may be occlusion, native brush behavior, trilinear interpolation, mesh or measurement, not a proven mesh fault.

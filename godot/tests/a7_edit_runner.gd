@@ -219,7 +219,9 @@ func _run() -> void:
                     row["pre_sdf_lattice"]=depth.snapshot(tool,center,RADIUS_M)
                 if depth_pilot:
                     depth.stamp(i*64+1)
-                    await RenderingServer.frame_post_draw
+                    # Hold the explicit PRE stamp until multiple actual captures are possible.
+                    for pre_frame in range(6 if precision_pilot else 1):
+                        await RenderingServer.frame_post_draw
                 row["camera_transform"] = str(camera.global_transform)
                 row["camera_origin"] = [camera.global_position.x,camera.global_position.y,camera.global_position.z]
                 row["camera_fov"] = camera.fov

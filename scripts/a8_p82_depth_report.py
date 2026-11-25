@@ -92,6 +92,21 @@ def audit(root,ffmpeg,ffprobe):
     for e in edits:
         require(len(e["probe_rays"])==9 and e["stamp_invalidated_epoch_s"]>=e["camera_hold_end_epoch_s"],"invalid observation trace")
         oracle=evaluate(e,meta["radius_m"])
+        # Pre-edit depth must agree with the independent baseline before
+        # post-edit depth can be called compatible. Last PRE sample can
+        # overlap the brush transition; exclude first and last.
+        pre_indices=by_id[e["index"]*64+1]
+        pre_observations=[]
+        for j in pre_indices[1:-1]:
+            vals=[]
+            for probe in e["probe_rays"]:
+                g=gray(j,*map(round,probe["pixel"]))
+                x=interpolate(g,points)
+                vals.append(None if x is None else x+e["depth_range_start_m"])
+            pre_observations.append(vals)
+        usable_rays=[i for i,r in enumerate(oracle["rays"]) if i!=4 and r["status"]=="PREDICTED" and abs(r["oracle_before_m"]-r["oracle_after_m"])>2*tol]
+        pre_verified=(len(pre_indices)>=3 and pre_indices==list(range(pre_indices[0],pre_indices[-1]+1))
+            and len(usable_rays)>=2 and all(all(v[i] is not None and abs(v[i]-oracle["rays"][i]["oracle_before_m"])<=tol for i in usable_rays) for v in pre_observations))
         frames=e["depth_frames"];ids=[f["id"] for f in frames]
         require(ids==list(range(e["index"]*64+2,e["index"]*64+2+len(ids))) and ids and ids[-1]<e["index"]*64+64,"bad frame IDs")
         counters=collections.Counter(f["drawn_frame"] for f in frames)
@@ -109,10 +124,11 @@ def audit(root,ffmpeg,ffprobe):
                     x=interpolate(g,points)
                     obs.append(None if x is None else x+e["depth_range_start_m"])
                 cls=geometry_class(obs,oracle["rays"],tol)
+                if not pre_verified:cls="PRE_DEPTH_UNVERIFIED"
                 if not cal["target_0_10m_met"]:cls="CALIBRATION_TARGET_UNMET"
             out.append({"id":ident,"video_count":len(indices),"group_status":state,"class":cls,"observed_m":obs,"draw_proxy_ms":(f["post_draw_ticks_us"]-e["brush_call_ticks_us"])/1000})
         matches=[x for x in out if x["class"]=="CSG_POST_MATCH"]
-        result.append({"index":e["index"],"add":e["add"],"oracle":oracle,"frames":out,"first_sampled_csg_match":matches[0] if matches else None,"first_correct_presented_pixel_ms":None})
+        result.append({"index":e["index"],"add":e["add"],"oracle":oracle,"pre_depth_verified":pre_verified,"pre_depth_capture_count":len(pre_indices),"pre_depth_observations_m":pre_observations,"frames":out,"first_sampled_csg_match":matches[0] if matches else None,"first_correct_presented_pixel_ms":None})
     report={"schema":"a8_p82_depth_v1","video_sha256":sha(video),"trace_sha256":sha(traces[0]),"etw_csv_sha256":sha(folder/"a7_presentmon.csv"),"decoded_video_frames":len(pts),"calibration":cal,"calibration_points":points,"geometry_model_tolerance_m":tol,"etw_clock_shift_s":shift,"edits":result,"strict_edit_100":"NOT_QUALIFIED","limitations":["Estimated calibration budget, not a global depth error bound","Independent CSG predicts from pre-brush local lattice; not native brush equivalence nor exact mesh topology","No exact ETW/frame-ID join or HID-to-photon timing","Missing, conflicting and persistent IDs excluded; no interpolation outside calibration range"]}
     (root/"a8_p82_depth_report.json").write_text(json.dumps(report,indent=2,allow_nan=False),encoding="utf-8")
     return report
