@@ -1,0 +1,81 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/viewer_motion.gd" id="1_motion"]
+[ext_resource type="Script" path="res://scripts/terrain_sdf.gd" id="2_terrain"]
+[ext_resource type="Script" path="res://scripts/a3_edit_controller.gd" id="3_editor"]
+[ext_resource type="Script" path="res://scripts/a4_rocks_instancer.gd" id="4_rocks"]
+[ext_resource type="Script" path="res://scripts/a4_rock_manager.gd" id="5_rocks_manager"]
+[ext_resource type="Script" path="res://scripts/a5_water.gd" id="6_water"]
+
+[sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_ground"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
+albedo_color = Color(0.36, 0.57, 0.32, 1)
+roughness = 1.0
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_swimmer"]
+radius = 0.43
+height = 1.7
+
+[sub_resource type="Environment" id="Environment_day"]
+background_mode = 2
+background_color = Color(0.55, 0.72, 0.89, 1)
+ambient_light_source = 2
+
+[node name="World" type="WorldBootstrap"]
+
+[node name="Terrain" type="VoxelLodTerrain" parent="."]
+script = ExtResource("2_terrain")
+world_seed = 20261119
+mesher = SubResource("VoxelMesherTransvoxel_ground")
+material = SubResource("StandardMaterial3D_ground")
+lod_count = 4
+mesh_block_size = 16
+view_distance = 192
+lod_distance = 48.0
+generate_collisions = true
+collision_lod_count = 1
+
+[node name="RockInstancer" type="VoxelInstancer" parent="Terrain"]
+script = ExtResource("4_rocks")
+
+[node name="RockManager" type="Node3D" parent="."]
+script = ExtResource("5_rocks_manager")
+
+[node name="Water" type="Node3D" parent="."]
+script = ExtResource("6_water")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -25, 0)
+light_energy = 1.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_day")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+position = Vector3(0, 22, 18)
+script = ExtResource("1_motion")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+shape = SubResource("CapsuleShape3D_swimmer")
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+rotation_degrees = Vector3(-22, 0, 0)
+current = true
+far = 320.0
+
+[node name="VoxelViewer" type="VoxelViewer" parent="Player"]
+view_distance = 192
+requires_collisions = true
+
+[node name="EditController" type="Node" parent="."]
+script = ExtResource("3_editor")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 1200.0
+offset_bottom = 52.0
+text = "A5: water y=0 | G physics/swim | W/A/S/D E/Q | F rock | LMB/RMB edit | Ctrl+S save"

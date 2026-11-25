@@ -1,0 +1,338 @@
+name: A0-A7 Windows integration and final acceptance harness preflight
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: a0-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    # Experimental branch: CPU/generic host ONLY. This dedicated label must
+    # be placed on DESKTOP-T0U6S55, never on DESKTOP-SAFGO15 (GTX 1050 Ti).
+    # Until that label exists this job remains queued rather than occupying
+    # the GPU baseline runner that other projects need.
+    runs-on: [self-hosted, Windows, X64, cpu-only]
+    # Process-scoped policy; no persistent changes to the Windows runner.
+    env:
+      PSExecutionPolicyPreference: Bypass
+    timeout-minutes: 55
+    defaults:
+      run:
+        working-directory: a0-integration-isolated
+    steps:
+      # Avoid legacy shared checkout containing stale locked .venv files.
+      - uses: actions/checkout@v4
+        with:
+          path: a0-integration-isolated
+          clean: false
+      - name: Confirm generic CPU Windows host (never reserve GTX 1050 Ti)
+        shell: powershell
+        run: |
+          if ($env:COMPUTERNAME -ne 'DESKTOP-T0U6S55') {
+            throw "A7_CPU_RUNNER_HOST_MISMATCH expected=DESKTOP-T0U6S55 actual=$env:COMPUTERNAME"
+          }
+          Write-Host "A7_CPU_RUNNER_CONFIRMED machine=$env:COMPUTERNAME"
+      - name: Set up uv (no machine-wide Python install)
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.9"
+          enable-cache: false
+      - name: Install job-temporary Python and SCons
+        shell: powershell
+        run: |
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'uv python install failed' }
+          $venv = Join-Path $env:RUNNER_TEMP 'a0-python-env'
+          uv venv $venv --python 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'uv venv failed' }
+          $scripts = Join-Path $venv 'Scripts'
+          uv pip install --python (Join-Path $scripts 'python.exe') scons==4.10.0
+          if ($LASTEXITCODE -ne 0) { throw 'uv pip install scons failed' }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $scripts
+          & (Join-Path $scripts 'python.exe') --version
+          & (Join-Path $scripts 'scons.exe') --version
+      - name: Configure persistent SCons cache
+        shell: powershell
+        run: |
+          if (-not $env:RUNNER_TOOL_CACHE) { throw 'RUNNER_TOOL_CACHE is not set' }
+          $cache = Join-Path $env:RUNNER_TOOL_CACHE 'sandbox-voxel-a0-scons-cache'
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "SCONS_CACHE=$cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "SCONS_CACHE=$cache"
+      - name: Static A0 contract validation
+        shell: powershell
+        run: python tests/check_a0_contract.py
+      - name: Static A1 contract validation
+        shell: powershell
+        run: python tests/check_a1_contract.py
+      - name: Static A2 route and telemetry contract
+        shell: powershell
+        env:
+          A2_REUSE_SNAPSHOT: "0"
+        run: python tests/check_a2_contract.py
+      - name: Static A3 native edit and SQLite contract
+        shell: powershell
+        run: python tests/check_a3_contract.py
+      - name: A4 static and native A3 ABI parity
+        shell: powershell
+        run: python tests/check_a4_contract.py
+      - name: A5 water, swimmer and shoreline static contract
+        shell: powershell
+        run: python tests/check_a5_contract.py
+      - name: A7 strict acceptance source contract and matrix fail-closed test
+        shell: powershell
+        run: python tests/check_a7_contract.py
+      - name: A7 ETW presentation parser, clock, loss and probe regression contracts
+        shell: powershell
+        run: python tests/check_a7_streaming_present.py
+      - name: A7.1/A7.2 independent visual and edit evidence contracts
+        shell: powershell
+        run: python tests/check_a7_visual_edit_evidence.py
+      - name: A7.3 independent target-ROI pixel-candidate audit (CPU only)
+        shell: powershell
+        run: python tests/check_a7_pixel_roi_review.py
+      - name: A8 short GPU-route warmup and triage fail-closed contracts (CPU fixture)
+        shell: powershell
+        run: python tests/check_a8_route_triage.py
+      - name: A8-P2 independent visual evidence and 1000 drawn frames (CPU fixture)
+        shell: powershell
+        run: python tests/check_a8_visual_evidence.py
+      - name: A8-P3 frozen video targets and 130m SDF depth fail-closed contracts
+        shell: powershell
+        run: python tests/check_a8_p3_depth_report.py
+      - name: A8-P4 real depth evidence/PNG, calibration and 130m pixel fail-closed contracts
+        shell: powershell
+        run: python tests/check_a8_p4_depth_report.py
+      - name: A8-P5 dynamic depth video, marker and paired-arm fail-closed contracts
+        shell: powershell
+        run: python tests/check_a8_p5_dynamic_depth.py
+      - name: A8-P6 1800-frame SDF native oracle and offline PTS fail-closed fixture
+        shell: powershell
+        run: python tests/check_a8_p6_offline_contract.py
+      - name: A8-P7 extreme-frame ETW pilot, fail-closed clock and attribution contracts
+        shell: powershell
+        run: python tests/check_a8_p7_present.py
+
+      - name: A8-P8 edit evidence contract (CPU only)
+        run: python tests/check_a8_p8_edit.py
+
+      - name: A8-P8.1 metric depth and source-clock contracts (CPU only)
+        run: python tests/check_a8_p81_depth.py
+
+      - name: A8-P8.2 independent CSG and precision contracts (CPU only)
+        run: python tests/check_a8_p82_depth.py
+
+      - name: A8-P8.3 semantic occlusion and holdout precision contracts (CPU only)
+        run: python tests/check_a8_p83_semantic.py
+      - name: A7 PowerShell syntax validation (all diagnostic scripts)
+        shell: powershell
+        run: |
+          $names = @('scripts/a7-streaming-present-windows.ps1', 'scripts/a7-run-windows.ps1', 'scripts/a7-etw-session-guard.ps1', 'scripts/a7-record-evidence-windows.ps1', 'scripts/a7-bootstrap-ffmpeg-windows.ps1', 'scripts/a8-pilot-windows.ps1', 'scripts/a8-p2-visual-windows.ps1', 'scripts/a8-p4-depth-windows.ps1', 'scripts/a8-p5-dynamic-depth-windows.ps1', 'scripts/a8-p7-present-windows.ps1', 'scripts/a8-p8-edit-windows.ps1')
+          foreach ($name in $names) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $name).Path, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Error "A7_POWERSHELL_PARSE_FAIL $name $($parseError.Message)" }
+              throw "A7_POWERSHELL_PARSE_FAILED $name"
+            }
+            Write-Host "A7_POWERSHELL_PARSE_PASS $name"
+          }
+      - name: Restore compiled native binary from approved A3 CI
+        uses: actions/download-artifact@v4
+        with:
+          name: a0-build-snapshot
+          run-id: 44522153759
+          github-token: ${{ github.token }}
+          path: a0-integration-isolated
+      - name: Verify locked Godot and A3 native DLL without C++ rebuild
+        shell: powershell
+        run: ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+      - name: Headless module and GDExtension smoke
+        shell: powershell
+        run: ./scripts/smoke-windows.ps1
+      - name: A1 deterministic SDF and scene smoke
+        shell: powershell
+        run: ./scripts/a1-smoke-windows.ps1
+      - name: A2 deterministic route and headless trace smoke
+        shell: powershell
+        run: ./scripts/a2-smoke-windows.ps1
+      - name: A3 native edit and SQLite reopen smoke
+        shell: powershell
+        run: ./scripts/a3-smoke-windows.ps1
+      - name: A4 batched instancing, physics fixture and persistence reopen
+        shell: powershell
+        run: ./scripts/a4-smoke-windows.ps1
+      - name: A5 buoyancy, current and shoreline SQLite reopen smoke
+        shell: powershell
+        run: ./scripts/a5-smoke-windows.ps1
+      - name: A7 short headless route/edit integrity smoke (not visual or perf qualification)
+        shell: powershell
+        run: ./scripts/a7-smoke-windows.ps1
+      - name: A8-P3 independent generator SDF rays on CPU-only headless Godot
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p3-ci'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:A8_P3_OUTPUT_DIR = $out
+          # Godot is a Windows GUI subsystem binary; '&' does not reliably
+          # populate LASTEXITCODE in Windows PowerShell 5.1. Wait for the
+          # actual owned process and inspect its ExitCode instead.
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p3_depth_oracle.gd'
+          $psi.UseShellExecute = $false
+          $game = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $game) { throw 'A8_P3_GODOT_START_FAILED' }
+          try {
+            if (-not $game.WaitForExit(180000)) {
+              $game.Kill()
+              throw 'A8_P3_GODOT_TIMEOUT_180S'
+            }
+            $godotExit = $game.ExitCode
+          } finally { $game.Dispose() }
+          if ($godotExit -ne 0) { throw "A8_P3_HEADLESS_SDF_ORACLE_FAILED exit=$godotExit" }
+          python .\scripts\a8_p3_depth_report.py (Join-Path $out 'a8_p3_procedural_depth.json')
+          if ($LASTEXITCODE -ne 0) { throw "A8_P3_SDF_REPORT_FAILED exit=$LASTEXITCODE" }
+          Write-Host "A8_P3_SDF_ONLY_COMPLETED strict=NOT_QUALIFIED"
+      - name: A8-P4 headless shader and GDScript contract ONLY (no GPU depth claim)
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p4_depth_capture.gd -- --ci-contract'
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $p) { throw 'A8_P4_CI_GODOT_LAUNCH_FAILED' }
+          try {
+            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'A8_P4_CI_TIMEOUT' }
+            $code = $p.ExitCode
+          } finally { $p.Dispose() }
+          if ($code -ne 0) { throw "A8_P4_GDSCRIPT_CI_CONTRACT_FAILED code=$code" }
+          Write-Host 'A8_P4_HEADLESS_SOURCE_ONLY_PASS real_GPU_depth_not_measured=TRUE strict=NOT_QUALIFIED'
+      - name: A8-P5 headless parse-only depth-video module contract
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p5_contract.gd'
+          $psi.UseShellExecute = $false
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $proc) { throw 'A8_P5_CI_GODOT_START_FAILED' }
+          try {
+            if (-not $proc.WaitForExit(60000)) { $proc.Kill(); throw 'A8_P5_CI_TIMEOUT' }
+            $exit = $proc.ExitCode
+          } finally { $proc.Dispose() }
+          if ($exit -ne 0) { throw "A8_P5_GDSCRIPT_CONTRACT_FAILED code=$exit" }
+          Write-Host 'A8_P5_MODULE_PARSE_PASS real_depth_and_video_not_measured=TRUE'
+      - name: A8-P8.3 headless semantic resource contract (no GPU claim)
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p83_contract.gd'
+          $psi.UseShellExecute = $false
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $proc) { throw 'A8_P83_CI_GODOT_START_FAILED' }
+          try {
+            if (-not $proc.WaitForExit(60000)) { $proc.Kill(); throw 'A8_P83_CI_TIMEOUT' }
+            $exit = $proc.ExitCode
+          } finally { $proc.Dispose() }
+          if ($exit -ne 0) { throw "A8_P83_GDSCRIPT_CONTRACT_FAILED code=$exit" }
+          Write-Host 'A8_P83_RESOURCE_PARSE_PASS GPU_MASK_NOT_MEASURED'
+      - name: A8-P6 independent 60Hz native SDF over 30s — CPU ONLY
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p6-ci'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:A8_P6_OUTPUT_DIR = $out
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p6_sdf_frame_oracle.gd'
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $p) { throw 'A8_P6_GODOT_START_FAILED' }
+          try {
+            if (-not $p.WaitForExit(240000)) {
+              $p.Kill()
+              throw 'A8_P6_SDF_ORACLE_TIMEOUT_240S'
+            }
+            $exit = $p.ExitCode
+          } finally { $p.Dispose() }
+          if ($exit -ne 0) { throw "A8_P6_SDF_ORACLE_FAILED code=$exit" }
+          python .\scripts\a8_p6_oracle_report.py (Join-Path $out 'a8_p6_expected_sdf_60hz.json')
+          if ($LASTEXITCODE -ne 0) { throw 'A8_P6_ORACLE_REPORT_REJECTED' }
+          Write-Host "A8_P6_NATIVE_EXPECTATIONS_READY grid_60Hz=1800 rays=12600 GPU_not_used=TRUE strict=NOT_QUALIFIED"
+      - name: A8-P6 frozen 11 video silhouette rays — independent CPU SDF
+        shell: powershell
+        run: |
+          $out = Join-Path (Get-Location).Path 'reports/generated/a8p6-ci'
+          $env:A8_P6_OUTPUT_DIR = $out
+          $exe = (Resolve-Path '.\.tools\godot.exe').Path
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.Arguments = '--headless --path ".\godot" --script res://tests/a8_p6_silhouette_oracle.gd'
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          if ($null -eq $p) { throw 'A8_P6_BORDER_GODOT_START_FAILED' }
+          try {
+            if (-not $p.WaitForExit(90000)) {
+              $p.Kill()
+              throw 'A8_P6_BORDER_ORACLE_TIMEOUT_90S'
+            }
+            $exit = $p.ExitCode
+          } finally { $p.Dispose() }
+          if ($exit -ne 0) { throw "A8_P6_BORDER_GDSCRIPT_FAILED code=$exit" }
+          python .\scripts\a8_p6_silhouette_report.py (Join-Path $out 'a8_p6_11_silhouette_sdf.json') .\godot\tests\fixtures\a8_p6_silhouette_targets.json
+          if ($LASTEXITCODE -ne 0) { throw 'A8_P6_BORDER_SHA_PIXEL_ORACLE_INVALID' }
+          Write-Host "A8_P6_11_SILHOUETTE_TRIAGE_READY strict=NOT_QUALIFIED GPU_not_used=TRUE"
+      - name: Archive independent A8-P6 60Hz native SDF expectations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-p6-60hz-expected-sdf
+          if-no-files-found: warn
+          path: a0-integration-isolated/reports/generated/a8p6-ci/*.json
+      - name: Archive independent A8-P3 depth-oracle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-p3-procedural-depth
+          if-no-files-found: warn
+          path: a0-integration-isolated/reports/generated/a8p3-ci/*.json
+      - name: Publish bootstrap build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a0-build-snapshot
+          if-no-files-found: ignore
+          path: |
+            a0-integration-isolated/godot/bin/*.dll
+            a0-integration-isolated/extension_api.json
+            a0-integration-isolated/reports/generated/a2-ci/*.json
+            a0-integration-isolated/reports/generated/a2-ci/*.jsonl
+            a0-integration-isolated/reports/generated/a3-ci/*.json
+            a0-integration-isolated/reports/generated/a4-ci/*.json
+            a0-integration-isolated/reports/generated/a5-ci/*.json
+            a0-integration-isolated/reports/generated/a7-ci/**/*.json
+            a0-integration-isolated/reports/generated/a7-ci/**/*.jsonl
+            a0-integration-isolated/reports/generated/a7-ci/**/A7_REPORT.md

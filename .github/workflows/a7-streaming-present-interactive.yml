@@ -1,0 +1,138 @@
+name: A7 streaming stress and displayed-frame ETW
+
+on:
+  push:
+    branches:
+      - exp/a7-streaming-present-20261121
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: a7-stream-present-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  a7-stress-etw:
+    runs-on: [self-hosted, Windows, X64, interactive-gpu]
+    timeout-minutes: 65
+    env:
+      PSExecutionPolicyPreference: Bypass
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
+        working-directory: a7-present-isolated
+    steps:
+      - name: Checkout experiment into an isolated directory
+        uses: actions/checkout@v4
+        with:
+          path: a7-present-isolated
+          clean: false
+
+      - name: Preflight interactive 1080p window, host and GPU
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path reports/generated | Out-Null
+          $session = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+          $gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object Name)
+          $resolution = ''
+          $reason = ''
+          if ($env:COMPUTERNAME -ne 'DESKTOP-SAFGO15') {
+            $reason='Incorrect baseline host'
+          } elseif (-not ($gpu -contains 'NVIDIA GeForce GTX 1050 Ti')) {
+            $reason='Incorrect baseline GPU'
+          } elseif ($session -eq 0) {
+            $reason='Runner is in Windows Session 0'
+          } else {
+            Add-Type -AssemblyName System.Windows.Forms
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $resolution = "$($screen.Width)x$($screen.Height)"
+            if ($screen.Width -lt 1920 -or $screen.Height -lt 1080) {
+              $reason='Active desktop smaller than 1920x1080'
+            }
+          }
+          $info=[ordered]@{
+            schema='a7_streaming_present_preflight_v1'
+            machine=$env:COMPUTERNAME
+            runner=$env:RUNNER_NAME
+            session_id=$session
+            gpu=@($gpu)
+            monitor_resolution=$resolution
+            game_window_target='1920x1080'
+            accepted=($reason -eq '')
+            reason=$reason
+          }
+          $info | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath reports/generated/a7-streaming-preflight.json -Encoding UTF8
+          Write-Host "A7_STREAMING_PREFLIGHT session=$session gpu=$($gpu -join ',') monitor=$resolution accepted=$($info.accepted)"
+          if ($reason) { throw "A7_STREAMING_PREFLIGHT_REJECTED $reason" }
+
+      - name: Install reproducible Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.13.9"
+          enable-cache: false
+
+      - name: Add temporary Python to PATH
+        run: |
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to install Python' }
+          $venv=Join-Path $env:RUNNER_TEMP 'a7-stream-present-python'
+          uv venv $venv --python 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to create isolated Python' }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $venv 'Scripts')
+          & (Join-Path $venv 'Scripts/python.exe') --version
+
+      - name: Validate existing and new A7 contracts
+        run: |
+          & python tests/check_a7_contract.py
+          if ($LASTEXITCODE -ne 0) { throw 'A7 core contract failed' }
+          & python tests/check_a7_streaming_present.py
+          if ($LASTEXITCODE -ne 0) { throw 'A7 ETW contract failed' }
+
+      - name: Restore pinned approved native A3 DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: a0-build-snapshot
+          run-id: 44522153759
+          github-token: ${{ github.token }}
+          path: a7-present-isolated
+
+      - name: Bootstrap pinned Godot
+        run: |
+          & ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+          if (-not $?) { throw 'A7 Godot bootstrap failed' }
+
+      - name: Fetch and verify official Intel PresentMon 2.6.0
+        run: |
+          $ErrorActionPreference='Stop'
+          $url='https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe'
+          $exe=Join-Path $env:RUNNER_TEMP 'PresentMon-2.6.0-x64.exe'
+          Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+          $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          $expected='B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF'
+          if ($hash -ne $expected) { throw 'Pinned PresentMon SHA256 mismatch' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "A7_PRESENTMON_EXE=$exe"
+          Write-Host "A7_PRESENTMON_PIN_VERIFIED sha256=$hash"
+
+      - name: Fail-fast ETW smoke (one 30s route, before long streaming)
+        run: |
+          & ./scripts/a7-streaming-present-windows.ps1 -PresentMonExe $env:A7_PRESENTMON_EXE -FastSmoke
+          if (-not $?) { throw 'A7 short ETW smoke failed; long campaign was not started' }
+
+      - name: Run longer streaming A-B with automatic workers and ETW presentation
+        run: |
+          & ./scripts/a7-streaming-present-windows.ps1 -PresentMonExe $env:A7_PRESENTMON_EXE
+          if (-not $?) { throw 'A7 streaming and PresentMon diagnostic failed' }
+
+      - name: Upload all A7 ETW and stress evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a7-streaming-present-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            a7-present-isolated/reports/generated/a7-streaming-preflight.json
+            a7-present-isolated/reports/generated/a7-streaming-present/**/*

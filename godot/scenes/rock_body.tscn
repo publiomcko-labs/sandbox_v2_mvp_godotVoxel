@@ -1,0 +1,31 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/a4_rock_body.gd" id="1_body"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_stone"]
+radius = 0.7
+height = 1.4
+radial_segments = 8
+rings = 4
+
+[sub_resource type="SphereShape3D" id="SphereShape_stone"]
+radius = 0.7
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_stone"]
+friction = 0.95
+bounce = 0.04
+
+[node name="PromotedRock" type="RigidBody3D"]
+mass = 3600.0
+collision_layer = 3
+linear_damp = 0.8
+angular_damp = 0.8
+continuous_cd = 1
+physics_material_override = SubResource("PhysicsMaterial_stone")
+script = ExtResource("1_body")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_stone")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape_stone")

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "godot": {
+    "version": "4.7.2-stable",
+    "upstream_commit": "ed1daf0bf001b61586d9930840f2f1394092c079",
+    "voxel_tools_version": "v1.7",
+    "voxel_tools_commit": "2ac9f5f8a8219bf499314cc0fad54ffc47df908f",
+    "editor_windows": {
+      "url": "https://github.com/Zylann/godot_voxel/releases/download/v1.7/godot.windows.editor.x86_64.exe.zip",
+      "sha256": "e2292adb0b671508ab220fce5bcd052b1c20674a3385d89c6b38601e6e1f956b"
+    },
+    "template_windows": {
+      "url": "https://github.com/Zylann/godot_voxel/releases/download/v1.7/godot.windows.template_release.x86_64.exe.zip",
+      "sha256": "86fe371ed80948ccb4b4ac78a0e62e2917bc257890bdaa62b4f6e7aa402f0775"
+    }
+  },
+  "godot_cpp": {
+    "version": "10.0.0-stable",
+    "commit": "507ed9d840c01a3c5b2a39af8bb4000bfac30bf5",
+    "repository": "https://github.com/godotengine/godot-cpp.git"
+  },
+  "build_tools": {
+    "python": "3.12",
+    "scons": "4.10.0",
+    "cpp_standard": "c++20",
+    "platform": "windows",
+    "architecture": "x86_64"
+  }
+}

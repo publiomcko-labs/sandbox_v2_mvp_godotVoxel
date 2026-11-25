@@ -1,0 +1,136 @@
+name: A7 Windows graphical resource A-B
+
+on:
+  push:
+    branches:
+      - exp/a7-resource-utilization-20261120
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: a7-graphic-resources-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-graphical-ab:
+    runs-on: [self-hosted, Windows, X64, interactive-gpu]
+    timeout-minutes: 50
+    # Local runner may have Restricted machine policy; never change it globally.
+    env:
+      PSExecutionPolicyPreference: Bypass
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
+        working-directory: a7-graphical-isolated
+    steps:
+      # Never re-enter the legacy shared checkout containing the broken .venv.
+      - uses: actions/checkout@v4
+        with:
+          path: a7-graphical-isolated
+          clean: false
+
+      - name: Reject Session 0 and verify interactive display
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'reports/generated'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $sessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+          $info = [ordered]@{
+            schema='a7_interactive_preflight_v1'
+            session_id=$sessionId
+            session_name=$env:SESSIONNAME
+            machine_name=$env:COMPUTERNAME
+            runner_name=$env:RUNNER_NAME
+            windows_user=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            graphics_adapters=@()
+            desktop_resolution=$null
+            accepted=$false
+            reason=$null
+          }
+          try {
+            $info.graphics_adapters = @(
+              Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }
+            )
+          } catch {
+            Write-Warning "A7_GPU_ENUMERATION_WARNING $($_.Exception.Message)"
+          }
+          Write-Host "A7_RUNNER_HARDWARE machine=$env:COMPUTERNAME runner=$env:RUNNER_NAME gpu=$($info.graphics_adapters -join ',')"
+          if ($env:COMPUTERNAME -ne 'DESKTOP-SAFGO15') {
+            $info.reason = "RUNNER_HOST_MISMATCH: expected DESKTOP-SAFGO15; got $env:COMPUTERNAME."
+          } elseif (-not (@($info.graphics_adapters) -contains 'NVIDIA GeForce GTX 1050 Ti')) {
+            $info.reason = 'RUNNER_GPU_MISMATCH: expected the GTX 1050 Ti baseline GPU.'
+          } elseif ($sessionId -eq 0) {
+            $info.reason = 'RUNNER_SESSION_0: GitHub runner Windows service has no interactive display. Stop the service and launch its run.cmd in a signed-in desktop session.'
+          } else {
+            try {
+              Add-Type -AssemblyName System.Windows.Forms
+              $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+              $info.desktop_resolution = "$($bounds.Width)x$($bounds.Height)"
+              if ($bounds.Width -lt 1920 -or $bounds.Height -lt 1080) {
+                $info.reason = 'DISPLAY_BELOW_1920x1080: graphical A/B requires an active 1080p display.'
+              } else {
+                $info.accepted = $true
+                $info.reason = 'INTERACTIVE_SESSION_AVAILABLE'
+              }
+            } catch {
+              $info.reason = "DESKTOP_PROBE_FAILED: $($_.Exception.Message)"
+            }
+          }
+          $info | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath "$dir/a7-interactive-preflight.json" -Encoding UTF8
+          Write-Host "A7_GRAPHICAL_PREFLIGHT session=$sessionId resolution=$($info.desktop_resolution) accepted=$($info.accepted) reason=$($info.reason)"
+          if (-not $info.accepted) { throw "A7_GRAPHICAL_PREFLIGHT_REJECTED: $($info.reason)" }
+
+      - name: Set up uv (workspace-local Python)
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.9"
+          enable-cache: false
+
+      - name: Install Python 3.12 locally
+        run: |
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'uv python install failed' }
+          $venv = Join-Path $env:RUNNER_TEMP 'a7-python-env'
+          uv venv $venv --python 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'uv venv failed' }
+          $scripts = Join-Path $venv 'Scripts'
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $scripts
+          & (Join-Path $scripts 'python.exe') --version
+
+      - name: A7 static contracts (no graphical PASS)
+        run: |
+          & python tests/check_a7_contract.py
+          if ($LASTEXITCODE -ne 0) { throw 'A7 static contract failed' }
+
+      - name: Restore approved A3 native DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: a0-build-snapshot
+          run-id: 44522153759
+          github-token: ${{ github.token }}
+          path: a7-graphical-isolated
+
+      - name: Prepare pinned Godot runtime and native DLL
+        run: |
+          & ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+          if (-not $?) { throw 'A7 runtime bootstrap failed' }
+
+      - name: Run eight balanced 1080p graphical resource sessions
+        run: |
+          & ./scripts/a7-resources-ab-windows.ps1 -Scenario shoreline_180s -Duration 60 -Warmup 45 -Repeats 2 -Seed 20261119
+          if (-not $?) { throw 'A7 resource A/B failed' }
+
+      - name: Upload preflight, partial and complete results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a7-windows-resources-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            a7-graphical-isolated/reports/generated/a7-interactive-preflight.json
+            a7-graphical-isolated/reports/generated/a7-resources/**/*

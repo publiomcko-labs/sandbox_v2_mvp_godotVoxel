@@ -1,0 +1,24 @@
+# Editor-generated files
+.godot/
+godot/.godot/
+.import/
+# Generated native libraries and Godot interfaces
+godot/bin/
+extension_api.json
+native/extension_api.json
+*.obj
+*.o
+*.pdb
+*.exp
+*.ilk
+*.lib
+# Fetched dependencies, tools and cached output
+third_party/godot-cpp/
+.tools/
+.scons_cache/
+native/.sconsign.dblite
+# Reports remain ignored until an explicitly reviewed artifact is selected
+reports/generated/
+
+# Local Python/SCons environment
+.venv/
