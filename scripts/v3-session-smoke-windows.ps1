@@ -31,3 +31,31 @@ if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
     throw 'V3 clean checkpoint contract failed'
 }
 Write-Host 'V3_SESSION_SQLITE_REOPEN_PASS (headless; no graphical qualification)'
+
+# Exercise actual opt-in runtime rather than only direct session bindings.
+$env:V3_WORLD_ROOT=Join-Path $results 'runtime-worlds'
+$env:V3_MOD_ROOT=$env:V3_TEST_EXTERNAL_MODS
+$env:V3_WORLD_ID='runtime_fixture'
+$env:V3_WORLD_SEED='20261119'
+New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+foreach ($phase in @('write','reopen')) {
+    $stdout=Join-Path $results "runtime-$phase.stdout.log"
+    $stderr=Join-Path $results "runtime-$phase.stderr.log"
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_runtime_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "V3 runtime fixture $phase timed out" }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or
+        -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_RUNTIME_FIXTURE_PASS phase=$phase") -or
+        -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {
+        throw "V3 runtime $phase failed exit=$($p.ExitCode)"
+    }
+}
+$runtimeWorld=Join-Path $env:V3_WORLD_ROOT 'runtime_fixture'
+$checkpoint=Get-Content (Join-Path $runtimeWorld 'checkpoint.json') -Raw | ConvertFrom-Json
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or $checkpoint.pins.Count -ne 3 -or (Test-Path (Join-Path $runtimeWorld 'session_pending'))) {
+    throw 'V3 runtime clean checkpoint failed'
+}
+Write-Host 'V3_RUNTIME_E2E_PASS (headless)'

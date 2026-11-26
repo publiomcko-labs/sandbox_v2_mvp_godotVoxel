@@ -13,6 +13,11 @@ on:
       - 'third_party.lock'
       - 'scripts/v3-session-smoke-windows.ps1'
       - 'godot/tests/v3_session_smoke.gd'
+      - 'godot/tests/v3_runtime_smoke.gd'
+      - 'godot/scripts/v3_*.gd'
+      - 'godot/scenes/v3_main.tscn'
+      - 'godot/mods/**'
+      - 'examples/v3/**'
       - '.github/workflows/v3-native-integration.yml'
   workflow_dispatch:
 permissions:
