@@ -10,6 +10,7 @@ on:
       - 'native/src/content_registry/**'
       - 'native/src/persistence/**'
       - 'scripts/bootstrap-windows.ps1'
+      - 'third_party.lock'
       - 'scripts/v3-session-smoke-windows.ps1'
       - 'godot/tests/v3_session_smoke.gd'
       - '.github/workflows/v3-native-integration.yml'
@@ -45,6 +46,13 @@ jobs:
           $cache=Join-Path $env:RUNNER_TOOL_CACHE 'sandbox-voxel-a0-scons-cache'
           New-Item -ItemType Directory -Force $cache | Out-Null
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "SCONS_CACHE=$cache"
+      - name: Parse PowerShell entrypoints before build
+        run: |
+          foreach ($file in @('scripts/bootstrap-windows.ps1','scripts/v3-session-smoke-windows.ps1')) {
+            $tokens=$null; $errors=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $file),[ref]$tokens,[ref]$errors)
+            if ($errors.Count) { $errors | Format-List | Out-String | Write-Host; throw "PowerShell parse failed: $file" }
+          }
       - name: Build new native DLL with locked custom Godot (never reuse A5 DLL)
         run: ./scripts/bootstrap-windows.ps1
       - name: A5 compatibility fixture with new DLL

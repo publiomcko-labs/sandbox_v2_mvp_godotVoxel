@@ -29,6 +29,18 @@
   "nlohmann_json": {
     "version": "3.12.0",
     "commit": "55f93686c01528224f448c19128836e7df245f72",
-    "repository": "https://github.com/nlohmann/json.git"
+    "repository": "https://github.com/nlohmann/json.git",
+    "files": [
+      {
+        "path": "single_include/nlohmann/json.hpp",
+        "git_blob_sha1": "82d69f7c5d044c9887c96b90c97f5639083ecd14",
+        "bytes": 953436
+      },
+      {
+        "path": "LICENSE.MIT",
+        "git_blob_sha1": "a1dacc8dbbd907c4b622ff1f08e279c27465dcbc",
+        "bytes": 1076
+      }
+    ]
   }
 }

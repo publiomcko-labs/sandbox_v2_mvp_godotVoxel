@@ -14,6 +14,45 @@ $editor = Join-Path $toolsDir 'godot.exe'
 $archive = Join-Path $toolsDir 'godot-editor.zip'
 New-Item -ItemType Directory -Force $toolsDir | Out-Null
 
+if (-not $RuntimeOnly) {
+    # Fetch the single-header JSON library and its license directly from the
+    # immutable revision. This path works on Windows runners without git.exe.
+    $jsonDir = Join-Path $root 'third_party/nlohmann-json'
+    $jsonCommit = [string]$lock.nlohmann_json.commit
+    if ($jsonCommit -notmatch '^[0-9a-f]{40}$') { throw 'Invalid pinned JSON commit' }
+    function Confirm-GitBlob {
+        param([string]$Path, [string]$Expected, [long]$Size)
+        if ($Expected -notmatch '^[0-9a-f]{40}$' -or $Size -le 0) { throw 'Invalid JSON blob lock' }
+        if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+        if ((Get-Item -LiteralPath $Path).Length -ne $Size) { return $false }
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        $prefix = [Text.Encoding]::ASCII.GetBytes("blob $($bytes.Length)" + [char]0)
+        $inputBytes = New-Object byte[] ($prefix.Length + $bytes.Length)
+        [Buffer]::BlockCopy($prefix, 0, $inputBytes, 0, $prefix.Length)
+        [Buffer]::BlockCopy($bytes, 0, $inputBytes, $prefix.Length, $bytes.Length)
+        $sha = [Security.Cryptography.SHA1]::Create()
+        try { $actual = [BitConverter]::ToString($sha.ComputeHash($inputBytes)).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+        return ($actual -eq $Expected)
+    }
+    foreach ($entry in @($lock.nlohmann_json.files)) {
+        $relative = [string]$entry.path
+        if ($relative -notin @('single_include/nlohmann/json.hpp','LICENSE.MIT')) { throw 'Unexpected JSON dependency path' }
+        $destination = Join-Path $jsonDir $relative
+        $expected = [string]$entry.git_blob_sha1
+        $size = [long]$entry.bytes
+        if (!(Confirm-GitBlob -Path $destination -Expected $expected -Size $size)) {
+            New-Item -ItemType Directory -Force (Split-Path -Parent $destination) | Out-Null
+            $tmp = "$destination.download"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nlohmann/json/$jsonCommit/$relative" -OutFile $tmp -UseBasicParsing
+            if (!(Confirm-GitBlob -Path $tmp -Expected $expected -Size $size)) { throw "Pinned JSON blob mismatch: $relative" }
+            Move-Item -LiteralPath $tmp -Destination $destination -Force
+        }
+        Write-Host "V3_JSON_BLOB_VERIFIED path=$relative revision=$jsonCommit"
+    }
+    if (!(Test-Path -LiteralPath (Join-Path $jsonDir 'single_include/nlohmann/json.hpp') -PathType Leaf)) { throw 'Pinned JSON header missing' }
+}
+
 if (-not $SkipDownload) {
     Write-Host 'Fetching locked custom Godot editor...'
     Invoke-WebRequest -Uri $lock.godot.editor_windows.url -OutFile $archive
@@ -85,24 +124,6 @@ if ($null -ne $gitExe) {
     Write-Host "Unpacked pinned godot-cpp source: $commit"
 }
 
-# V3 full native build only. RuntimeOnly retains the existing A5 path.
-$jsonDir = Join-Path $root 'third_party/nlohmann-json'
-$jsonCommit = [string]$lock.nlohmann_json.commit
-if ($jsonCommit -notmatch '^[0-9a-f]{40}$' -or $null -eq $gitExe) { throw 'V3 native build requires Git and pinned JSON commit' }
-if (-not (Test-Path (Join-Path $jsonDir '.git'))) {
-    if (Test-Path $jsonDir) { throw "Unmanaged JSON dependency directory: $jsonDir" }
-    New-Item -ItemType Directory -Force $jsonDir | Out-Null
-    & $gitExe.Source -C $jsonDir init -q
-    if ($LASTEXITCODE -ne 0) { throw 'JSON git init failed' }
-    & $gitExe.Source -C $jsonDir remote add origin $lock.nlohmann_json.repository
-    if ($LASTEXITCODE -ne 0) { throw 'JSON remote failed' }
-}
-& $gitExe.Source -C $jsonDir fetch --depth 1 origin $jsonCommit
-if ($LASTEXITCODE -ne 0) { throw 'JSON dependency fetch failed' }
-& $gitExe.Source -C $jsonDir checkout --detach FETCH_HEAD
-if ($LASTEXITCODE -ne 0) { throw 'JSON dependency checkout failed' }
-if ((& $gitExe.Source -C $jsonDir rev-parse HEAD).Trim() -ne $jsonCommit) { throw 'JSON revision mismatch' }
-if (@(& $gitExe.Source -C $jsonDir status --porcelain).Count -ne 0) { throw 'Dirty JSON dependency' }
 Write-Host 'Generating extension_api.json from the locked custom engine...'
 $probe = Join-Path $toolsDir 'api-probe'
 New-Item -ItemType Directory -Force $probe | Out-Null
