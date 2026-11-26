@@ -198,7 +198,20 @@ inline Registry initial_registry() {
     });
     r.add("cave_profile", [](const Json &j) {
         if(j.size()!=4) {
-            fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m"});
+            if(j.size()==9) {
+                fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m"});
+            } else {
+                fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m","entrance_period_m","entrance_radius_m","entrance_depth_m","entrance_jitter_m"});
+                const auto spacing=positive(j.at("entrance_period_m"),256);
+                const auto mouth=positive(j.at("entrance_radius_m"),6);
+                const auto jitter=positive(j.at("entrance_jitter_m"),20);
+                const auto cover=positive(j.at("entrance_cover_m"),24);
+                const auto depth=positive(j.at("entrance_depth_m"),96);
+                require(spacing>=64 && mouth>=2.5 && mouth+2+jitter<spacing*0.25,
+                        "sparse entrance spacing");
+                require(cover>=10 && depth>cover+12 &&
+                        depth<positive(j.at("max_depth_m"),512)*0.62,"entrance depth");
+            }
             const auto period=positive(j.at("period_m"),256);
             const auto radius=positive(j.at("radius_m"),12);
             const auto chamber=positive(j.at("chamber_radius_m"),32);
@@ -209,7 +222,7 @@ inline Registry initial_registry() {
             require(period>=24 && radius>=2 && chamber>radius && chamber<period*0.35,"cave network scale");
             require(depth>=64 && pocket_period>=20 && pocket>=3 && pocket+warp+2<pocket_period*0.5,
                     "pocket separation");
-            require(positive(j.at("entrance_cover_m"),12)<depth*0.2,"entrance cover");
+            require(positive(j.at("entrance_cover_m"),24)<depth*0.2,"entrance cover");
             positive(j.at("threshold"),1);
             return std::vector<Reference>{};
         }

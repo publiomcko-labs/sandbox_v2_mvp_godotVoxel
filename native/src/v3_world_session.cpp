@@ -165,7 +165,7 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
         }
         if(!cave_root.is_empty()) {
             next->caves=ct::compile_caves(*next->snapshot,narrow(cave_profile),static_cast<uint64_t>(seed));
-            generator="v3_3_caves_v1:"+next->geology->profile_id+":"+narrow(cave_profile);
+            generator="v3_3_caves_v2:"+next->geology->profile_id+":"+narrow(cave_profile);
         }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         const auto c=next->store.header().core;

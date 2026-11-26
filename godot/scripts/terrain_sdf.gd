@@ -240,13 +240,36 @@ static func _add_caves(g: VoxelGraphFunction, cfg: Dictionary, x: int, y: int, z
     var chamber := _constant_minus(g,float(cfg["chamber_radius_m"]),_length3(g,a,b,c),Vector2.ZERO)
     network = _binary(g,VoxelGraphFunction.NODE_MAX,network,chamber,Vector2.ZERO)
     var depth := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,ground,-1.0,Vector2.ZERO)
-    var entrance_noise := _noise_2d(g,x,z,int(seeds[3]),period*2.0,2,Vector2.ZERO)
-    var cover := _offset(g,VoxelGraphFunction.NODE_ADD,entrance_noise,float(cfg["threshold"])*0.5-0.25,Vector2.ZERO)
-    cover = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,cover,float(cfg["entrance_cover_m"]),Vector2.ZERO)
-    var entry_gate := _binary(g,VoxelGraphFunction.NODE_SUBTRACT,depth,cover,Vector2.ZERO)
+    # Protect the original landscape: no network or chamber may reach the
+    # shallow roof. Only narrow, independently spaced entrance shafts can.
+    var roof := _offset(g,VoxelGraphFunction.NODE_SUBTRACT,depth,float(cfg["entrance_cover_m"]),Vector2.ZERO)
     var deep_gate := _constant_minus(g,max_depth*0.62,depth,Vector2.ZERO)
-    network = _binary(g,VoxelGraphFunction.NODE_MIN,network,entry_gate,Vector2.ZERO)
+    network = _binary(g,VoxelGraphFunction.NODE_MIN,network,roof,Vector2.ZERO)
     network = _binary(g,VoxelGraphFunction.NODE_MIN,network,deep_gate,Vector2.ZERO)
+
+    # Sparse, tilted entrances with globally continuous lateral jitter.
+    # Cell boundaries remain solid; their wrapped coordinates are never
+    # discontinuous in the region where the entrance SDF is positive.
+    var spacing := float(cfg["entrance_period_m"])
+    var jitter := float(cfg["entrance_jitter_m"])
+    var jitter_x := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_noise_2d(g,x,z,int(seeds[3]),spacing*1.3,2,Vector2.ZERO),jitter,Vector2.ZERO)
+    var jitter_z := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_noise_2d(g,x,z,int(seeds[5]),spacing*1.3,2,Vector2.ZERO),jitter,Vector2.ZERO)
+    var descent := _offset(g,VoxelGraphFunction.NODE_MAX,depth,0.0,Vector2.ZERO)
+    var lean_x := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,descent,0.28,Vector2.ZERO)
+    var lean_z := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,descent,-0.17,Vector2.ZERO)
+    var shifted_x := _binary(g,VoxelGraphFunction.NODE_ADD,_binary(g,VoxelGraphFunction.NODE_ADD,x,jitter_x,Vector2.ZERO),lean_x,Vector2.ZERO)
+    var shifted_z := _binary(g,VoxelGraphFunction.NODE_ADD,_binary(g,VoxelGraphFunction.NODE_ADD,z,jitter_z,Vector2.ZERO),lean_z,Vector2.ZERO)
+    var ex := _pocket_axis(g,shifted_x,spacing)
+    var ez := _pocket_axis(g,shifted_z,spacing)
+    var radial_sq := _binary(g,VoxelGraphFunction.NODE_ADD,_square(g,ex,Vector2.ZERO),_square(g,ez,Vector2.ZERO),Vector2.ZERO)
+    var radial := _unary(g,VoxelGraphFunction.NODE_SQRT,radial_sq,Vector2.ZERO)
+    # Tight mouths widen gradually in the first 12 m of descent.
+    var widen := _offset(g,VoxelGraphFunction.NODE_MIN,descent,12.0,Vector2.ZERO)
+    widen = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,widen,0.15,Vector2.ZERO)
+    var entrance_radius := _offset(g,VoxelGraphFunction.NODE_ADD,widen,float(cfg["entrance_radius_m"]),Vector2.ZERO)
+    var shaft := _binary(g,VoxelGraphFunction.NODE_SUBTRACT,entrance_radius,radial,Vector2.ZERO)
+    shaft = _binary(g,VoxelGraphFunction.NODE_MIN,shaft,_constant_minus(g,float(cfg["entrance_depth_m"]),depth,Vector2.ZERO),Vector2.ZERO)
+    network = _binary(g,VoxelGraphFunction.NODE_MAX,network,shaft,Vector2.ZERO)
     # Isolated deep pockets. A guaranteed solid depth band separates them
     # from the network. Bounded radial perturbation preserves cell walls.
     var pocket_period := float(cfg["pocket_period_m"])

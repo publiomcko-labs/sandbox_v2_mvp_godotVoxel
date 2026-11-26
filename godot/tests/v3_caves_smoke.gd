@@ -51,6 +51,10 @@ func _topology(generator: VoxelGeneratorGraph, seed_value: int, config: Dictiona
     var field := PackedByteArray()
     field.resize(SIZE*SIZE*SIZE)
     # 0 solid/outside, 1 cave air, 2 mouth sample, 3 deep pocket air.
+    var mouth_columns := PackedByteArray()
+    mouth_columns.resize(SIZE*SIZE)
+    var shallow_columns := PackedByteArray()
+    shallow_columns.resize(SIZE*SIZE)
     var air_count := 0
     var mouth_count := 0
     var pocket_count := 0
@@ -74,10 +78,13 @@ func _topology(generator: VoxelGeneratorGraph, seed_value: int, config: Dictiona
                                 solid_count+=1
                                 continue
                             air_count+=1
+                            if depth<=8.0:
+                                shallow_columns[gz*SIZE+gx]=1
                             var kind := 1
                             if depth<=2.5:
                                 kind=2
                                 mouth_count+=1
+                                mouth_columns[gz*SIZE+gx]=1
                             elif depth>=float(config["max_depth_m"])*0.62+5.9:
                                 kind=3
                                 pocket_count+=1
@@ -160,7 +167,11 @@ func _topology(generator: VoxelGeneratorGraph, seed_value: int, config: Dictiona
         if is_pocket and not touches_boundary and queue.size()>=8:
             isolated+=1
             largest_pocket=maxi(largest_pocket,queue.size())
+    var surface_ratio := float(mouth_columns.count(1))/float(SIZE*SIZE)
+    var shallow_ratio := float(shallow_columns.count(1))/float(SIZE*SIZE)
     return {"air_samples":air_count,"air_ratio":air_ratio,"mouth_samples":mouth_count,
+        "surface_open_columns":mouth_columns.count(1),"surface_open_ratio":surface_ratio,
+        "shallow_open_columns":shallow_columns.count(1),"shallow_open_ratio":shallow_ratio,
         "deep_pocket_samples":pocket_count,"connected_samples":max_connected,"connected_mouths":connected_mouths,
         "junction_samples":junction_samples,"chamber_clearance_samples":chamber_samples,
         "isolated_pockets":isolated,"largest_pocket_samples":largest_pocket,
@@ -222,7 +233,7 @@ func _test() -> void:
     if write:
         var topology:=_topology(generator,seed_value,runtime.cave_config)
         print("V3_CAVES_TOPOLOGY seed=",seed_value," profile=",runtime.cave_config["id"]," ",JSON.stringify(topology))
-        if topology["mouth_samples"]<4 or topology["connected_samples"]<100 or topology["connected_depth_m"]<16.0 or topology["junction_samples"]<10 or topology["chamber_clearance_samples"]<1 or topology["isolated_pockets"]<1 or topology["air_ratio"]>0.65:
+        if topology["mouth_samples"]<4 or topology["connected_samples"]<500 or topology["connected_depth_m"]<25.0 or topology["junction_samples"]<10 or topology["chamber_clearance_samples"]<1 or topology["isolated_pockets"]<1 or topology["air_ratio"]>0.25 or topology["surface_open_ratio"]>0.02 or topology["shallow_open_ratio"]>0.04:
             _fail("sampled topology requirements")
             return
         if not _alignment(generator):
