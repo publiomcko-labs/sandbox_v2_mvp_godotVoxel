@@ -156,12 +156,15 @@ foreach ($phase in @('write','reopen')) {
         throw "V3 fluids $phase failed exit=$($p.ExitCode)"
     }
     $observed=[int64]$marker.Matches[0].Groups[1].Value
-    if ($phase -eq 'write') { $mass=$observed }
+    if ($phase -eq 'write') {
+        if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_FLUID_BREACH_PASS')) { throw 'Missing real terrain breach evidence' }
+        $mass=$observed
+    }
     elseif ($observed -ne $mass) { throw 'Fluid mass changed across reopen' }
 }
 $fluidWorld=Join-Path $env:V3_WORLD_ROOT 'fluid_fixture'
 $checkpoint=Get-Content (Join-Path $fluidWorld 'checkpoint.json') -Raw | ConvertFrom-Json
-if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 1 -or
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
     $checkpoint.generator_version -ne 'v3_4_fluids_v1:v3_3_caves_v3:earth:temperate:karst:natural' -or
     $checkpoint.pins.Count -ne 6 -or (Test-Path (Join-Path $fluidWorld 'session_pending'))) {
     throw 'V3 fluid checkpoint contract failed'

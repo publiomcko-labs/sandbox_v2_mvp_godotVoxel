@@ -261,6 +261,8 @@ func _save_async() -> void:
         _set_status("V3_FLUSH_PASS: stores flushed; close window for clean checkpoint")
         return
     running = false
+    if fluids_enabled:
+        print("V3_FLUID_VISUAL_REPORT state=",session.get_state()," presentation=",world.get_node("Water").call("get_report"))
     world.queue_free()
     await get_tree().process_frame
     if not session.finish(true, true):
