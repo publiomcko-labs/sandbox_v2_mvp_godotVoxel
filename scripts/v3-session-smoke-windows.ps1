@@ -1,0 +1,33 @@
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$editor=Join-Path $root '.tools/godot.exe'
+$project=Join-Path $root 'godot'
+if (-not (Test-Path $editor)) { throw 'Pinned custom Godot missing' }
+$cache=Join-Path $project '.godot'
+New-Item -ItemType Directory -Force $cache | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $cache 'extension_list.cfg'), ("res://sandbox_native.gdextension" + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
+$results=Join-Path $root "reports/generated/v3-session-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Force $results | Out-Null
+$env:V3_TEST_WORLD_ROOT=Join-Path $results 'worlds'
+$env:V3_TEST_EXTERNAL_MODS=Join-Path $root 'examples/v3/mods'
+New-Item -ItemType Directory -Force $env:V3_TEST_WORLD_ROOT | Out-Null
+foreach ($phase in @('write','reopen')) {
+    $stdout=Join-Path $results "$phase.stdout.log"
+    $stderr=Join-Path $results "$phase.stderr.log"
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_session_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "V3 fixture $phase timed out" }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_SESSION_$($phase.ToUpper())_PASS")) {
+        throw "V3 session $phase failed exit=$($p.ExitCode)"
+    }
+}
+$world=Join-Path $env:V3_TEST_WORLD_ROOT 'fixture'
+$checkpoint=Get-Content (Join-Path $world 'checkpoint.json') -Raw | ConvertFrom-Json
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or $checkpoint.pins.Count -ne 3 -or (Test-Path (Join-Path $world 'session_pending'))) {
+    throw 'V3 clean checkpoint contract failed'
+}
+Write-Host 'V3_SESSION_SQLITE_REOPEN_PASS (headless; no graphical qualification)'

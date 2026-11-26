@@ -37,7 +37,7 @@ inline WorldHeader decode(const Json &j) {
     content::fields(j,{"schema_version","generator_version","world_id","seed","generation","pins","core"});
     require(j.at("schema_version").is_number_integer() && j.at("schema_version")==schema_version,
             "unknown world schema");
-    require(j.at("generator_version")==generator_version, "generator version mismatch");
+    require(content::str(j.at("generator_version"))==generator_version, "generator version mismatch");
     WorldHeader h;
     h.world_id=content::str(j.at("world_id"));
     require(content::identifier(h.world_id), "invalid world ID");

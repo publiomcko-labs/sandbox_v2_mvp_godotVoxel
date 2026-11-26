@@ -1,4 +1,5 @@
 #include "world_bootstrap.hpp"
+#include "v3_world_session.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
@@ -8,6 +9,7 @@ using namespace godot;
 static void initialize_sandbox(ModuleInitializationLevel level) {
     if (level == MODULE_INITIALIZATION_LEVEL_SCENE) {
         GDREGISTER_CLASS(WorldBootstrap);
+        GDREGISTER_CLASS(V3WorldSession);
     }
 }
 

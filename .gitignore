@@ -22,3 +22,7 @@ reports/generated/
 
 # Local Python/SCons environment
 .venv/
+
+# V3 pinned dependencies and contract checkout
+third_party/nlohmann-json/
+.deps/

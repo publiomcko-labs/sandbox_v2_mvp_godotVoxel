@@ -1,0 +1,64 @@
+name: V3 native integration and isolated SQLite reopen
+on:
+  push:
+    branches: [v3/development]
+    paths:
+      - 'native/src/v3_world_session.*'
+      - 'native/src/register_types.cpp'
+      - 'native/SConstruct'
+      - 'native/src/core/**'
+      - 'native/src/content_registry/**'
+      - 'native/src/persistence/**'
+      - 'scripts/bootstrap-windows.ps1'
+      - 'scripts/v3-session-smoke-windows.ps1'
+      - 'godot/tests/v3_session_smoke.gd'
+      - '.github/workflows/v3-native-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v3-native-integration
+  cancel-in-progress: false
+jobs:
+  native-headless:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 55
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.13.9"
+          enable-cache: false
+      - name: Isolated build tools and existing SCons cache
+        run: |
+          $ErrorActionPreference='Stop'
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Python install failed' }
+          uv venv .venv --python 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Python venv failed' }
+          uv pip install --python .venv/Scripts/python.exe scons==4.10.0
+          if ($LASTEXITCODE -ne 0) { throw 'SCons install failed' }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Resolve-Path '.venv/Scripts').Path
+          $cache=Join-Path $env:RUNNER_TOOL_CACHE 'sandbox-voxel-a0-scons-cache'
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "SCONS_CACHE=$cache"
+      - name: Build new native DLL with locked custom Godot (never reuse A5 DLL)
+        run: ./scripts/bootstrap-windows.ps1
+      - name: A5 compatibility fixture with new DLL
+        run: ./scripts/a5-smoke-windows.ps1
+      - name: V3 external mods, ordered VoxelTool edits and SQLite checkpoint/reopen
+        run: ./scripts/v3-session-smoke-windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v3-native-integration-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            godot/bin/*.dll
+            extension_api.json
+            reports/generated/v3-session-*/*.log
+            reports/generated/a5-ci/*.json

@@ -207,7 +207,10 @@ public:
         if (!count_ || events_[head_].revision != revision) return false;
         head_ = (head_+1)%EventCapacity; --count_; return true;
     }
+    std::uint64_t revision() const { return revision_; }
+    std::uint64_t last_command() const { return last_command_; }
     FixedScheduler &scheduler() { return scheduler_; }
+    const FixedScheduler &scheduler() const { return scheduler_; }
     CheckpointState checkpoint() const {
         if (count_) throw std::logic_error("pending events must be acknowledged before checkpoint");
         return {revision_,last_command_,scheduler_.completed(),scheduler_.pending_ns()};
