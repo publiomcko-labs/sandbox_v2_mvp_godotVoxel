@@ -56,6 +56,9 @@ int main(){
         shape.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
     auto geo=tp::extract(shape);
     const auto patches=surface::build(geo,geo.compartments.front());
+    bool apron=false;
+    for(const auto &patch:patches)for(auto p:patch.vertices)if(p.x<1.0||p.x>3.0||p.z<1.0||p.z>3.0)apron=true;
+    assert(apron);
     assert(!patches.empty());
     bool diagonal=false;
     for(const auto &patch:patches)for(std::size_t i=0;i<patch.vertices.size();i+=3)
@@ -83,6 +86,21 @@ int main(){
         }
     }
     assert(min_floor==0&&max_floor==3&&interpolates);
+    // Adjacent higher basin: apron is limited by the neighboring floor,
+    // not allowed to remain as a second surface above its open space.
+    tp::Snapshot cliff{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=x<2?0:4;y<8;++y)
+        cliff.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    auto divided=tp::extract(cliff);
+    const auto low=*tp::compartment_at(divided,{0.5,1,0.5});
+    bool capped=false;
+    for(const auto &c:divided.compartments)if(c.id==low)
+        for(const auto &patch:surface::build(divided,c)) {
+            if(patch.ceiling==4)for(auto v:patch.vertices)if(v.x>2.0)capped=true;
+            if(patch.ceiling==8)for(auto v:patch.vertices)assert(v.x<=2.0+1e-8);
+        }
+    assert(capped);
+    std::cout<<"V3_HYDRAULIC_BANK_APRON_PASS solid_overlap capped_at_neighbor_floor\n";
     std::cout<<"V3_HYDRAULIC_BASIN_SURFACE_PASS interpolated_floor one_static_sheet\n";
     std::cout<<"V3_HYDRAULIC_CONTOUR_PASS diagonal_edges tile_bounds retained_unloaded\n";
     std::cout<<"V3_HYDRAULIC_DOMAIN_PASS regional_publish boundary_flow unload mass_remap ocean_idempotent\n";

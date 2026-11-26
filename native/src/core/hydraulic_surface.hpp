@@ -20,14 +20,18 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
         Patch p{g.origin.y+ceiling*g.step,{}};
         auto member=[&](int x,int z){return mask.contains(sample(x,z));};
         auto floor_at=[&](int x,int z){return double(g.origin.y+mask.at(sample(x,z))*g.step);};
-        auto solid_margin=[&](int x,int z,double floor) {
+        auto bank_cap=[&](int x,int z,double floor) {
             const auto [ix,iz]=sample(x,z);
             const auto &runs=g.column_runs[static_cast<std::size_t>(iz*g.nx+ix)];
             // A different open interval may own the neighboring surface.
             // Extend only toward the conservative solid classification.
             const double y=(floor-g.origin.y)/g.step+0.5;
-            for(const auto &s:runs)if(y>=s.bottom&&y<s.top)return false;
-            return true;
+            int cap=p.ceiling;
+            for(const auto &s:runs) {
+                if(y>=s.bottom&&y<s.top)return 0.0; // open neighbour: no apron
+                if(s.bottom>y)cap=std::min(cap,g.origin.y+s.bottom*g.step);
+            }
+            return double(cap)-floor;
         };
         for(int z=-1;z<g.nz;++z)for(int x=-1;x<g.nx;++x) {
             constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
@@ -39,34 +43,50 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
                 if(wet[i]){++count;pos[i].floor=floor_at(x+dx,z+dz);}
             }
             if(!count)continue;
-            const auto emit=[&](Point a,Point b,Point c0){
+            const auto emit=[&](Patch &target,Point a,Point b,Point c0){
                 const double area=(b.x-a.x)*(c0.z-a.z)-(b.z-a.z)*(c0.x-a.x);
                 if(std::abs(area)<1e-10)return;
                 if(area<0)std::swap(b,c0);
-                p.vertices.insert(p.vertices.end(),{a,b,c0});
+                target.vertices.insert(target.vertices.end(),{a,b,c0});
             };
             const auto clip=[&](std::array<int,3> tri) {
                 std::vector<Point> poly;
+                std::array<Point,2> mid{},outer{};
+                int crossings=0,cap=p.ceiling;
+                bool extended=false;
                 for(int i=0;i<3;++i) {
                     const auto a=static_cast<std::size_t>(tri[static_cast<std::size_t>(i)]);
                     const auto b=static_cast<std::size_t>(tri[static_cast<std::size_t>((i+1)%3)]);
                     if(wet[a])poly.push_back(pos[a]);
                     if(wet[a]!=wet[b]) {
                         const auto w=wet[a]?a:b,n=wet[a]?b:a;
-                        // Extend a little into terrain to let actual terrain
-                        // depth occlude the conservative sampled shoreline.
                         const auto [dx,dz]=offsets[n];
-                        const bool solid=solid_margin(x+dx,z+dz,pos[w].floor);
-                        const double t=solid?0.9:0.5;
-                        // At a boundary against another basin, use the
-                        // shared midline. Against solid, let terrain depth
-                        // clip the modest extension. Floor is interpolated
-                        // only on the immutable surface; no liquid cells.
-                        poly.push_back({pos[w].x+(pos[n].x-pos[w].x)*t,
-                            pos[w].z+(pos[n].z-pos[w].z)*t,pos[w].floor});
+                        const auto clearance=bank_cap(x+dx,z+dz,pos[w].floor);
+                        const auto blend=[&](double t) {
+                            return Point{pos[w].x+(pos[n].x-pos[w].x)*t,
+                                pos[w].z+(pos[n].z-pos[w].z)*t,pos[w].floor};
+                        };
+                        const auto j=static_cast<std::size_t>(crossings++);
+                        mid[j]=blend(0.5);outer[j]=mid[j];
+                        poly.push_back(mid[j]);
+                        if(clearance>0) {
+                            // Visual-only apron reaches the solid column
+                            // center. When the head overtops the next air
+                            // interval, the apron disappears; the other
+                            // basin owns its own water instead.
+                            outer[j]=blend(1.0);
+                            cap=std::min(cap,static_cast<int>(std::lround(pos[w].floor+clearance)));
+                            extended=true;
+                        }
                     }
                 }
-                for(std::size_t i=1;i+1<poly.size();++i)emit(poly[0],poly[i],poly[i+1]);
+                for(std::size_t i=1;i+1<poly.size();++i)emit(p,poly[0],poly[i],poly[i+1]);
+                if(extended&&crossings==2) {
+                    Patch apron{cap,{}};
+                    emit(apron,mid[0],outer[0],outer[1]);
+                    emit(apron,mid[0],outer[1],mid[1]);
+                    if(!apron.vertices.empty())out.push_back(std::move(apron));
+                }
             };
             // Choose the diagonal between dry corners for a single wet
             // corner; equivalent complement rule prevents diagonal spikes.

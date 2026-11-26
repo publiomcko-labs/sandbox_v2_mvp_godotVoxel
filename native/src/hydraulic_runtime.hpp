@@ -15,6 +15,7 @@ class Runtime {
     Domain domain_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
+    std::set<core::Region> edited_tiles_;
     std::uint64_t debt_=0,ticks_=0,visited_=0,moved_=0,publications_=0,max_tick_us_=0,max_snapshot_us_=0;
     static constexpr int side=16,base=-32,height=64;
     static core::Region key(core::Vec3 p) {
@@ -32,7 +33,11 @@ class Runtime {
         }
         return false;
     }
+    bool visual_tile(core::Region k,const Tile &t)const {
+        return t.renderable()||edited_tiles_.contains(k);
+    }
     bool hydraulic_interest(core::Region k,core::Region center)const {
+        if(edited_tiles_.contains(k))return true;
         if(within_interest(k,center))return true;
         // Retain and expand around known wet bodies while their geometry
         // is editable. Simulation interest no longer follows only player.
@@ -97,6 +102,7 @@ public:
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});
         for(int x=lo.x;x<=hi.x;x+=side)for(int z=lo.z;z<=hi.z;z+=side) {
             const core::Region k{x,base,z};
+            if(domain_.tiles().contains(k))edited_tiles_.insert(k);
             domain_.invalidate(k,revision);worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
         }
     }
@@ -109,12 +115,12 @@ public:
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
             if(hydraulic_interest(k,center)&&resident(tool,k)) {
-                if(domain_.publish(std::move(*result))){++publications_;seed(k);}
+                if(domain_.publish(std::move(*result))){edited_tiles_.erase(k);++publications_;seed(k);}
                 else blocked_[k]=revision;
             }
         }
         // At most one immutable copy per frame. Prioritize nearest tiles.
-        std::vector<core::Region> candidates;
+        std::vector<core::Region> candidates(edited_tiles_.begin(),edited_tiles_.end());
         for(const auto &[k,t]:domain_.tiles())if(wet_tile(t)) {
             for(auto offset:{core::Region{0,0,0},core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
                 const core::Region q{k.x+offset.x*side,base,k.z+offset.z*side};
@@ -125,6 +131,7 @@ public:
         std::sort(candidates.begin(),candidates.end());
         candidates.erase(std::unique(candidates.begin(),candidates.end()),candidates.end());
         std::sort(candidates.begin(),candidates.end(),[&](auto a,auto b){
+            if(edited_tiles_.contains(a)!=edited_tiles_.contains(b))return edited_tiles_.contains(a);
             const auto dist=[&](auto k){return std::abs(k.x-center.x)+std::abs(k.z-center.z);};return dist(a)<dist(b);
         });
         for(auto k:candidates) {
@@ -161,22 +168,25 @@ public:
     }
     godot::Array surfaces()const {
         godot::Array out;
-        for(const auto &[k,t]:domain_.tiles())if(t.renderable())for(const auto &[local,id]:t.ids) {
+        for(const auto &[k,t]:domain_.tiles())if(visual_tile(k,t))for(const auto &[local,id]:t.ids) {
             (void)k;(void)local;const auto &v=domain_.graph().volumes().at(id);
             if(!v.litres)continue;
-            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(v.level());out.push_back(row);
+            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(v.level());row.push_back(godot::Vector3i(k.x,k.y,k.z));out.push_back(row);
         }
         return out;
     }
     godot::Array mesh(Id id)const {
         using namespace godot;
         Array out;
-        for(const auto &[k,t]:domain_.tiles())if(t.renderable())for(const auto &c:t.geometry->compartments) {
+        for(const auto &[k,t]:domain_.tiles())if(visual_tile(k,t))for(const auto &c:t.geometry->compartments) {
             if(t.ids.at(c.id)!=id)continue;
             PackedVector3Array vertices;PackedVector2Array uv;
+            const bool exposed=std::any_of(c.spans.begin(),c.spans.end(),[](const auto &s){return s.top==height;});
             for(const auto &patch:surface::build(*t.geometry,c))for(auto p:patch.vertices) {
                 vertices.push_back(Vector3(k.x+p.x*t.geometry->step,0,k.z+p.z*t.geometry->step));
-                uv.push_back(Vector2(p.floor,patch.ceiling));
+                // Exposed basin banks may extend into solid by one sample.
+                // Roofed intervals keep the conservative lower clip.
+                uv.push_back(Vector2(p.floor-(exposed?1.35:0.35),patch.ceiling));
             }
             out.push_back(vertices);out.push_back(uv);return out;
         }
@@ -187,11 +197,12 @@ public:
         d["litres"]=domain_.graph().finite();d["initial"]=domain_.graph().initial();
         d["injected"]=domain_.graph().injected();d["drained"]=domain_.graph().drained();
         std::size_t active=0,visual=0;
-        for(const auto &[k,t]:domain_.tiles()){(void)k;if(t.available)++active;if(t.renderable()&&wet_tile(t))++visual;}
+        for(const auto &[k,t]:domain_.tiles()){(void)k;if(t.available)++active;if(visual_tile(k,t)&&wet_tile(t))++visual;}
         d["active_tiles"]=static_cast<int64_t>(active);d["visible_wet_tiles"]=static_cast<int64_t>(visual);
         d["tiles"]=static_cast<int64_t>(domain_.tiles().size());d["volumes"]=static_cast<int64_t>(domain_.graph().volumes().size());
         d["portals"]=static_cast<int64_t>(domain_.graph().portals().size());d["sources"]=static_cast<int64_t>(domain_.seeded().size());
         d["ticks"]=static_cast<int64_t>(ticks_);d["visited"]=static_cast<int64_t>(visited_);d["moved"]=static_cast<int64_t>(moved_);
+        d["pending_edit_tiles"]=static_cast<int64_t>(edited_tiles_.size());
         d["publications"]=static_cast<int64_t>(publications_);d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
         return d;

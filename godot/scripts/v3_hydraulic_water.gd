@@ -6,6 +6,8 @@ var world: WorldBootstrap
 var _rocks: Node3D
 var _materials: Array[ShaderMaterial]=[]
 var _meshes: Dictionary={}
+var _mesh_tiles: Dictionary={}
+var _deferred_swaps:=0
 var _next_update:=0
 var _mesh_builds:=0
 var _level_updates:=0
@@ -27,10 +29,13 @@ func _ready() -> void:
 func refresh() -> void:
     var start:=Time.get_ticks_usec()
     var live: Dictionary={}
+    var wanted: Dictionary={}
     var builds:=0
     for row: Array in session.hydraulic_surfaces():
         var id:=int(row[0])
         live[id]=true
+        var tile: Vector3i=row[3]
+        wanted[tile]=int(wanted.get(tile,0))+1
         var node: MeshInstance3D
         if _meshes.has(id):
             node=_meshes[id]
@@ -56,17 +61,36 @@ func refresh() -> void:
             node=MeshInstance3D.new()
             node.mesh=mesh
             node.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+            node.visible=false
             add_child(node)
             _meshes[id]=node
+            _mesh_tiles[id]=tile
             builds+=1
             _mesh_builds+=1
         node.material_override=_materials[int(row[1])]
         node.position.y=float(row[2])
         _level_updates+=1
+    # Replacement is atomic per tile, not per compartment. Never remove
+    # the old visible water while the bounded new mesh queue is incomplete.
+    var ready: Dictionary={}
     for id: int in _meshes.keys():
-        if not live.has(id):
-            _meshes[id].queue_free()
+        if live.has(id):
+            var tile: Vector3i=_mesh_tiles[id]
+            ready[tile]=int(ready.get(tile,0))+1
+    for id: int in _meshes.keys():
+        var tile: Vector3i=_mesh_tiles[id]
+        var complete:=int(ready.get(tile,0))==int(wanted.get(tile,0))
+        var node: MeshInstance3D=_meshes[id]
+        if live.has(id):
+            if complete:
+                node.visible=true
+        elif complete or not node.visible:
+            node.visible=false
+            node.queue_free()
             _meshes.erase(id)
+            _mesh_tiles.erase(id)
+        else:
+            _deferred_swaps+=1
     _max_update_usec=maxi(_max_update_usec,Time.get_ticks_usec()-start)
 
 func _process(_delta: float) -> void:
@@ -107,4 +131,8 @@ func _physics_process(_delta: float) -> void:
         processed+=1
 
 func get_report() -> Dictionary:
-    return {"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec}
+    var visible_meshes:=0
+    for node: MeshInstance3D in _meshes.values():
+        if node.visible:
+            visible_meshes+=1
+    return {"visible_meshes":visible_meshes,"deferred_swaps":_deferred_swaps,"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec}

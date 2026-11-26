@@ -113,13 +113,27 @@ func _test() -> void:
         if not found:
             _fail("no submerged solid floor for breach")
             return
+        # Materialize the current presentation and verify the edit does
+        # not make the old reservoir disappear before worker publication.
+        for i in range(runtime.session.hydraulic_surfaces().size()+1):
+            water.call("refresh")
+        var old_count:=int(water.call("get_report")["visible_meshes"])
         if runtime.submit_brush(cut,false,3.0)!="accepted":
             _fail("wet floor excavation rejected")
             return
+        water.call("refresh")
+        if old_count<1 or int(water.call("get_report")["visible_meshes"])!=old_count:
+            _fail("water disappeared immediately on edit")
+            return
+        print("V3_HYDRAULIC_EDIT_RETENTION_PASS meshes=",old_count)
         var first_wet:=-1
         for i in range(201):
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
                 _fail("breach frame")
+                return
+            water.call("refresh")
+            if int(water.call("get_report")["visible_meshes"])<1:
+                _fail("water disappeared during replacement")
                 return
             if not runtime.session.hydraulic_at(cut).is_empty():
                 first_wet=i
@@ -133,7 +147,7 @@ func _test() -> void:
             return
         print("V3_HYDRAULIC_WET_BREACH_PASS point=",cut," observed_steps=",first_wet+1," mass=",mass)
         # Let every edited tile finish publication before the next brush.
-        while int(runtime.session.hydraulic_report()["active_tiles"])<9:
+        while int(runtime.session.hydraulic_report()["active_tiles"])<9 or int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
                 _fail("breach publication")
                 return
