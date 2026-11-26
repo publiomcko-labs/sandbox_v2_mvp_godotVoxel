@@ -51,6 +51,14 @@ int main(){
     assert(combined.add({1,10,0},1,1000,shaft,true)&&slow.add({1,10,0},1,1000,shaft,true));
     combined.tick(shaft);slow.tick(shaft);
     assert(combined.cells()==slow.cells()&&combined.falling_at({1,10,0}).litres==50);
+    Solver sliced({{500,1000,5}}),batched({{500,1000,5}});
+    assert(sliced.add({0,10,0},0,1000,shaft,true)&&batched.add({0,10,0},0,1000,shaft,true));
+    for(int round=0;round<5;++round)assert(sliced.tick(shaft,64,round,1).substeps==1);
+    batched.tick(shaft,64);
+    assert(sliced.cells()==batched.cells()&&sliced.volume()==1000);
+    auto tiles=sliced.take_dirty_tiles(4096);
+    assert(!tiles.empty()&&std::set<Cell>(tiles.begin(),tiles.end()).size()==tiles.size());
+    std::cout<<"V3_FLUID_SLICED_PASS equivalent_rounds coalesced_tiles\n";
     std::cout<<"V3_FLUID_5X_PASS five_water_substeps one_lava_substep same_mass\n";
     std::cout<<"V3_FLUID_CONSERVATION_PASS integer_litres progressive_flow blocked_boundary restore lava_rate no_mixing\n";
 }

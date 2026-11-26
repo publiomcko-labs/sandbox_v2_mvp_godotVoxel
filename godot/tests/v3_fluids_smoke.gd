@@ -116,24 +116,24 @@ func _test() -> void:
         var moved:=0
         var first_near:=0
         var first_deep:=0
-        for i in range(1,81):
-            if runtime.session.advance_ticks(100000000,1)!=1:
-                _fail("fluid tick")
+        for i in range(1,201):
+            if runtime.session.advance_frame_ticks(20000000,1)<0:
+                _fail("fluid frame slice")
                 return
             moved+=int(runtime.session.get_state()["fluid_transferred"])
             if first_near==0 and not runtime.session.fluid_at(near).is_empty():
                 first_near=i
             if first_deep==0 and not runtime.session.fluid_at(deep).is_empty():
                 first_deep=i
-            if int(runtime.session.get_state()["fluid_substeps"])!=5:
-                _fail("water substeps not executed")
+            if int(runtime.session.get_state()["fluid_substeps"])!=1 or int(runtime.session.get_state()["fluid_frame_slices"])!=i:
+                _fail("one fluid slice per frame")
                 return
             if first_near>0 and first_deep>0:
                 break
         if first_near==0 or first_deep<first_near:
             _fail("progressive breach arrival near="+str(first_near)+" deep="+str(first_deep))
             return
-        print("V3_FLUID_BREACH_PASS cell=",bottom," near_tick=",first_near," deep_tick=",first_deep)
+        print("V3_FLUID_BREACH_PASS cell=",bottom," near_slice=",first_near," deep_slice=",first_deep," slice_ms=20")
         if moved<=0 or int(runtime.session.get_state()["fluid_litres"])!=volume:
             _fail("flow or mass conservation")
             return

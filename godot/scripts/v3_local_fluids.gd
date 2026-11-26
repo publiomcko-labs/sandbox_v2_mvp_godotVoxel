@@ -1,7 +1,8 @@
 extends Node3D
 # Presentation/physics adapter only: the native solver owns actual liquid.
 const TILE := 8
-const MAX_TILE_PUBLICATIONS := 3
+const MAX_TILE_PUBLICATIONS := 1
+const TILE_PUBLICATION_INTERVAL_USEC := 33333
 var session: V3WorldSession
 var world: WorldBootstrap
 var world_seed: int
@@ -18,6 +19,8 @@ var _detail: ZN_FastNoiseLite
 var _player: Node3D
 var _rocks: Node3D
 var _next_seed_usec := 0
+var _next_publish_usec := 0
+var _publish_total_usec := 0
 var _published := 0
 var _max_publish_usec := 0
 
@@ -124,15 +127,8 @@ func _tile(p: Vector3i) -> Vector3i:
     return Vector3i(floori(float(p.x)/TILE),floori(float(p.y)/TILE),floori(float(p.z)/TILE))
 
 func _collect_dirty() -> void:
-    for p: Vector3i in session.take_fluid_dirty(2048):
-        # Include diagonal neighbours and gradient halo; every affected tile
-        # is rebuilt against the same authoritative field.
-        var lo:=_tile(p-Vector3i(2,3,2))
-        var hi:=_tile(p+Vector3i(2,3,2))
-        for z in range(lo.z,hi.z+1):
-            for y in range(lo.y,hi.y+1):
-                for x in range(lo.x,hi.x+1):
-                    _dirty_tiles[Vector3i(x,y,z)]=true
+    for tile: Vector3i in session.take_fluid_dirty_tiles(512):
+        _dirty_tiles[tile]=true
 
 func _publish(tile: Vector3i) -> void:
     var origin:=tile*TILE
@@ -180,6 +176,9 @@ func _process(_delta: float) -> void:
     if now>=_next_seed_usec and not pending.is_empty():
         _next_seed_usec=now+500000
         prepare_sources()
+    if now<_next_publish_usec:
+        return
+    _next_publish_usec=now+TILE_PUBLICATION_INTERVAL_USEC
     _collect_dirty()
     var start:=Time.get_ticks_usec()
     for i in range(MAX_TILE_PUBLICATIONS):
@@ -191,7 +190,9 @@ func _process(_delta: float) -> void:
         _published+=1
         if Time.get_ticks_usec()-start>=1000:
             break
-    _max_publish_usec=maxi(_max_publish_usec,Time.get_ticks_usec()-start)
+    var elapsed:=Time.get_ticks_usec()-start
+    _publish_total_usec+=elapsed
+    _max_publish_usec=maxi(_max_publish_usec,elapsed)
 
 func immersion_at(center: Vector3,height: float) -> float:
     var wet:=0
@@ -227,4 +228,4 @@ func _physics_process(_delta: float) -> void:
         processed+=1
 
 func get_report() -> Dictionary:
-    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"triangles_published":_triangles_published,"ribbon_triangles":_ribbon_triangles,"max_publish_usec":_max_publish_usec,"pending_reservoirs":pending.size()}
+    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"triangles_published":_triangles_published,"ribbon_triangles":_ribbon_triangles,"max_publish_usec":_max_publish_usec,"publish_total_usec":_publish_total_usec,"pending_reservoirs":pending.size()}

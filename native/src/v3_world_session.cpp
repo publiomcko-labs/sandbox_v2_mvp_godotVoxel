@@ -19,6 +19,7 @@
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/classes/voxel_format.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
+#include <chrono>
 
 namespace godot {
 namespace sc = sandbox::core;
@@ -135,6 +136,8 @@ struct V3WorldSession::State {
     std::set<std::string> seeded;
     Vector3 interest_position;
     fl::TickReport fluid_report;
+    uint64_t fluid_debt_ns=0,fluid_slices=0,fluid_clock_dropped_ns=0,fluid_slice_max_us=0,fluid_slice_sum_us=0;
+    int fluid_round=0;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -152,6 +155,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("fluid_cells","lo","hi"), &V3WorldSession::fluid_cells);
     ClassDB::bind_method(D_METHOD("fluid_surface_tile","origin"), &V3WorldSession::fluid_surface_tile);
     ClassDB::bind_method(D_METHOD("take_fluid_dirty","budget"), &V3WorldSession::take_fluid_dirty);
+    ClassDB::bind_method(D_METHOD("take_fluid_dirty_tiles","budget"), &V3WorldSession::take_fluid_dirty_tiles);
     ClassDB::bind_method(D_METHOD("flush_fluids"), &V3WorldSession::flush_fluids);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
@@ -167,6 +171,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("ack_terrain_event","revision"), &V3WorldSession::ack_terrain_event);
     ClassDB::bind_method(D_METHOD("update_interest","position"), &V3WorldSession::update_interest);
     ClassDB::bind_method(D_METHOD("advance_ticks","elapsed_ns","budget"), &V3WorldSession::advance_ticks);
+    ClassDB::bind_method(D_METHOD("advance_frame_ticks","elapsed_ns","budget"), &V3WorldSession::advance_frame_ticks);
     ClassDB::bind_method(D_METHOD("finish","terrain_saved","rocks_saved"), &V3WorldSession::finish);
 }
 bool V3WorldSession::open(const String &first_party,const String &external,
@@ -320,12 +325,25 @@ Array V3WorldSession::fluid_surface_tile(const Vector3 &origin) const {
     const auto base=fluid_cell(origin);
     if(!fl::valid(base)||base.x%8||base.y%8||base.z%8)return out;
     try {
+        // Dense bounded snapshot avoids repeated tree searches while meshing.
+        constexpr int sx=12,sy=18,sz=12;
+        const auto lo=fl::plus(base,{-2,-5,-2});
+        std::array<fl::Amount,sx*sy*sz> cells{},falls{};
+        auto index=[&](fl::Cell p)->int {
+            const int x=p.x-lo.x,y=p.y-lo.y,z=p.z-lo.z;
+            if(x<0||x>=sx||y<0||y>=sy||z<0||z>=sz)return -1;
+            return (z*sy+y)*sx+x;
+        };
         std::set<int> types;
-        for(auto [p,a]:state_->fluids->query(fl::plus(base,{-1,-3,-1}),fl::plus(base,{9,10,9}))) {
-            (void)p;types.insert(a.type);
+        for(auto [p,a]:state_->fluids->query(lo,fl::plus(lo,{sx-1,sy-1,sz-1}))) {
+            cells[static_cast<std::size_t>(index(p))]=a;types.insert(a.type);
         }
-        auto at=[&](fl::Cell p){return state_->fluids->at(p);};
-        auto falling=[&](fl::Cell p){return state_->fluids->falling_at(p);};
+        for(int z=-1;z<=8;++z)for(int y=-1;y<=8;++y)for(int x=-1;x<=8;++x) {
+            auto p=fl::plus(base,{x,y,z});
+            falls[static_cast<std::size_t>(index(p))]=state_->fluids->falling_at(p);
+        }
+        auto at=[&](fl::Cell p){const int i=index(p);return i<0?fl::Amount{}:cells[static_cast<std::size_t>(i)];};
+        auto falling=[&](fl::Cell p){const int i=index(p);return i<0?fl::Amount{}:falls[static_cast<std::size_t>(i)];};
         for(int z=0;z<8;++z)for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
             const auto f=falling(fl::plus(base,{x,y,z}));
             if(f.litres>=80)types.insert(f.type);
@@ -347,6 +365,12 @@ Array V3WorldSession::fluid_surface_tile(const Vector3 &origin) const {
             append(fl::surface::build_ribbons(at,falling,base,type),true);
         }
     }catch(const std::exception &){}
+    return out;
+}
+Array V3WorldSession::take_fluid_dirty_tiles(int64_t budget) {
+    Array out;
+    if(!state_||!state_->fluids||budget<0||budget>4096)return out;
+    for(auto p:state_->fluids->take_dirty_tiles(static_cast<std::size_t>(budget)))out.push_back(Vector3i(p.x,p.y,p.z));
     return out;
 }
 Array V3WorldSession::take_fluid_dirty(int64_t budget) {
@@ -406,6 +430,11 @@ Dictionary V3WorldSession::get_state() const {
         d["fluid_blocked"]=static_cast<int64_t>(state_->fluid_report.blocked);
         d["fluid_transferred"]=static_cast<int64_t>(state_->fluid_report.transferred);
         d["fluid_substeps"]=static_cast<int64_t>(state_->fluid_report.substeps);
+        d["fluid_frame_slices"]=static_cast<int64_t>(state_->fluid_slices);
+        d["fluid_frame_debt_ns"]=static_cast<int64_t>(state_->fluid_debt_ns);
+        d["fluid_clock_dropped_ns"]=static_cast<int64_t>(state_->fluid_clock_dropped_ns);
+        d["fluid_slice_max_us"]=static_cast<int64_t>(state_->fluid_slice_max_us);
+        d["fluid_slice_mean_us"]=static_cast<int64_t>(state_->fluid_slices?state_->fluid_slice_sum_us/state_->fluid_slices:0);
     }
     d["open"]=state_->store.is_open();
     return d;
@@ -460,6 +489,42 @@ bool V3WorldSession::update_interest(const Vector3 &position) {
         state_->interest_position=position;
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
+}
+int64_t V3WorldSession::advance_frame_ticks(int64_t elapsed_ns,int64_t budget) {
+    if(!state_||!state_->store.is_open()||elapsed_ns<0||budget<0||budget>64)return -1;
+    if(!state_->fluids)return advance_ticks(elapsed_ns,budget);
+    try {
+        auto &s=state_->core->scheduler();
+        constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+        ct::require(static_cast<uint64_t>(elapsed_ns)<=limit-s.pending_ns() &&
+                    static_cast<uint64_t>(budget)<=limit-s.completed(),"scheduler signed API limit");
+        s.accrue(static_cast<uint64_t>(elapsed_ns));
+        const auto done=s.drain(static_cast<size_t>(budget),[](uint64_t,bool){return true;});
+        constexpr uint64_t period=20000000,cap=100000000;
+        const auto accrued=state_->fluid_debt_ns+static_cast<uint64_t>(elapsed_ns);
+        if(accrued>cap)state_->fluid_clock_dropped_ns+=accrued-cap;
+        state_->fluid_debt_ns=std::min(accrued,cap);
+        if(state_->fluid_debt_ns>=period) {
+            const auto start=std::chrono::steady_clock::now();
+            auto *world=Object::cast_to<WorldBootstrap>(ObjectDB::get_instance(ObjectID(state_->bound_world)));
+            auto tool=fluid_tool(world);
+            const auto pos=state_->interest_position;
+            // At most one round per rendered frame. Never execute a five-round
+            // catch-up burst. Smaller fixed frontier limits main-thread work.
+            state_->fluid_report=state_->fluids->tick([&](fl::Cell p) {
+                if(Vector3(p.x,p.y,p.z).distance_squared_to(pos)>96.0*96.0)return fl::Passage::unavailable;
+                return probe_cell(tool,p);
+            },64,state_->fluid_round,1);
+            state_->fluid_round=(state_->fluid_round+1)%5;
+            state_->fluid_debt_ns-=period;
+            ++state_->fluid_slices;
+            const auto us=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now()-start).count());
+            state_->fluid_slice_max_us=std::max(state_->fluid_slice_max_us,us);
+            state_->fluid_slice_sum_us+=us;
+        }
+        return static_cast<int64_t>(done);
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return -1;}
 }
 int64_t V3WorldSession::advance_ticks(int64_t elapsed_ns,int64_t budget) {
     if(!state_ || !state_->store.is_open() || elapsed_ns<0 || budget<0 || budget>64) return -1;

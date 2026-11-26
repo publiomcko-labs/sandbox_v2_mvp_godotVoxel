@@ -40,6 +40,7 @@ public:
     Array fluid_cells(const Vector3 &lo,const Vector3 &hi) const;
     Array fluid_surface_tile(const Vector3 &origin) const;
     Array take_fluid_dirty(int64_t budget);
+    Array take_fluid_dirty_tiles(int64_t budget);
     bool flush_fluids();
     String get_geology_json() const;
     String get_cave_json() const;
@@ -56,6 +57,7 @@ public:
     bool ack_terrain_event(int64_t revision);
     bool update_interest(const Vector3 &position);
     int64_t advance_ticks(int64_t elapsed_ns, int64_t budget);
+    int64_t advance_frame_ticks(int64_t elapsed_ns, int64_t budget);
     bool finish(bool terrain_saved, bool rocks_saved);
 };
 }

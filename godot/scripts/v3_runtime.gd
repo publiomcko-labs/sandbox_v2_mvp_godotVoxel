@@ -145,7 +145,11 @@ func _process(_delta: float) -> void:
     var now := Time.get_ticks_usec()
     var elapsed := maxi(0, now - _last_usec)
     _last_usec = now
-    if not session.update_interest(player.global_position) or session.advance_ticks(elapsed * 1000, TICK_BUDGET) < 0:
+    if not session.update_interest(player.global_position):
+        _fatal("scheduler/interest: " + session.get_last_error())
+        return
+    var advanced := session.advance_frame_ticks(elapsed * 1000, TICK_BUDGET) if fluids_enabled else session.advance_ticks(elapsed * 1000, TICK_BUDGET)
+    if advanced < 0:
         _fatal("scheduler/interest: " + session.get_last_error())
 
 func submit_brush(center: Vector3, add: bool, radius: float) -> String:

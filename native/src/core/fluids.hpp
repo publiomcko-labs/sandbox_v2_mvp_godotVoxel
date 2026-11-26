@@ -102,12 +102,9 @@ private:
             const auto p=frontier.front();frontier.pop_front();queued_.erase({type,p});
             auto a=at(p);if(!a.litres||a.type!=type)continue;
             ++report.processed;
-            if(passage(p)!=Passage::open){retry.insert(p);++report.blocked;continue;}
             int remaining=std::min(a.litres,types_[static_cast<std::size_t>(a.type)].rate);
             for(std::size_t n=0;n<5 && remaining>0;++n) {
-                const auto q=plus(p,neighbors[n]);const auto pass=passage(q);
-                if(pass==Passage::unavailable){retry.insert(p);++report.blocked;continue;}
-                if(pass!=Passage::open)continue;
+                const auto q=plus(p,neighbors[n]);
                 const auto b=at(q);
                 const auto it=incoming.find(q);
                 const int reserved=it==incoming.end()?0:it->second;
@@ -117,6 +114,11 @@ private:
                 const int desired=n==0?remaining:std::max(0,(a.litres-outgoing[p]-b.litres-reserved)/2);
                 const int transfer=std::min({remaining,free,desired});
                 if(transfer<=0)continue;
+                // No VoxelTool calls for full, immiscible or equal-level neighbours.
+                if(passage(p)!=Passage::open){retry.insert(p);++report.blocked;break;}
+                const auto pass=passage(q);
+                if(pass==Passage::unavailable){retry.insert(p);++report.blocked;continue;}
+                if(pass!=Passage::open)continue;
                 if(!b.litres&&!reserved)++new_cells;
                 outgoing[p]+=transfer;incoming[q]+=transfer;incoming_type[q]=a.type;
                 remaining-=transfer;report.transferred+=static_cast<std::uint64_t>(transfer);
@@ -144,19 +146,20 @@ public:
     // One macro tick remains 100ms. Independent FIFO queues make the
     // per-liquid cadence explicit and keep lava at its original cadence.
     // Cache the unchanged terrain across substeps, never across edits.
-    template<class Probe> TickReport tick(Probe probe,std::size_t budget=256) {
+    template<class Probe> TickReport tick(Probe probe,std::size_t budget=256,int first_round=0,int rounds=5) {
+        if(first_round<0||rounds<1||first_round+rounds>5)throw std::invalid_argument("fluid round range");
         TickReport total;
         std::map<Cell,Passage> checked;
         auto cached=[&](Cell p) {
             auto it=checked.find(p);if(it!=checked.end())return it->second;
             auto v=probe(p);checked.emplace(p,v);return v;
         };
-        next_falls_.clear();
+        if(first_round==0)next_falls_.clear();
         // Keep the full former budget for each of the two standard types.
         // For mod-heavy worlds cap total work per round at roughly 2*budget.
         const auto divisor=(types_.size()+1)/2;
         const auto share=budget/divisor;
-        for(int round=0;round<5;++round) {
+        for(int round=first_round;round<first_round+rounds;++round) {
             bool any=false;
             for(std::size_t type=0;type<types_.size();++type) {
                 if(round>=types_[type].substeps)continue;
@@ -169,12 +172,14 @@ public:
         }
         // Transient visual-only downward transfer envelope, no save state.
         // Retain a short fading trail so a waterfall is not one-frame noise.
-        for(auto [p,a]:falls_) {
-            dirty_.insert(p);
-            if(!next_falls_.contains(p)&&a.litres>80)next_falls_[p]={a.type,a.litres/2};
+        if(first_round+rounds==5) {
+            for(auto [p,a]:falls_) {
+                if(!next_falls_.contains(p)&&a.litres>80)next_falls_[p]={a.type,a.litres/2};
+                if(a.litres>=80)dirty_.insert(p);
+            }
+            for(auto [p,a]:next_falls_)if(a.litres>=80)dirty_.insert(p);
+            falls_.swap(next_falls_);
         }
-        for(auto [p,a]:next_falls_){(void)a;dirty_.insert(p);}
-        falls_.swap(next_falls_);
         total.backlog=backlog();
         return total;
     }
@@ -191,6 +196,18 @@ public:
             }
         }
         return result;
+    }
+    // Coalesce visual invalidation before crossing the GDScript boundary.
+    static int tile_axis(int v){return v>=0?v/8:(v-7)/8;}
+    std::vector<Cell> take_dirty_tiles(std::size_t budget) {
+        std::set<Cell> tiles;
+        while(budget--&&!dirty_.empty()) {
+            const auto p=*dirty_.begin();dirty_.erase(dirty_.begin());
+            for(int x=tile_axis(p.x-2);x<=tile_axis(p.x+2);++x)
+                for(int y=tile_axis(p.y-3);y<=tile_axis(p.y+3);++y)
+                    for(int z=tile_axis(p.z-2);z<=tile_axis(p.z+2);++z)tiles.insert({x,y,z});
+        }
+        return {tiles.begin(),tiles.end()};
     }
     std::vector<Cell> take_dirty(std::size_t budget) {
         std::vector<Cell> out;
