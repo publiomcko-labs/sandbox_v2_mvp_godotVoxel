@@ -321,13 +321,17 @@ Array V3WorldSession::fluid_surface_tile(const Vector3 &origin) const {
     if(!fl::valid(base)||base.x%8||base.y%8||base.z%8)return out;
     try {
         std::set<int> types;
-        for(auto [p,a]:state_->fluids->query(fl::plus(base,{-1,-2,-1}),fl::plus(base,{9,9,9}))) {
+        for(auto [p,a]:state_->fluids->query(fl::plus(base,{-1,-3,-1}),fl::plus(base,{9,10,9}))) {
             (void)p;types.insert(a.type);
         }
         auto at=[&](fl::Cell p){return state_->fluids->at(p);};
-        for(auto type:types) {
-            auto m=fl::surface::build(at,base,type);
-            if(m.vertices.empty())continue;
+        auto falling=[&](fl::Cell p){return state_->fluids->falling_at(p);};
+        for(int z=0;z<8;++z)for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
+            const auto f=falling(fl::plus(base,{x,y,z}));
+            if(f.litres>=80)types.insert(f.type);
+        }
+        auto append=[&](const fl::surface::Mesh &m,bool flow) {
+            if(m.vertices.empty())return;
             PackedVector3Array vertices,normals;
             vertices.resize(static_cast<int64_t>(m.vertices.size()));
             normals.resize(static_cast<int64_t>(m.vertices.size()));
@@ -336,7 +340,11 @@ Array V3WorldSession::fluid_surface_tile(const Vector3 &origin) const {
                 vertices.set(static_cast<int64_t>(i),Vector3(v.position.x,v.position.y,v.position.z));
                 normals.set(static_cast<int64_t>(i),Vector3(v.normal.x,v.normal.y,v.normal.z));
             }
-            Array row;row.push_back(type);row.push_back(vertices);row.push_back(normals);out.push_back(row);
+            Array row;row.push_back(m.type);row.push_back(vertices);row.push_back(normals);row.push_back(flow);out.push_back(row);
+        };
+        for(auto type:types) {
+            append(fl::surface::build(at,base,type),false);
+            append(fl::surface::build_ribbons(at,falling,base,type),true);
         }
     }catch(const std::exception &){}
     return out;

@@ -144,7 +144,13 @@ func _test() -> void:
         if int(presentation["tile_meshes"])<1 or int(presentation["triangles_published"])<1:
             _fail("continuous fluid mesh missing")
             return
-        print("V3_FLUID_SURFACE_RUNTIME_PASS triangles=",presentation["triangles_published"])
+        # Real terrain breach has a transient downward-transfer curtain;
+        # inspect all nearby tiles rather than assuming a specific tile owns it.
+        var flow_tile: Vector3i=water.call("_tile",bottom)
+        for dy in range(-1,2):
+            water.call("_publish",flow_tile+Vector3i(0,dy,0))
+        presentation=water.call("get_report")
+        print("V3_FLUID_SURFACE_RUNTIME_PASS triangles=",presentation["triangles_published"]," ribbons=",presentation["ribbon_triangles"])
         print("V3_FLUID_RUNTIME_FLOW_PASS moved_litres=",moved," mass=",volume," tiles=",water.call("get_report"))
     else:
         if int(state["terrain_revision"])!=2 or int(state["checkpoint_generation"])!=1:

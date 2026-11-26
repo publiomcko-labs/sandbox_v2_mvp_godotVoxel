@@ -152,14 +152,16 @@ public:
             auto v=probe(p);checked.emplace(p,v);return v;
         };
         next_falls_.clear();
-        const auto share=budget/types_.size();
-        const auto remainder=budget%types_.size();
+        // Keep the full former budget for each of the two standard types.
+        // For mod-heavy worlds cap total work per round at roughly 2*budget.
+        const auto divisor=(types_.size()+1)/2;
+        const auto share=budget/divisor;
         for(int round=0;round<5;++round) {
             bool any=false;
             for(std::size_t type=0;type<types_.size();++type) {
                 if(round>=types_[type].substeps)continue;
                 any=true;
-                const auto r=step(cached,static_cast<int>(type),share+(type<remainder?1:0));
+                const auto r=step(cached,static_cast<int>(type),share);
                 total.processed+=r.processed;total.blocked+=r.blocked;
                 total.changed+=r.changed;total.transferred+=r.transferred;
             }

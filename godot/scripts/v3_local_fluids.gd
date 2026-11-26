@@ -1,7 +1,7 @@
 extends Node3D
 # Presentation/physics adapter only: the native solver owns actual liquid.
 const TILE := 8
-const MAX_TILE_PUBLICATIONS := 1
+const MAX_TILE_PUBLICATIONS := 3
 var session: V3WorldSession
 var world: WorldBootstrap
 var world_seed: int
@@ -10,6 +10,8 @@ var pending: Dictionary = {}
 var _tiles: Dictionary = {}
 var _dirty_tiles: Dictionary = {}
 var _materials: Array[ShaderMaterial] = []
+var _flow_materials: Array[ShaderMaterial] = []
+var _ribbon_triangles := 0
 var _triangles_published := 0
 var _broad: ZN_FastNoiseLite
 var _detail: ZN_FastNoiseLite
@@ -45,6 +47,9 @@ func _ready() -> void:
         m.set_shader_parameter("liquid_emission",Vector3(float(glow[0]),float(glow[1]),float(glow[2])))
         m.set_shader_parameter("viscosity",float(item["viscosity"]))
         _materials.append(m)
+        var flow := m.duplicate() as ShaderMaterial
+        flow.set_shader_parameter("flow_surface",true)
+        _flow_materials.append(flow)
     var seeded: Array=session.get_seeded_reservoirs()
     for rule: Dictionary in config["reservoirs"]:
         if not seeded.has(rule["id"]):
@@ -119,11 +124,11 @@ func _tile(p: Vector3i) -> Vector3i:
     return Vector3i(floori(float(p.x)/TILE),floori(float(p.y)/TILE),floori(float(p.z)/TILE))
 
 func _collect_dirty() -> void:
-    for p: Vector3i in session.take_fluid_dirty(512):
+    for p: Vector3i in session.take_fluid_dirty(2048):
         # Include diagonal neighbours and gradient halo; every affected tile
         # is rebuilt against the same authoritative field.
-        var lo:=_tile(p-Vector3i(2,2,2))
-        var hi:=_tile(p+Vector3i(2,2,2))
+        var lo:=_tile(p-Vector3i(2,3,2))
+        var hi:=_tile(p+Vector3i(2,3,2))
         for z in range(lo.z,hi.z+1):
             for y in range(lo.y,hi.y+1):
                 for x in range(lo.x,hi.x+1):
@@ -142,8 +147,13 @@ func _publish(tile: Vector3i) -> void:
         arrays[Mesh.ARRAY_VERTEX]=vertices
         arrays[Mesh.ARRAY_NORMAL]=normals
         mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
-        mesh.surface_set_material(mesh.get_surface_count()-1,_materials[int(row[0])])
-        _triangles_published+=vertices.size()/3
+        var flow: bool=bool(row[3])
+        mesh.surface_set_material(mesh.get_surface_count()-1,_flow_materials[int(row[0])] if flow else _materials[int(row[0])])
+        @warning_ignore("integer_division")
+        var triangles: int=vertices.size()/3
+        _triangles_published+=triangles
+        if flow:
+            _ribbon_triangles+=triangles
     if mesh.get_surface_count()==0:
         if _tiles.has(tile):
             _tiles[tile].queue_free()
@@ -217,4 +227,4 @@ func _physics_process(_delta: float) -> void:
         processed+=1
 
 func get_report() -> Dictionary:
-    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"triangles_published":_triangles_published,"max_publish_usec":_max_publish_usec,"pending_reservoirs":pending.size()}
+    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"triangles_published":_triangles_published,"ribbon_triangles":_ribbon_triangles,"max_publish_usec":_max_publish_usec,"pending_reservoirs":pending.size()}
