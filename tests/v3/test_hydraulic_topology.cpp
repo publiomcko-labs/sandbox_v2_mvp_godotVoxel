@@ -15,6 +15,10 @@ int main(){
     assert(flat.compartments[0].curve.at_level(2)==512000);
     assert(tp::compartment_at(flat,{3,2,3})==flat.compartments[0].id);
     assert(!tp::compartment_at(flat,{3,-1,3}));
+    auto neighbor=s;neighbor.origin.x=16;
+    auto adjacent=tp::extract(neighbor);
+    auto boundary=tp::connect_faces(flat,adjacent,1);
+    assert(boundary.size()==1&&boundary[0].area_m2==128);
     // Two bowls with a higher doorway; lower cave is separate from the
     // above-ground air, even when the surface ocean has the same XZ.
     s.air.assign(s.air.size(),0);

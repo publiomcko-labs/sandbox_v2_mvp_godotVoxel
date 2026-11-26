@@ -1,6 +1,7 @@
 #pragma once
 #include "hydraulic_graph.hpp"
 #include <numeric>
+#include <tuple>
 
 namespace sandbox::hydraulic::topology {
 // Transient geometric samples only. No simulation quantity is attached to
@@ -26,6 +27,7 @@ struct Result {
     std::vector<Compartment> compartments;
     std::vector<Opening> openings;
     std::vector<Boundary> boundaries;
+    std::vector<std::vector<Span>> column_runs;
 };
 inline Result extract(const Snapshot &s) {
     if(s.nx<1||s.nx>32||s.nz<1||s.nz>32||s.ny<1||s.ny>128||
@@ -33,7 +35,7 @@ inline Result extract(const Snapshot &s) {
         s.air.size()!=static_cast<std::size_t>(s.nx*s.ny*s.nz))
         throw std::invalid_argument("hydraulic snapshot bounds");
     for(auto v:s.air)if(v>1)throw std::invalid_argument("invalid air classification");
-    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{}};
+    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{}};
     std::vector<Span> spans;
     std::vector<std::vector<std::size_t>> columns(static_cast<std::size_t>(s.nx*s.nz));
     auto column=[&](int x,int z)->auto&{return columns[static_cast<std::size_t>(z*s.nx+x)];};
@@ -95,7 +97,9 @@ inline Result extract(const Snapshot &s) {
     });
     if(apertures.size()>portal_count_limit)throw std::length_error("portal limit");
     for(auto [k,area]:apertures)result.openings.push_back({k[0],k[1],mm(static_cast<int>(k[2])),mm(static_cast<int>(k[3])),area});
+    result.column_runs.resize(static_cast<std::size_t>(s.nx*s.nz));
     for(auto v:spans) {
+        result.column_runs[static_cast<std::size_t>(v.z*s.nx+v.x)].push_back(v);
         if(v.x==0)result.boundaries.push_back({v.compartment,0,v.z,mm(v.bottom),mm(v.top)});
         if(v.x==s.nx-1)result.boundaries.push_back({v.compartment,1,v.z,mm(v.bottom),mm(v.top)});
         if(v.z==0)result.boundaries.push_back({v.compartment,2,v.x,mm(v.bottom),mm(v.top)});
@@ -107,11 +111,40 @@ inline Result extract(const Snapshot &s) {
 // sample. The caller must still reject unloaded/unknown terrain and solid
 // sub-sample geometry; this query never invents ocean connectivity.
 inline std::optional<Id> compartment_at(const Result &r,core::Vec3 point) {
+    if(!core::valid_point(point))return {};
     const double x=(point.x-r.origin.x)/r.step,y=(point.y-r.origin.y)/r.step,z=(point.z-r.origin.z)/r.step;
     if(x<0||z<0||x>=r.nx||z>=r.nz)return {};
     const int ix=static_cast<int>(x),iz=static_cast<int>(z);
-    for(const auto &c:r.compartments)for(const auto &s:c.spans)
-        if(s.x==ix&&s.z==iz&&y>=s.bottom&&y<s.top)return c.id;
+    for(const auto &s:r.column_runs.at(static_cast<std::size_t>(iz*r.nx+ix)))
+        if(y>=s.bottom&&y<s.top)return s.compartment;
     return {};
 }
+// Match only adjacent, simultaneously known tiles. No implicit connectivity
+// to the ocean or unloaded region. IDs are local to each returned endpoint.
+inline std::vector<Opening> connect_faces(const Result &a,const Result &b,int face) {
+    if(face<0||face>3||a.step!=b.step)throw std::invalid_argument("face alignment");
+    const int opposite=face^1;
+    const bool xface=face<2;
+    const auto aedge=xface?a.origin.x+(face==1?a.nx*a.step:0):a.origin.z+(face==3?a.nz*a.step:0);
+    const auto bedge=xface?b.origin.x+(opposite==1?b.nx*b.step:0):b.origin.z+(opposite==3?b.nz*b.step:0);
+    if(aedge!=bedge)throw std::invalid_argument("nonadjacent tiles");
+    const int offset_a=xface?a.origin.z:a.origin.x,offset_b=xface?b.origin.z:b.origin.x;
+    if((offset_a-offset_b)%a.step)throw std::invalid_argument("unaligned tile grids");
+    std::multimap<int,Boundary> right;
+    for(auto v:b.boundaries)if(v.face==opposite)right.emplace(offset_b+v.along*b.step,v);
+    std::map<std::tuple<Id,Id,int,int>,double> merged;
+    for(auto v:a.boundaries)if(v.face==face) {
+        auto [first,last]=right.equal_range(offset_a+v.along*a.step);
+        for(auto it=first;it!=last;++it) {
+            const auto w=it->second;
+            const int lo=std::max(v.bottom_mm,w.bottom_mm),hi=std::min(v.top_mm,w.top_mm);
+            if(lo<hi)merged[{v.compartment,w.compartment,lo,hi}]+=double(hi-lo)*0.001*a.step;
+        }
+    }
+    if(merged.size()>portal_count_limit)throw std::length_error("boundary portal limit");
+    std::vector<Opening> out;
+    for(auto [k,area]:merged)out.push_back({std::get<0>(k),std::get<1>(k),std::get<2>(k),std::get<3>(k),area});
+    return out;
+}
+
 }
