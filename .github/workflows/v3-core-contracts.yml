@@ -35,6 +35,8 @@ jobs:
           /tmp/v3-world
           g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_fluids.cpp -o /tmp/v3-fluids
           /tmp/v3-fluids
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_fluid_surface.cpp -o /tmp/v3-fluid-surface
+          /tmp/v3-fluid-surface
           g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src -I .deps/json/single_include tests/v3/test_checkpoint.cpp -lcrypto -o /tmp/v3-checkpoint
           /tmp/v3-checkpoint
   windows-core:
@@ -75,6 +77,10 @@ jobs:
           cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src tests\v3\test_fluids.cpp /Fe:v3-fluids.exe
           if errorlevel 1 exit /b 1
           v3-fluids.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src tests\v3\test_fluid_surface.cpp /Fe:v3-fluid-surface.exe
+          if errorlevel 1 exit /b 1
+          v3-fluid-surface.exe
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src /external:I .deps\json\single_include /external:W0 tests\v3\test_checkpoint.cpp bcrypt.lib /Fe:v3-checkpoint.exe
           if errorlevel 1 exit /b 1

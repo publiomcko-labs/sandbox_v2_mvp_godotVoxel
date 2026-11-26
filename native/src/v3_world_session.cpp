@@ -12,6 +12,8 @@
 #include "content_registry/caves.hpp"
 #include "content_registry/fluid_profile.hpp"
 #include "persistence/fluid_store.hpp"
+#include "core/fluid_surface.hpp"
+#include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
@@ -148,6 +150,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("seed_reservoir","world","id","cells"), &V3WorldSession::seed_reservoir);
     ClassDB::bind_method(D_METHOD("fluid_at","point"), &V3WorldSession::fluid_at);
     ClassDB::bind_method(D_METHOD("fluid_cells","lo","hi"), &V3WorldSession::fluid_cells);
+    ClassDB::bind_method(D_METHOD("fluid_surface_tile","origin"), &V3WorldSession::fluid_surface_tile);
     ClassDB::bind_method(D_METHOD("take_fluid_dirty","budget"), &V3WorldSession::take_fluid_dirty);
     ClassDB::bind_method(D_METHOD("flush_fluids"), &V3WorldSession::flush_fluids);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
@@ -307,6 +310,33 @@ Array V3WorldSession::fluid_cells(const Vector3 &lo,const Vector3 &hi) const {
     try {
         for(auto [p,a]:state_->fluids->query(fluid_cell(lo),fluid_cell(hi),4096)) {
             Array row;row.push_back(Vector3i(p.x,p.y,p.z));row.push_back(a.type);row.push_back(a.litres);out.push_back(row);
+        }
+    }catch(const std::exception &){}
+    return out;
+}
+Array V3WorldSession::fluid_surface_tile(const Vector3 &origin) const {
+    Array out;
+    if(!state_||!state_->fluids||!sc::valid_point({origin.x,origin.y,origin.z}))return out;
+    const auto base=fluid_cell(origin);
+    if(!fl::valid(base)||base.x%8||base.y%8||base.z%8)return out;
+    try {
+        std::set<int> types;
+        for(auto [p,a]:state_->fluids->query(fl::plus(base,{-1,-2,-1}),fl::plus(base,{9,9,9}))) {
+            (void)p;types.insert(a.type);
+        }
+        auto at=[&](fl::Cell p){return state_->fluids->at(p);};
+        for(auto type:types) {
+            auto m=fl::surface::build(at,base,type);
+            if(m.vertices.empty())continue;
+            PackedVector3Array vertices,normals;
+            vertices.resize(static_cast<int64_t>(m.vertices.size()));
+            normals.resize(static_cast<int64_t>(m.vertices.size()));
+            for(std::size_t i=0;i<m.vertices.size();++i) {
+                const auto &v=m.vertices[i];
+                vertices.set(static_cast<int64_t>(i),Vector3(v.position.x,v.position.y,v.position.z));
+                normals.set(static_cast<int64_t>(i),Vector3(v.normal.x,v.normal.y,v.normal.z));
+            }
+            Array row;row.push_back(type);row.push_back(vertices);row.push_back(normals);out.push_back(row);
         }
     }catch(const std::exception &){}
     return out;

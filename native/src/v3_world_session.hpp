@@ -38,6 +38,7 @@ public:
     String seed_reservoir(WorldBootstrap *world,const String &id,const Array &cells);
     Dictionary fluid_at(const Vector3 &point) const;
     Array fluid_cells(const Vector3 &lo,const Vector3 &hi) const;
+    Array fluid_surface_tile(const Vector3 &origin) const;
     Array take_fluid_dirty(int64_t budget);
     bool flush_fluids();
     String get_geology_json() const;

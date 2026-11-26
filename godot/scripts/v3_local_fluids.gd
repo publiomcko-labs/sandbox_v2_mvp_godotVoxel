@@ -2,7 +2,6 @@ extends Node3D
 # Presentation/physics adapter only: the native solver owns actual liquid.
 const TILE := 8
 const MAX_TILE_PUBLICATIONS := 1
-const DIRS := [Vector3i(1,0,0),Vector3i(-1,0,0),Vector3i(0,0,1),Vector3i(0,0,-1)]
 var session: V3WorldSession
 var world: WorldBootstrap
 var world_seed: int
@@ -10,7 +9,8 @@ var config: Dictionary
 var pending: Dictionary = {}
 var _tiles: Dictionary = {}
 var _dirty_tiles: Dictionary = {}
-var _materials: Array[StandardMaterial3D] = []
+var _materials: Array[ShaderMaterial] = []
+var _triangles_published := 0
 var _broad: ZN_FastNoiseLite
 var _detail: ZN_FastNoiseLite
 var _player: Node3D
@@ -39,14 +39,11 @@ func _ready() -> void:
     for item: Dictionary in config["liquids"]:
         var rgb: Array=item["albedo"]
         var glow: Array=item["emission"]
-        var m:=StandardMaterial3D.new()
-        m.albedo_color=Color(float(rgb[0]),float(rgb[1]),float(rgb[2]),1.0)
-        m.roughness=0.26 if float(item["viscosity"])<2.0 else 0.74
-        m.cull_mode=BaseMaterial3D.CULL_DISABLED
-        if float(glow[0])+float(glow[1])+float(glow[2])>0.0:
-            m.emission_enabled=true
-            m.emission=Color(float(glow[0]),float(glow[1]),float(glow[2]))
-            m.emission_energy_multiplier=1.1
+        var m:=ShaderMaterial.new()
+        m.shader=preload("res://shaders/v3_fluid_surface.gdshader")
+        m.set_shader_parameter("liquid_color",Color(float(rgb[0]),float(rgb[1]),float(rgb[2]),1.0))
+        m.set_shader_parameter("liquid_emission",Vector3(float(glow[0]),float(glow[1]),float(glow[2])))
+        m.set_shader_parameter("viscosity",float(item["viscosity"]))
         _materials.append(m)
     var seeded: Array=session.get_seeded_reservoirs()
     for rule: Dictionary in config["reservoirs"]:
@@ -123,59 +120,30 @@ func _tile(p: Vector3i) -> Vector3i:
 
 func _collect_dirty() -> void:
     for p: Vector3i in session.take_fluid_dirty(512):
-        _dirty_tiles[_tile(p)]=true
-        for d: Vector3i in DIRS:
-            _dirty_tiles[_tile(p+d)]=true
-        _dirty_tiles[_tile(p+Vector3i.UP)]=true
-        _dirty_tiles[_tile(p+Vector3i.DOWN)]=true
-
-func _quad(s: SurfaceTool,a: Vector3,b: Vector3,c: Vector3,d: Vector3,n: Vector3) -> void:
-    for p: Vector3 in [a,b,c,a,c,d]:
-        s.set_normal(n)
-        s.add_vertex(p)
+        # Include diagonal neighbours and gradient halo; every affected tile
+        # is rebuilt against the same authoritative field.
+        var lo:=_tile(p-Vector3i(2,2,2))
+        var hi:=_tile(p+Vector3i(2,2,2))
+        for z in range(lo.z,hi.z+1):
+            for y in range(lo.y,hi.y+1):
+                for x in range(lo.x,hi.x+1):
+                    _dirty_tiles[Vector3i(x,y,z)]=true
 
 func _publish(tile: Vector3i) -> void:
     var origin:=tile*TILE
-    var rows: Array=session.fluid_cells(Vector3(origin-Vector3i.ONE),Vector3(origin+Vector3i(TILE,TILE,TILE)))
-    var cells: Dictionary={}
-    for row: Array in rows:
-        cells[row[0]]=Vector2i(int(row[1]),int(row[2]))
     var mesh:=ArrayMesh.new()
-    var surfaces: Dictionary={}
-    for p: Vector3i in cells:
-        var local:=p-origin
-        if local.x<0 or local.y<0 or local.z<0 or local.x>=TILE or local.y>=TILE or local.z>=TILE:
+    for row: Array in session.fluid_surface_tile(Vector3(origin)):
+        var vertices: PackedVector3Array=row[1]
+        var normals: PackedVector3Array=row[2]
+        if vertices.is_empty():
             continue
-        var a: Vector2i=cells[p]
-        if not surfaces.has(a.x):
-            var st:=SurfaceTool.new()
-            st.begin(Mesh.PRIMITIVE_TRIANGLES)
-            st.set_material(_materials[a.x])
-            surfaces[a.x]=st
-        var s: SurfaceTool=surfaces[a.x]
-        var base:=Vector3(local)
-        var h:=float(a.y)/1000.0
-        var above: Vector2i=cells.get(p+Vector3i.UP,Vector2i(-1,0))
-        if above.x!=a.x or h<1.0:
-            var top:=base+Vector3(0,h,0)
-            _quad(s,top,top+Vector3(1,0,0),top+Vector3(1,0,1),top+Vector3(0,0,1),Vector3.UP)
-        for d: Vector3i in DIRS:
-            var other: Vector2i=cells.get(p+d,Vector2i(-1,0))
-            var low:=float(other.y)/1000.0 if other.x==a.x else 0.0
-            if low>=h:
-                continue
-            var q:=base+Vector3(0,low,0)
-            var high:=base+Vector3(0,h,0)
-            if d.x==1:
-                _quad(s,q+Vector3(1,0,0),q+Vector3(1,0,1),high+Vector3(1,0,1),high+Vector3(1,0,0),Vector3.RIGHT)
-            elif d.x==-1:
-                _quad(s,q+Vector3(0,0,1),q,high,high+Vector3(0,0,1),Vector3.LEFT)
-            elif d.z==1:
-                _quad(s,q+Vector3(1,0,1),q+Vector3(0,0,1),high+Vector3(0,0,1),high+Vector3(1,0,1),Vector3.BACK)
-            else:
-                _quad(s,q,q+Vector3(1,0,0),high+Vector3(1,0,0),high,Vector3.FORWARD)
-    for st: SurfaceTool in surfaces.values():
-        st.commit(mesh)
+        var arrays: Array=[]
+        arrays.resize(Mesh.ARRAY_MAX)
+        arrays[Mesh.ARRAY_VERTEX]=vertices
+        arrays[Mesh.ARRAY_NORMAL]=normals
+        mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
+        mesh.surface_set_material(mesh.get_surface_count()-1,_materials[int(row[0])])
+        _triangles_published+=vertices.size()/3
     if mesh.get_surface_count()==0:
         if _tiles.has(tile):
             _tiles[tile].queue_free()
@@ -249,4 +217,4 @@ func _physics_process(_delta: float) -> void:
         processed+=1
 
 func get_report() -> Dictionary:
-    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"max_publish_usec":_max_publish_usec,"pending_reservoirs":pending.size()}
+    return {"tile_meshes":_tiles.size(),"dirty_tiles":_dirty_tiles.size(),"published":_published,"triangles_published":_triangles_published,"max_publish_usec":_max_publish_usec,"pending_reservoirs":pending.size()}

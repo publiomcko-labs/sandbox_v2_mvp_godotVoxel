@@ -134,6 +134,11 @@ func _test() -> void:
         water.call("_collect_dirty")
         var tile: Vector3i=water.call("_tile",Vector3i(row[0]))
         water.call("_publish",tile)
+        var presentation: Dictionary=water.call("get_report")
+        if int(presentation["tile_meshes"])<1 or int(presentation["triangles_published"])<1:
+            _fail("continuous fluid mesh missing")
+            return
+        print("V3_FLUID_SURFACE_RUNTIME_PASS triangles=",presentation["triangles_published"])
         print("V3_FLUID_RUNTIME_FLOW_PASS moved_litres=",moved," mass=",volume," tiles=",water.call("get_report"))
     else:
         if int(state["terrain_revision"])!=2 or int(state["checkpoint_generation"])!=1:
