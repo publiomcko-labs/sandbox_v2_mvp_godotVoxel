@@ -22,7 +22,7 @@ class Runtime {
     static bool resident(const godot::Ref<godot::VoxelTool>& tool,core::Region k) {
         return tool.is_valid()&&tool->is_area_editable(godot::AABB(godot::Vector3(k.x,k.y,k.z),godot::Vector3(side+1,height+1,side+1)));
     }
-    static bool near(core::Region k,core::Region center) {
+    static bool within_interest(core::Region k,core::Region center) {
         return std::abs(k.x-center.x)<=side&&std::abs(k.z-center.z)<=side;
     }
     void seed(const core::Region &k) {
@@ -85,11 +85,11 @@ public:
         if(!core::valid_point(position))throw std::invalid_argument("hydraulic interest");
         const auto center=key(position);
         // Only the 3x3 near-field is active. No voxel streaming requests.
-        for(const auto &[k,t]:domain_.tiles())if(t.available&&(!near(k,center)||!resident(tool,k)))
+        for(const auto &[k,t]:domain_.tiles())if(t.available&&(!within_interest(k,center)||!resident(tool,k)))
             domain_.invalidate(k,t.geometry->revision);
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
-            if(near(k,center)&&resident(tool,k)) {
+            if(within_interest(k,center)&&resident(tool,k)) {
                 if(domain_.publish(std::move(*result))){++publications_;seed(k);}
                 else blocked_[k]=revision;
             }
