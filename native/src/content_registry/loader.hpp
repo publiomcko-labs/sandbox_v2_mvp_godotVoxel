@@ -139,7 +139,18 @@ inline double positive(const Json &j, double limit) {
 inline Registry initial_registry() {
     Registry r;
     r.add("material", [](const Json &j) {
-        fields(j, {"density","hardness"});
+        if(j.size()==2) fields(j, {"density","hardness"});
+        else {
+            fields(j, {"density","hardness","excavation_resistance","permeability","albedo","roughness"});
+            positive(j.at("excavation_resistance"),100000);
+            for(const auto *key : {"permeability","roughness"}) {
+                const auto &v=j.at(key);
+                require(v.is_number() && v.get<double>()>=0 && v.get<double>()<=1,"material ratio");
+            }
+            const auto &color=j.at("albedo");
+            require(color.is_array() && color.size()==3,"material albedo RGB");
+            for(const auto &v:color) require(v.is_number() && v.get<double>()>=0 && v.get<double>()<=1,"material color");
+        }
         positive(j.at("density"), 100000); positive(j.at("hardness"), 100000);
         return std::vector<Reference>{};
     });
@@ -159,6 +170,26 @@ inline Registry initial_registry() {
         return std::vector<Reference>{};
     });
     r.add("geology_profile", [](const Json &j) {
+        if(j.size()!=5) {
+            fields(j, {"palette","soil_depth_m","bedrock_depth_m","deep_depth_m","sand_height_m","slope_limit","variation_m","grass_depth_m"});
+            const auto &palette=j.at("palette");
+            require(palette.is_array() && palette.size()==6,"geology requires six ordered material roles");
+            std::set<std::string> ids;
+            std::vector<Reference> refs;
+            for(const auto &entry:palette) {
+                auto id=str(entry);
+                require(ids.insert(id).second,"duplicate palette material");
+                refs.push_back({id,"material"});
+            }
+            const auto soil=positive(j.at("soil_depth_m"),128);
+            const auto bed=positive(j.at("bedrock_depth_m"),2048);
+            require(bed>soil && positive(j.at("deep_depth_m"),4096)>bed,"geology depth order");
+            require(j.at("sand_height_m").is_number() && std::abs(j.at("sand_height_m").get<double>())<=128,"sand altitude");
+            positive(j.at("slope_limit"),10);
+            require(positive(j.at("variation_m"),32)<soil,"layer variation exceeds soil depth");
+            require(positive(j.at("grass_depth_m"),8)<soil-j.at("variation_m").get<double>(),"grass depth");
+            return refs;
+        }
         fields(j, {"surface_material","subsurface_material","bedrock_material","soil_depth_m","bedrock_depth_m"});
         const auto soil=positive(j.at("soil_depth_m"),128);
         require(positive(j.at("bedrock_depth_m"),4096)>soil,"bedrock depth must exceed soil depth");

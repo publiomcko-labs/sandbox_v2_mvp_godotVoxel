@@ -1,0 +1,21 @@
+{
+  "id": "earth:coastal",
+  "type": "geology_profile",
+  "data": {
+    "palette": [
+      "earth:grass",
+      "earth:soil",
+      "earth:sand",
+      "earth:limestone",
+      "earth:granite",
+      "earth:basalt"
+    ],
+    "soil_depth_m": 6,
+    "bedrock_depth_m": 22,
+    "deep_depth_m": 55,
+    "sand_height_m": 5,
+    "slope_limit": 0.36,
+    "variation_m": 2,
+    "grass_depth_m": 1.5
+  }
+}

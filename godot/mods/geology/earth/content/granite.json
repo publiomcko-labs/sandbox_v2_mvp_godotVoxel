@@ -1,0 +1,16 @@
+{
+  "id": "earth:granite",
+  "type": "material",
+  "data": {
+    "density": 2750,
+    "hardness": 7,
+    "excavation_resistance": 7,
+    "permeability": 0.03,
+    "albedo": [
+      0.43,
+      0.42,
+      0.45
+    ],
+    "roughness": 0.82
+  }
+}

@@ -165,6 +165,7 @@ struct Brush {
     Vec3 center;
     double radius_m{};
     bool add{};
+    int material_slot=-1; // engine-validated palette slot; never serialized as a mod ID
 };
 enum class ApplyResult : std::uint8_t { applied, no_effect, deferred, rejected };
 enum class CommandResult : std::uint8_t {

@@ -1,0 +1,16 @@
+{
+  "id": "earth:sand",
+  "type": "material",
+  "data": {
+    "density": 1700,
+    "hardness": 0.8,
+    "excavation_resistance": 0.8,
+    "permeability": 0.85,
+    "albedo": [
+      0.72,
+      0.62,
+      0.39
+    ],
+    "roughness": 0.94
+  }
+}

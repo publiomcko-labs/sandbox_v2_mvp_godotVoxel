@@ -1,0 +1,16 @@
+{
+  "id": "earth:soil",
+  "type": "material",
+  "data": {
+    "density": 1600,
+    "hardness": 1.5,
+    "excavation_resistance": 1.2,
+    "permeability": 0.45,
+    "albedo": [
+      0.37,
+      0.23,
+      0.13
+    ],
+    "roughness": 0.96
+  }
+}

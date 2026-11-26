@@ -1,0 +1,16 @@
+{
+  "id": "earth:limestone",
+  "type": "material",
+  "data": {
+    "density": 2600,
+    "hardness": 3,
+    "excavation_resistance": 3,
+    "permeability": 0.12,
+    "albedo": [
+      0.61,
+      0.6,
+      0.52
+    ],
+    "roughness": 0.85
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "earth:grass",
+  "type": "material",
+  "data": {
+    "density": 1300,
+    "hardness": 1,
+    "excavation_resistance": 1,
+    "permeability": 0.65,
+    "albedo": [
+      0.27,
+      0.45,
+      0.16
+    ],
+    "roughness": 0.95
+  }
+}

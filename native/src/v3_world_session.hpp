@@ -14,6 +14,9 @@ class V3WorldSession : public RefCounted {
     struct State;
     std::unique_ptr<State> state_;
     String last_error_;
+    bool open_impl(const String &first_party,const String &external,const String &world_root,
+                   const String &world_id,int64_t seed,const String &geology_root,const String &profile);
+    String submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot);
 protected:
     static void _bind_methods();
 public:
@@ -21,6 +24,10 @@ public:
     ~V3WorldSession() override;
     bool open(const String &first_party, const String &external, const String &world_root,
               const String &world_id, int64_t seed);
+    bool open_geology(const String &first_party,const String &external,const String &world_root,
+                      const String &world_id,int64_t seed,const String &geology_root,const String &profile);
+    String get_geology_json() const;
+    String submit_material(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,const String &material_id);
     bool bind_world(WorldBootstrap *world);
     String get_last_error() const;
     String get_world_path() const;

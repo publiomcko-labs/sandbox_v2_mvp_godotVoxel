@@ -8,6 +8,11 @@
 #include <godot_cpp/variant/char_string.hpp>
 #include <godot_cpp/variant/node_path.hpp>
 #include "persistence/checkpoint.hpp"
+#include "content_registry/geology.hpp"
+#include <godot_cpp/classes/voxel_buffer.hpp>
+#include <godot_cpp/classes/voxel_tool.hpp>
+#include <godot_cpp/classes/voxel_format.hpp>
+#include <godot_cpp/variant/vector3i.hpp>
 
 namespace godot {
 namespace sc = sandbox::core;
@@ -26,11 +31,53 @@ bool same_path(const String &p,const fs::path &expected) {
     const auto actual=fs::absolute(path_of(p)).lexically_normal();
     return actual==expected && ct::checked_root(actual.parent_path())==expected.parent_path();
 }
+// Read-modify-paste both authoritative voxel channels together. Only newly
+// solid samples receive the selected material; carving preserves geology.
+sc::ApplyResult material_brush(WorldBootstrap *world,const sc::Brush &b) {
+    if (!world->can_edit_sphere(Vector3(b.center.x,b.center.y,b.center.z),b.radius_m))
+        return sc::ApplyResult::deferred;
+    auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+    if(!terrain) return sc::ApplyResult::rejected;
+    auto tool=terrain->get_voxel_tool();
+    if(tool.is_null()) return sc::ApplyResult::rejected;
+    const Vector3 center(b.center.x,b.center.y,b.center.z);
+    const Vector3 extent(b.radius_m+1,b.radius_m+1,b.radius_m+1);
+    const Vector3i origin((center-extent).floor());
+    const Vector3i end((center+extent).ceil());
+    const Vector3i size=end-origin+Vector3i(1,1,1);
+    if(!tool->is_area_editable(AABB(Vector3(origin),Vector3(size)))) return sc::ApplyResult::deferred;
+    Ref<VoxelBuffer> buffer;
+    buffer.instantiate();
+    buffer->set_channel_depth(VoxelBuffer::CHANNEL_INDICES,VoxelBuffer::DEPTH_8_BIT);
+    buffer->create(size.x,size.y,size.z);
+    constexpr int sdf=VoxelBuffer::CHANNEL_SDF, indices=VoxelBuffer::CHANNEL_INDICES;
+    constexpr int mask=(1<<sdf)|(1<<indices);
+    tool->copy(origin,buffer,mask,false);
+    bool changed=false;
+    for(int z=0;z<size.z;++z) for(int x=0;x<size.x;++x) for(int y=0;y<size.y;++y) {
+        const double shape=Vector3(origin+Vector3i(x,y,z)).distance_to(center)-b.radius_m;
+        if(shape>1) continue;
+        const double old=buffer->get_voxel_f(x,y,z,sdf);
+        const double next=b.add?std::min(old,shape):std::max(old,-shape);
+        if(next==old) continue;
+        const auto raw=buffer->get_voxel(x,y,z,sdf);
+        buffer->set_voxel_f(next,x,y,z,sdf);
+        if(buffer->get_voxel(x,y,z,sdf)!=raw) {
+            changed=true;
+            if(b.add && old>=0 && buffer->get_voxel_f(x,y,z,sdf)<0)
+                buffer->set_voxel(b.material_slot,x,y,z,indices);
+        }
+    }
+    if(!changed) return sc::ApplyResult::no_effect;
+    tool->paste(origin,buffer,mask);
+    return sc::ApplyResult::applied;
+}
 class VoxelAdapter : public sc::TerrainAdapter {
 public:
     WorldBootstrap *world=nullptr;
     sc::ApplyResult apply(const sc::Brush &b) noexcept override {
         if (!world) return sc::ApplyResult::rejected;
+        if(b.material_slot>=0) return material_brush(world,b);
         const Vector3 center(b.center.x,b.center.y,b.center.z);
         if (!world->can_edit_sphere(center,b.radius_m)) return sc::ApplyResult::deferred;
         return world->edit_sphere(center,b.add,b.radius_m)
@@ -55,6 +102,7 @@ struct V3WorldSession::State {
     ps::CheckpointStore store;
     VoxelAdapter adapter;
     sc::InterestWindow interest;
+    std::optional<ct::GeologyPalette> geology;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -62,6 +110,9 @@ V3WorldSession::V3WorldSession()=default;
 V3WorldSession::~V3WorldSession()=default;
 void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("open","first_party","external","world_root","world_id","seed"), &V3WorldSession::open);
+    ClassDB::bind_method(D_METHOD("open_geology","first_party","external","world_root","world_id","seed","geology_root","profile"), &V3WorldSession::open_geology);
+    ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
+    ClassDB::bind_method(D_METHOD("submit_material","world","command","center","add","radius","material_id"), &V3WorldSession::submit_material);
     ClassDB::bind_method(D_METHOD("bind_world","world"), &V3WorldSession::bind_world);
     ClassDB::bind_method(D_METHOD("get_last_error"), &V3WorldSession::get_last_error);
     ClassDB::bind_method(D_METHOD("get_world_path"), &V3WorldSession::get_world_path);
@@ -77,11 +128,29 @@ void V3WorldSession::_bind_methods() {
 }
 bool V3WorldSession::open(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed) {
+    return open_impl(first_party,external,world_root,world_id,seed,String(),String());
+}
+bool V3WorldSession::open_geology(const String &first_party,const String &external,
+                         const String &world_root,const String &world_id,int64_t seed,
+                         const String &geology_root,const String &profile) {
+    if(geology_root.is_empty() || profile.is_empty()) return false;
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile);
+}
+bool V3WorldSession::open_impl(const String &first_party,const String &external,
+                         const String &world_root,const String &world_id,int64_t seed,
+                         const String &geology_root,const String &profile) {
     try {
         ct::require(!state_ && seed>=0,"invalid or already initialized session");
         auto next=std::make_unique<State>();
-        next->snapshot=ct::load({path_of(first_party),path_of(external)},ct::initial_registry());
-        next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins);
+        std::vector<fs::path> roots{path_of(first_party),path_of(external)};
+        if(!geology_root.is_empty()) roots.push_back(path_of(geology_root));
+        next->snapshot=ct::load(roots,ct::initial_registry());
+        std::string generator(ps::generator_version);
+        if(!geology_root.is_empty()) {
+            next->geology=ct::compile_geology(*next->snapshot,narrow(profile));
+            generator="v3_2_single_s4_v1:"+next->geology->profile_id;
+        }
+        next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         const auto c=next->store.header().core;
         constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
         ct::require(c.last_command<limit && c.terrain_revision<limit && c.completed_tick<limit &&
@@ -99,6 +168,10 @@ bool V3WorldSession::bind_world(WorldBootstrap *world) {
                     !state_->bound_world,"invalid world binding");
         auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
         ct::require(terrain!=nullptr,"terrain missing");
+        if(state_->geology) {
+            const Ref<VoxelFormat> format=terrain->get_format();
+            ct::require(format.is_valid() && format->get_channel_depth(VoxelBuffer::CHANNEL_INDICES)==VoxelBuffer::DEPTH_8_BIT,"wrong geology voxel format");
+        }
         const Ref<VoxelStream> stream=terrain->get_stream();
         auto *sqlite=Object::cast_to<VoxelStreamSQLite>(stream.ptr());
         ct::require(sqlite && same_path(sqlite->get_database_path(),state_->store.path()/"terrain.sqlite"),
@@ -112,6 +185,10 @@ bool V3WorldSession::bind_world(WorldBootstrap *world) {
         last_error_=String();
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
+}
+String V3WorldSession::get_geology_json() const {
+    if(!state_ || !state_->geology) return {};
+    return String::utf8(state_->geology->config.dump().c_str());
 }
 String V3WorldSession::get_last_error() const {return last_error_;}
 String V3WorldSession::get_world_path() const {return state_?gd_path(state_->store.path()):String();}
@@ -146,10 +223,20 @@ Dictionary V3WorldSession::get_state() const {
     return d;
 }
 String V3WorldSession::submit(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius) {
+    if(state_ && state_->geology) return "rejected";
+    return submit_impl(world,command,center,add,radius,-1);
+}
+String V3WorldSession::submit_material(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,const String &material_id) {
+    if(!state_ || !state_->geology) return "rejected";
+    const auto slot=state_->geology->slot(narrow(material_id));
+    if(slot<0) return "rejected";
+    return submit_impl(world,command,center,add,radius,slot);
+}
+String V3WorldSession::submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot) {
     if(!state_ || !state_->store.is_open() || !world || !state_->bound_world ||
        state_->bound_world!=world->get_instance_id() || command<=0) return "rejected";
     state_->adapter.world=world;
-    const auto r=state_->core->submit({static_cast<uint64_t>(command),{center.x,center.y,center.z},radius,add});
+    const auto r=state_->core->submit({static_cast<uint64_t>(command),{center.x,center.y,center.z},radius,add,slot});
     state_->adapter.world=nullptr;
     return String(status_name(r));
 }

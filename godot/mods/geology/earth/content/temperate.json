@@ -1,0 +1,21 @@
+{
+  "id": "earth:temperate",
+  "type": "geology_profile",
+  "data": {
+    "palette": [
+      "earth:grass",
+      "earth:soil",
+      "earth:sand",
+      "earth:limestone",
+      "earth:granite",
+      "earth:basalt"
+    ],
+    "soil_depth_m": 4,
+    "bedrock_depth_m": 18,
+    "deep_depth_m": 42,
+    "sand_height_m": 1.7,
+    "slope_limit": 0.42,
+    "variation_m": 1.5,
+    "grass_depth_m": 1.4
+  }
+}

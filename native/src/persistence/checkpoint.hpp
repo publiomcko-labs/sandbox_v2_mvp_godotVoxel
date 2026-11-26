@@ -17,13 +17,14 @@ struct WorldHeader {
     std::uint64_t seed{}, generation{};
     std::vector<Pin> pins;
     CheckpointState core;
+    std::string generator=std::string(generator_version);
 };
 
 inline Json encode(const WorldHeader &h) {
     Json pins = Json::array();
     for (const auto &p : h.pins)
         pins.push_back({{"mod_id",p.mod_id},{"version",p.version},{"sha256",p.sha256}});
-    return {{"schema_version",schema_version},{"generator_version",generator_version},
+    return {{"schema_version",schema_version},{"generator_version",h.generator},
             {"world_id",h.world_id},{"seed",h.seed},{"generation",h.generation},
             {"pins",pins},{"core",{{"terrain_revision",h.core.terrain_revision},
             {"last_command",h.core.last_command},{"completed_tick",h.core.completed_tick},
@@ -33,12 +34,13 @@ inline std::uint64_t uint(const Json &j) {
     require(j.is_number_unsigned(), "expected unsigned checkpoint integer");
     return j.get<std::uint64_t>();
 }
-inline WorldHeader decode(const Json &j) {
+inline WorldHeader decode(const Json &j, std::string_view expected_generator=generator_version) {
     content::fields(j,{"schema_version","generator_version","world_id","seed","generation","pins","core"});
     require(j.at("schema_version").is_number_integer() && j.at("schema_version")==schema_version,
             "unknown world schema");
-    require(content::str(j.at("generator_version"))==generator_version, "generator version mismatch");
+    require(content::str(j.at("generator_version"))==expected_generator, "generator version mismatch");
     WorldHeader h;
+    h.generator=std::string(expected_generator);
     h.world_id=content::str(j.at("world_id"));
     require(content::identifier(h.world_id), "invalid world ID");
     h.seed=uint(j.at("seed"));
@@ -103,7 +105,7 @@ public:
     CheckpointStore(const CheckpointStore &)=delete;
     CheckpointStore &operator=(const CheckpointStore &)=delete;
     void begin(const fs::path &root,const std::string &world_id,std::uint64_t seed,
-               const std::vector<Pin> &pins) {
+               const std::vector<Pin> &pins,std::string_view generator=generator_version) {
         require(!open_,"session already open");
         require(content::safe_component(fs::path(world_id)),"invalid world ID");
         const auto base=content::checked_root(root);
@@ -114,11 +116,11 @@ public:
         const auto marker=world_/"session_pending";
         require(!fs::exists(fs::symlink_status(marker)),"world has unresolved session intent");
         if (fresh) {
-            header_={world_id,seed,0,pins,{}};
+            header_={world_id,seed,0,pins,{},std::string(generator)};
         } else {
             for (const auto &entry:fs::directory_iterator(world_))
                 plain_unique_file(entry.path());
-            header_=decode(read_json(world_/"checkpoint.json"));
+            header_=decode(read_json(world_/"checkpoint.json"),generator);
             require(header_.world_id==world_id && header_.seed==seed && header_.pins==pins,
                     "world identity, seed or content pins mismatch");
             plain_unique_file(world_/"terrain.sqlite");

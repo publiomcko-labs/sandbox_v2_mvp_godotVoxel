@@ -1,0 +1,16 @@
+{
+  "id": "earth:basalt",
+  "type": "material",
+  "data": {
+    "density": 2900,
+    "hardness": 6,
+    "excavation_resistance": 6,
+    "permeability": 0.05,
+    "albedo": [
+      0.2,
+      0.22,
+      0.24
+    ],
+    "roughness": 0.91
+  }
+}
