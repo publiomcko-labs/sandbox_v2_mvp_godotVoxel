@@ -45,7 +45,7 @@ int main(){
     for(int i=0;i<5;++i)normal.tick(shaft);
     assert(accelerated.substeps==5&&fast.cells()==normal.cells()&&fast.volume()==1000);
     bool reached_lower=false;
-    for(const auto &[p,a]:fast.cells())if(p.y<=8&&a.litres>0)reached_lower=true;
+    for(const auto &[p,amount]:fast.cells())if(p.y<=8&&amount.litres>0)reached_lower=true;
     assert(reached_lower);
     Solver combined({{500,1000,5},{50,2800,1}}),slow({{500,1000,1},{50,2800,1}});
     assert(combined.add({1,10,0},1,1000,shaft,true)&&slow.add({1,10,0},1,1000,shaft,true));
