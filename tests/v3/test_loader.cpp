@@ -37,6 +37,10 @@ int main(int argc, char **argv) {
     assert(s->load_order == (std::vector<std::string>{"base","geology_demo","life_demo"}));
     const auto again = load({external,base},reg,&s->pins);
     assert(again->indices == s->indices);
+    // Fixed cross-platform canonical fingerprints from Linux reference run.
+    assert(s->pins[0].sha256 == "fdd067a198122e35fcb0df460bde68787dba82feb034caf4ba1b68ff597fb174");
+    assert(s->pins[1].sha256 == "cf0462f5faa44ac328e69afcb3b6f089a131ea37523de8124e76e031ec4e9ee7");
+    assert(s->pins[2].sha256 == "1aaf4cf81730f1a5b30f0d29f88d1c846c63249e1e5b6ca330754ef4cb59d9db");
     for (const auto &p : s->pins) std::cout << p.mod_id << " " << p.sha256 << "\n";
     const auto rock = external/"geology_demo/content/rock.json";
     auto original = strict_json([&]{std::ifstream f(rock);return std::string(std::istreambuf_iterator<char>(f),{});}());
@@ -72,6 +76,7 @@ int main(int argc, char **argv) {
         rejected([&]{load({base,external},reg);});
         fs::remove(rock.parent_path()/"hard.json");
     }
+    ec.clear();
     fs::create_symlink(rock,rock.parent_path()/"link.json",ec);
     if (!ec) {
         rejected([&]{load({base,external},reg);});

@@ -30,6 +30,8 @@ jobs:
           /tmp/v3-manifest
           g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src -I .deps/json/single_include tests/v3/test_loader.cpp -lcrypto -o /tmp/v3-loader
           /tmp/v3-loader "$PWD"
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_world_core.cpp -o /tmp/v3-world
+          /tmp/v3-world
   windows-core:
     runs-on: windows-latest
     timeout-minutes: 5
@@ -41,10 +43,17 @@ jobs:
           ref: 55f93686c01528224f448c19128836e7df245f72
           path: .deps/json
           persist-credentials: false
+      - name: Locate installed MSVC
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs -or !(Test-Path "$vs\VC\Auxiliary\Build\vcvars64.bat")) { throw 'MSVC build tools unavailable' }
+          "V3_VSROOT=$vs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build and run MSVC contracts
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call "%V3_VSROOT%\VC\Auxiliary\Build\vcvars64.bat"
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src tests\v3\test_manifest.cpp /Fe:v3-manifest.exe
           if errorlevel 1 exit /b 1
@@ -53,4 +62,8 @@ jobs:
           cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src /external:I .deps\json\single_include /external:W0 tests\v3\test_loader.cpp bcrypt.lib /Fe:v3-loader.exe
           if errorlevel 1 exit /b 1
           v3-loader.exe "%CD%"
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src tests\v3\test_world_core.cpp /Fe:v3-world.exe
+          if errorlevel 1 exit /b 1
+          v3-world.exe
           if errorlevel 1 exit /b 1
