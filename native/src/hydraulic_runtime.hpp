@@ -19,6 +19,7 @@ class Runtime {
     std::map<Id,std::pair<Transfer,std::uint64_t>> recent_flows_;
     std::uint64_t debt_=0,ticks_=0,visited_=0,moved_=0,publications_=0,max_tick_us_=0,max_snapshot_us_=0;
     static constexpr int side=16,base=-32,height=64;
+    std::optional<core::Region> last_center_;
     static core::Region key(core::Vec3 p) {
         return {static_cast<int>(std::floor(p.x/side))*side,base,static_cast<int>(std::floor(p.z/side))*side};
     }
@@ -168,6 +169,7 @@ public:
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed) {
         if(!core::valid_point(position))throw std::invalid_argument("hydraulic interest");
         const auto center=key(position);
+        last_center_=center;
         // Only the 3x3 near-field is active. No voxel streaming requests.
         for(const auto &[k,t]:domain_.tiles())if(t.available&&(!hydraulic_interest(k,center)||!resident(tool,k)))
             domain_.invalidate(k,t.geometry->revision);
@@ -266,9 +268,13 @@ public:
         godot::Dictionary d;
         d["litres"]=domain_.graph().finite();d["initial"]=domain_.graph().initial();
         d["injected"]=domain_.graph().injected();d["drained"]=domain_.graph().drained();
-        std::size_t active=0,visual=0;
-        for(const auto &[k,t]:domain_.tiles()){(void)k;if(t.available)++active;if(visual_tile(k,t)&&wet_tile(t))++visual;}
-        d["active_tiles"]=static_cast<int64_t>(active);d["visible_wet_tiles"]=static_cast<int64_t>(visual);
+        std::size_t active=0,near_active=0,visual=0;
+        for(const auto &[k,t]:domain_.tiles()){
+            if(t.available){++active;if(last_center_&&within_interest(k,*last_center_))++near_active;}
+            if(visual_tile(k,t)&&wet_tile(t))++visual;
+        }
+        d["active_tiles"]=static_cast<int64_t>(active);d["near_active_tiles"]=static_cast<int64_t>(near_active);
+        d["visible_wet_tiles"]=static_cast<int64_t>(visual);
         d["tiles"]=static_cast<int64_t>(domain_.tiles().size());d["volumes"]=static_cast<int64_t>(domain_.graph().volumes().size());
         d["portals"]=static_cast<int64_t>(domain_.graph().portals().size());d["sources"]=static_cast<int64_t>(domain_.seeded().size());
         d["ticks"]=static_cast<int64_t>(ticks_);d["visited"]=static_cast<int64_t>(visited_);d["moved"]=static_cast<int64_t>(moved_);

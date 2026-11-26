@@ -78,7 +78,12 @@ func _test() -> void:
         if runtime.session.hydraulic_surfaces().size()!=count_before:
             _fail("distant water disappeared")
             return
-        while int(runtime.session.hydraulic_report()["active_tiles"])<9:
+        # Wet expansion can make nine remote tiles ready before the source
+        # shore is revalidated. Wait for the actual near-field window.
+        if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
+            _fail("restore center")
+            return
+        while int(runtime.session.hydraulic_report()["near_active_tiles"])<9:
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
                 _fail("restore interest")
                 return
@@ -157,7 +162,7 @@ func _test() -> void:
             return
         print("V3_HYDRAULIC_WET_BREACH_PASS lateral_shore=true point=",cut," observed_steps=",first_wet+1," mass=",mass)
         # Let every edited tile finish publication before the next brush.
-        while int(runtime.session.hydraulic_report()["active_tiles"])<9 or int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+        while int(runtime.session.hydraulic_report()["near_active_tiles"])<9 or int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
                 _fail("breach publication")
                 return
