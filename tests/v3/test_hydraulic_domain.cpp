@@ -100,6 +100,19 @@ int main(){
             if(patch.ceiling==8)for(auto v:patch.vertices)assert(v.x<=2.0+1e-8);
         }
     assert(capped);
+    const auto high=*tp::compartment_at(divided,{3.5,5,0.5});
+    auto falls=surface::flow_faces(divided,high,divided,low,4000,8000,8,6,1,64);
+    assert(falls.size()==4);
+    for(const auto &q:falls){assert(q.bottom==1&&q.top==6&&q.x0<2&&q.x0>1.9);}
+    assert(surface::flow_faces(divided,high,divided,low,4000,8000,8,3,1,64).empty());
+    assert(surface::flow_faces(divided,high,divided,low,4000,8000,8,6,6,64).empty());
+    assert(surface::flow_faces(divided,high,divided,low,3000,8000,8,6,1,64).empty());
+    assert(surface::flow_faces(divided,high,divided,low,4000,8000,8,6,1,1).size()==1);
+    const auto ga=tp::extract(a),gb=tp::extract(b);
+    const auto seam=surface::flow_faces(ga,ga.compartments.front().id,gb,gb.compartments.front().id,0,8000,8,3,1,64);
+    assert(seam.size()==4);
+    for(const auto &q:seam)assert(q.x0>4&&q.x0<4.1&&q.top==3&&q.bottom==1);
+    std::cout<<"V3_HYDRAULIC_FLOW_FACE_PASS exposed_drop actual_sill cross_tile bounded\n";
     // Four independent high-drop columns share a square. Their exposed
     // surfaces must tile the whole 2x2 footprint exactly once, including
     // the three-label junction inside a triangle. Ignore capped aprons.

@@ -3,6 +3,51 @@
 namespace sandbox::hydraulic::surface {
 struct Point {double x{},z{},floor{};};
 struct Patch {int ceiling{};std::vector<Point> vertices;};
+struct FlowFace {double x0{},z0{},x1{},z1{},bottom{},top{};};
+// Presentation geometry for an actual directed portal, using only its
+// exposed shared faces. No invented waterfall over unknown/solid terrain.
+// The caller supplies current heads, an observed transfer and a hard cap.
+inline std::vector<FlowFace> flow_faces(const topology::Result &a,Id from,
+        const topology::Result &b,Id to,int sill_mm,int soffit_mm,
+        int surface_ceiling,double high,double low,std::size_t limit) {
+    std::vector<FlowFace> out;
+    if(!limit||a.step!=b.step||high<=sill_mm*0.001||high-low<0.08)return out;
+    const auto c=std::find_if(a.compartments.begin(),a.compartments.end(),
+        [&](const auto &v){return v.id==from;});
+    if(c==a.compartments.end())return out;
+    for(const auto &u:c->spans) {
+        if(a.origin.y+u.top*a.step!=surface_ceiling)continue;
+        for(const auto d:{core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
+            const int wx=a.origin.x+(u.x+d.x)*a.step,wz=a.origin.z+(u.z+d.z)*a.step;
+            const int rx=wx-b.origin.x,rz=wz-b.origin.z;
+            if(rx<0||rz<0||rx%a.step||rz%a.step)continue;
+            const int x=rx/a.step,z=rz/a.step;
+            if(x>=b.nx||z>=b.nz)continue;
+            for(const auto &v:b.column_runs[static_cast<std::size_t>(z*b.nx+x)]) {
+                if(v.compartment!=to||b.origin.y+v.top*b.step!=surface_ceiling)continue;
+                const int floor_a=a.origin.y+u.bottom*a.step,floor_b=b.origin.y+v.bottom*b.step;
+                const int lo=std::max(floor_a,floor_b)*1000,hi=surface_ceiling*1000;
+                if(lo!=sill_mm||hi!=soffit_mm||lo>=hi)continue;
+                const double top=std::min(high,hi*0.001-0.001);
+                const double bottom=std::max(low,double(floor_b));
+                if(top-bottom<0.08)continue;
+                const double ax=a.origin.x+u.x*a.step,az=a.origin.z+u.z*a.step;
+                // Slight receiver-side offset prevents coplanar terrain
+                // flicker. It never changes hydraulic occupancy or volume.
+                const double inset=0.015;
+                if(d.x) {
+                    const double edge=ax+(d.x>0?a.step:0)+d.x*inset;
+                    out.push_back({edge,az,edge,az+a.step,bottom,top});
+                } else {
+                    const double edge=az+(d.z>0?a.step:0)+d.z*inset;
+                    out.push_back({ax,edge,ax+a.step,edge,bottom,top});
+                }
+                if(out.size()>=limit)return out;
+            }
+        }
+    }
+    return out;
+}
 // Contours are evaluated at column centers, with a ghost ring clamped
 // to the edge of the tile. Triangular interpolation removes the square
 // corners without generating a volume mesh or tracking wet samples.

@@ -16,6 +16,7 @@ class Runtime {
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
     std::set<core::Region> edited_tiles_;
+    std::map<Id,std::pair<Transfer,std::uint64_t>> recent_flows_;
     std::uint64_t debt_=0,ticks_=0,visited_=0,moved_=0,publications_=0,max_tick_us_=0,max_snapshot_us_=0;
     static constexpr int side=16,base=-32,height=64;
     static core::Region key(core::Vec3 p) {
@@ -48,6 +49,54 @@ class Runtime {
             if(it!=domain_.tiles().end()&&wet_tile(it->second))return true;
         }
         return false;
+    }
+    std::map<Id,godot::PackedVector3Array> visible_flows()const {
+        using namespace godot;
+        std::map<Id,PackedVector3Array> out;
+        const auto &graph=domain_.graph();
+        std::vector<Transfer> candidates;
+        for(const auto &[id,entry]:recent_flows_) {
+            const auto &f=entry.first;
+            auto p=graph.portals().find(id);
+            if(p==graph.portals().end()||!p->second.available||p->second.opening_height_m<=0)continue;
+            const auto &a=graph.volumes().at(f.from),&b=graph.volumes().at(f.to);
+            if(a.ocean||b.ocean||!a.litres||a.level()-b.level()<0.08||
+                a.level()<=p->second.sill_m)continue;
+            candidates.push_back(f);
+        }
+        std::sort(candidates.begin(),candidates.end(),[](const auto &a,const auto &b){
+            return a.litres!=b.litres?a.litres>b.litres:a.portal<b.portal;
+        });
+        if(candidates.size()>16)candidates.resize(16);
+        if(candidates.empty())return out;
+        std::set<Id> wanted;
+        for(const auto &f:candidates){wanted.insert(f.from);wanted.insert(f.to);}
+        std::map<Id,std::pair<const Tile*,Id>> locations;
+        for(const auto &[k,t]:domain_.tiles())if(t.available) {
+            (void)k;
+            for(const auto &[local,id]:t.ids)if(wanted.contains(id))locations.emplace(id,std::pair{&t,local});
+        }
+        std::size_t remaining=64;
+        for(const auto &f:candidates) {
+            if(!remaining)break;
+            if(!locations.contains(f.from)||!locations.contains(f.to))continue;
+            const auto &p=graph.portals().at(f.portal);
+            const auto &a=graph.volumes().at(f.from),&b=graph.volumes().at(f.to);
+            const auto [ta,la]=locations.at(f.from);
+            const auto [tb,lb]=locations.at(f.to);
+            const auto faces=surface::flow_faces(*ta->geometry,la,*tb->geometry,lb,
+                static_cast<int>(std::lround(p.sill_m*1000)),
+                static_cast<int>(std::lround((p.sill_m+p.opening_height_m)*1000)),
+                base+height,a.level(),b.level(),remaining);
+            for(const auto &q:faces) {
+                auto &vertices=out[f.from];
+                const Vector3 a0(q.x0,q.bottom,q.z0),a1(q.x0,q.top,q.z0),
+                    b0(q.x1,q.bottom,q.z1),b1(q.x1,q.top,q.z1);
+                for(const auto &v:{a0,a1,b1,a0,b1,b0})vertices.push_back(v);
+                --remaining;
+            }
+        }
+        return out;
     }
     void seed(const core::Region &k) {
         const auto &tile=domain_.tiles().at(k);
@@ -151,6 +200,13 @@ public:
         if(debt_>=period) {
             const auto start=std::chrono::steady_clock::now();
             const auto r=domain_.tick(128);++ticks_;visited_+=r.visited;moved_+=static_cast<std::uint64_t>(r.moved);
+            // Retain a short presentation history to avoid flicker from the
+            // bounded portal scheduler. Stale/inactive portals are rejected
+            // again against current geometry and head before drawing.
+            for(auto it=recent_flows_.begin();it!=recent_flows_.end();) {
+                if(ticks_-it->second.second>=4)it=recent_flows_.erase(it);else ++it;
+            }
+            for(const auto &f:r.flows)recent_flows_.insert_or_assign(f.portal,std::pair{f,ticks_});
             debt_-=period;
             max_tick_us_=std::max(max_tick_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
         }
@@ -168,10 +224,13 @@ public:
     }
     godot::Array surfaces()const {
         godot::Array out;
+        const auto flows=visible_flows();
         for(const auto &[k,t]:domain_.tiles())if(visual_tile(k,t))for(const auto &[local,id]:t.ids) {
             (void)k;(void)local;const auto &v=domain_.graph().volumes().at(id);
             if(!v.litres)continue;
-            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(v.level());row.push_back(godot::Vector3i(k.x,k.y,k.z));out.push_back(row);
+            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(v.level());row.push_back(godot::Vector3i(k.x,k.y,k.z));
+            if(auto it=flows.find(id);it!=flows.end())row.push_back(it->second);
+            out.push_back(row);
         }
         return out;
     }

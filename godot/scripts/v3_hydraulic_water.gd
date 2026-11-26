@@ -5,6 +5,10 @@ var session: V3WorldSession
 var world: WorldBootstrap
 var _rocks: Node3D
 var _materials: Array[ShaderMaterial]=[]
+var _flow_materials: Array[ShaderMaterial]=[]
+var _flow_nodes: Dictionary={}
+var _flow_previous: Dictionary={}
+var _flow_quads:=0
 var _meshes: Dictionary={}
 var _mesh_tiles: Dictionary={}
 var _deferred_swaps:=0
@@ -25,15 +29,24 @@ func _ready() -> void:
         mat.set_shader_parameter("liquid_emission",Vector3(float(e[0]),float(e[1]),float(e[2])))
         mat.set_shader_parameter("viscosity",float(item["viscosity"]))
         _materials.append(mat)
+        var flow_mat:=ShaderMaterial.new()
+        flow_mat.shader=preload("res://shaders/v3_hydraulic_flow.gdshader")
+        flow_mat.set_shader_parameter("liquid_color",Color(float(c[0]),float(c[1]),float(c[2]),1.0))
+        flow_mat.set_shader_parameter("liquid_emission",Vector3(float(e[0]),float(e[1]),float(e[2])))
+        flow_mat.set_shader_parameter("viscosity",float(item["viscosity"]))
+        _flow_materials.append(flow_mat)
 
 func refresh() -> void:
     var start:=Time.get_ticks_usec()
     var live: Dictionary={}
     var wanted: Dictionary={}
+    var flow_rows: Dictionary={}
     var builds:=0
     for row: Array in session.hydraulic_surfaces():
         var id:=int(row[0])
         live[id]=true
+        if row.size()>4:
+            flow_rows[id]=[int(row[1]),row[4]]
         var tile: Vector3i=row[3]
         wanted[tile]=int(wanted.get(tile,0))+1
         var node: MeshInstance3D
@@ -91,7 +104,47 @@ func refresh() -> void:
             _mesh_tiles.erase(id)
         else:
             _deferred_swaps+=1
+    _refresh_flow(flow_rows)
     _max_update_usec=maxi(_max_update_usec,Time.get_ticks_usec()-start)
+
+func _refresh_flow(rows: Dictionary) -> void:
+    var per_slot: Dictionary={}
+    for id: int in rows:
+        if not _meshes.has(id) or not (_meshes[id] as MeshInstance3D).visible:
+            continue
+        var slot:=int(rows[id][0])
+        var vertices: PackedVector3Array=per_slot.get(slot,PackedVector3Array())
+        var additional: PackedVector3Array=rows[id][1]
+        vertices.append_array(additional)
+        per_slot[slot]=vertices
+    _flow_quads=0
+    for slot in range(_flow_materials.size()):
+        var vertices: PackedVector3Array=per_slot.get(slot,PackedVector3Array())
+        _flow_quads+=int(vertices.size()/6.0)
+        if vertices.is_empty() and not _flow_nodes.has(slot):
+            continue
+        if not _flow_nodes.has(slot):
+            var created:=MeshInstance3D.new()
+            created.mesh=ImmediateMesh.new()
+            created.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+            add_child(created)
+            _flow_nodes[slot]=created
+        var node: MeshInstance3D=_flow_nodes[slot]
+        node.visible=not vertices.is_empty()
+        if _flow_previous.has(slot) and _flow_previous[slot]==vertices:
+            continue
+        _flow_previous[slot]=vertices
+        var mesh:=node.mesh as ImmediateMesh
+        mesh.clear_surfaces()
+        if vertices.is_empty():
+            continue
+        mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES,_flow_materials[slot])
+        for i in range(0,vertices.size(),3):
+            var normal: Vector3=(vertices[i+1]-vertices[i]).cross(vertices[i+2]-vertices[i]).normalized()
+            for j in range(3):
+                mesh.surface_set_normal(normal)
+                mesh.surface_add_vertex(vertices[i+j])
+        mesh.surface_end()
 
 func _process(_delta: float) -> void:
     var now:=Time.get_ticks_usec()
@@ -135,4 +188,4 @@ func get_report() -> Dictionary:
     for node: MeshInstance3D in _meshes.values():
         if node.visible:
             visible_meshes+=1
-    return {"visible_meshes":visible_meshes,"deferred_swaps":_deferred_swaps,"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec}
+    return {"visible_meshes":visible_meshes,"deferred_swaps":_deferred_swaps,"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec,"flow_quads":_flow_quads}
