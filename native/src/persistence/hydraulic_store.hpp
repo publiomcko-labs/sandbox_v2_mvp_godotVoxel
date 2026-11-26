@@ -12,7 +12,7 @@ inline Json encode_hydraulic(const hy::Graph &g) {
                            {"ocean",v.ocean},{"level",v.ocean_level}});
     }
     for(const auto &[id,p]:g.portals())portals.push_back({{"id",id},{"a",p.a},{"b",p.b},{"sill",p.sill_m},
-        {"area",p.area_m2},{"coefficient",p.coefficient},{"revision",p.revision}});
+        {"area",p.area_m2},{"coefficient",p.coefficient},{"revision",p.revision},{"opening_height",p.opening_height_m}});
     return {{"schema",1},{"initial",g.initial()},{"injected",g.injected()},{"drained",g.drained()},
             {"volumes",volumes},{"portals",portals}};
 }
@@ -44,11 +44,11 @@ inline hy::Graph decode_hydraulic(const Json &j,const std::vector<hy::Liquid> &t
             hydraulic_integer(v.at("litres"),0,hy::volume_limit),v.at("ocean").get<bool>(),hydraulic_number(v.at("level"))});
     }
     for(const auto &p:j.at("portals")) {
-        content::fields(p,{"id","a","b","sill","area","coefficient","revision"});
+        content::fields(p,{"id","a","b","sill","area","coefficient","revision","opening_height"});
         // Residency is never persisted. Every restored portal is closed
         // until its terrain revision and opening are validated anew.
         g.add_portal({id(p.at("id")),id(p.at("a")),id(p.at("b")),hydraulic_number(p.at("sill")),
-            hydraulic_number(p.at("area")),hydraulic_number(p.at("coefficient")),false,uint(p.at("revision"))});
+            hydraulic_number(p.at("area")),hydraulic_number(p.at("coefficient")),false,uint(p.at("revision")),hydraulic_number(p.at("opening_height"))});
     }
     g.restore_ledger(hydraulic_integer(j.at("initial"),0,hy::ledger_limit),
         hydraulic_integer(j.at("injected"),0,hy::ledger_limit),hydraulic_integer(j.at("drained"),0,hy::ledger_limit));

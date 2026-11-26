@@ -1,4 +1,5 @@
 #include "core/hydraulic_domain.hpp"
+#include "core/hydraulic_surface.hpp"
 #include <cassert>
 #include <iostream>
 using namespace sandbox::hydraulic;
@@ -16,6 +17,7 @@ int main(){
     const auto mass=d.graph().finite();
     d.invalidate(b.origin,2);
     assert(!d.wet_at({5,0.01,1}));
+    assert(!d.tiles().at(b.origin).renderable()); // edited revision: no stale surface
     assert(!d.publish(tp::extract(b)));
     assert(d.tick().moved==0&&d.graph().finite()==mass);
     b.revision=2;
@@ -37,6 +39,8 @@ int main(){
     auto same=a;same.revision=4;d.invalidate(a.origin,4);
     assert(d.publish(tp::extract(same))&&d.graph().finite()==equilibrium);
     assert(d.graph().portals().size()==2);
+    // Unchanged unloaded geometry remains renderable; physics is closed.
+    assert(d.tiles().at(b.origin).renderable());
     // Unload a neighbour whose own revision is older than its shared portal.
     d.invalidate(b.origin,3);
     for(const auto &[id,p]:d.graph().portals()) {
@@ -46,5 +50,21 @@ int main(){
             if(p.a==node||p.b==node)assert(!p.available);
         }
     }
+    assert(d.tiles().at(b.origin).renderable());
+    tp::Snapshot shape{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    for(int z=1;z<=2;++z)for(int x=1;x<=2;++x)for(int y=1;y<8;++y)
+        shape.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    auto geo=tp::extract(shape);
+    const auto patches=surface::build(geo,geo.compartments.front());
+    assert(!patches.empty());
+    bool diagonal=false;
+    for(const auto &patch:patches)for(std::size_t i=0;i<patch.vertices.size();i+=3)
+        for(std::size_t j=0;j<3;++j) {
+            const auto a0=patch.vertices[i+j],b0=patch.vertices[i+(j+1)%3];
+            assert(a0.x>=0&&a0.x<=4&&a0.z>=0&&a0.z<=4);
+            if(std::abs(a0.x-b0.x)>0.01&&std::abs(a0.z-b0.z)>0.01)diagonal=true;
+        }
+    assert(diagonal);
+    std::cout<<"V3_HYDRAULIC_CONTOUR_PASS diagonal_edges tile_bounds retained_unloaded\n";
     std::cout<<"V3_HYDRAULIC_DOMAIN_PASS regional_publish boundary_flow unload mass_remap ocean_idempotent\n";
 }

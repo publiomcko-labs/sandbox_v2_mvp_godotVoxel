@@ -52,7 +52,7 @@ struct Volume {
 };
 struct Portal {
     Id id{},a{},b{};double sill_m{},area_m2{},coefficient=0.62;
-    bool available=false;std::uint64_t revision{};
+    bool available=false;std::uint64_t revision{};double opening_height_m=0;
 };
 struct Transfer {Id portal{},from{},to{};Litres litres{};};
 struct Report {std::size_t visited{},backlog{};Litres moved{};std::vector<Transfer> flows;};
@@ -71,6 +71,7 @@ class Graph {
     static void check_portal(const Portal &p) {
         if(!p.id||p.a==p.b||!std::isfinite(p.sill_m)||std::abs(p.sill_m)>100000||
             !std::isfinite(p.area_m2)||p.area_m2<=0||p.area_m2>4096||
+            !std::isfinite(p.opening_height_m)||p.opening_height_m<0||p.opening_height_m>512||
             !std::isfinite(p.coefficient)||p.coefficient<=0||p.coefficient>1)
             throw std::invalid_argument("portal geometry");
     }
@@ -192,7 +193,8 @@ public:
             const double head=a->level()-std::max(b->level(),p.sill_m);
             if(head<=0.00001)continue;
             // Torricelli-type simplified discharge; not a Navier-Stokes solver.
-            const auto q=p.coefficient*p.area_m2*std::sqrt(2.0*9.81*head)*1000*tick_s/types_[a->type].viscosity;
+            const double area=p.opening_height_m>0?p.area_m2*std::clamp((a->level()-p.sill_m)/p.opening_height_m,0.0,1.0):p.area_m2;
+            const auto q=p.coefficient*area*std::sqrt(2.0*9.81*head)*1000*tick_s/types_[a->type].viscosity;
             const auto rate=static_cast<Litres>(std::floor(std::min(q,double(volume_limit))));
             auto free=a->ocean?std::min(volume_limit,ledger_limit-injected_-inject):
                 std::max<Litres>(0,a->litres-a->curve.at_level(p.sill_m)-outgoing[a->id]);

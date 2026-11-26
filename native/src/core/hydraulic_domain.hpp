@@ -8,6 +8,7 @@ struct Tile {
     std::map<Id,Id> ids; // local compartment -> globally unique ID
     bool available=true;
     std::uint64_t expected_revision{};
+    bool renderable()const{return geometry&&expected_revision==geometry->revision;}
 };
 struct OceanLink {
     std::string source;
@@ -32,7 +33,7 @@ class Domain {
         if(!a.available||!b.available)return;
         for(const auto &o:tp::connect_faces(*a.geometry,*b.geometry,face))
             g.add_portal({allocate(next),a.ids.at(o.a),b.ids.at(o.b),double(o.sill_mm)*0.001,
-                o.area_m2,0.62,true,std::max(a.geometry->revision,b.geometry->revision)});
+                o.area_m2,0.62,true,std::max(a.geometry->revision,b.geometry->revision),double(o.soffit_mm-o.sill_mm)*0.001});
     }
     static void attach(Graph &g,Id &next,const Tile &t,const OceanLink &o) {
         if(!t.available)return;
@@ -118,7 +119,7 @@ public:
         }
         for(const auto &o:t.geometry->openings)
             staged.add_portal({allocate(portal),t.ids.at(o.a),t.ids.at(o.b),
-                double(o.sill_mm)*0.001,o.area_m2,0.62,true,t.geometry->revision});
+                double(o.sill_mm)*0.001,o.area_m2,0.62,true,t.geometry->revision,double(o.soffit_mm-o.sill_mm)*0.001});
         constexpr std::array<core::Region,4> dirs{{{-1,0,0},{1,0,0},{0,0,-1},{0,0,1}}};
         for(int face=0;face<4;++face) {
             const auto d=dirs[static_cast<std::size_t>(face)];
