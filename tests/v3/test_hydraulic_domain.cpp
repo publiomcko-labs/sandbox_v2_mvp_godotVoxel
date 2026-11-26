@@ -100,6 +100,29 @@ int main(){
             if(patch.ceiling==8)for(auto v:patch.vertices)assert(v.x<=2.0+1e-8);
         }
     assert(capped);
+    // An edit on a shared tile boundary: the higher dry bank is
+    // carved below the pond head. Both old portals close until their
+    // new topology is published. No source or mass is recreated.
+    Domain bank({{"water",1,1000}},4,4,1,0);
+    tp::Snapshot pond{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,1)};
+    auto dry_bank=pond;dry_bank.origin.x=4;
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=0;y<4;++y)
+        dry_bank.air[static_cast<std::size_t>((z*4+x)*8+y)]=0;
+    assert(bank.publish(tp::extract(pond))&&bank.publish(tp::extract(dry_bank)));
+    assert(bank.seed_finite("bank_pond",{2,0.1,2},0,2,true));
+    assert(bank.tick().moved==0&&!bank.wet_at({4.5,0.1,2.5}));
+    const auto bank_mass=bank.graph().finite();
+    bank.invalidate(pond.origin,2);bank.invalidate(dry_bank.origin,2);
+    pond.revision=2;dry_bank.revision=2;
+    for(int z=1;z<=2;++z)for(int x=0;x<=1;++x)for(int y=0;y<4;++y)
+        dry_bank.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    assert(bank.publish(tp::extract(pond))&&bank.tick().moved==0);
+    assert(bank.publish(tp::extract(dry_bank)));
+    assert(bank.tick().moved>0);
+    for(int i=0;i<100;++i)bank.tick();
+    assert(bank.wet_at({4.5,0.1,2.5})&&bank.wet_at({5.5,0.1,1.5}));
+    assert(!bank.wet_at({7.5,0.1,2.5})&&bank.graph().finite()==bank_mass);
+    std::cout<<"V3_HYDRAULIC_BANK_EDIT_PASS lateral_breach cross_tile conservative_reconnect\n";
     std::cout<<"V3_HYDRAULIC_BANK_APRON_PASS solid_overlap capped_at_neighbor_floor\n";
     std::cout<<"V3_HYDRAULIC_BASIN_SURFACE_PASS interpolated_floor one_static_sheet\n";
     std::cout<<"V3_HYDRAULIC_CONTOUR_PASS diagonal_edges tile_bounds retained_unloaded\n";

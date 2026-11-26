@@ -104,14 +104,24 @@ func _test() -> void:
                     var wet: Dictionary=runtime.session.hydraulic_at(p)
                     if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01:
                         continue
-                    var target:=Vector3(p.x,float(y)-1.5,p.z)
-                    if tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                    if float(wet["level"])-p.y<0.35:
                         continue
-                    cut=target
-                    found=true
-                    break
+                    for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
+                        var shore:=p+direction
+                        if not runtime.session.hydraulic_at(shore).is_empty():
+                            continue
+                        if tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1:
+                            continue
+                        var target:=shore-Vector3(0,1.65,0)
+                        if tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                            continue
+                        cut=target
+                        found=true
+                        break
+                    if found:
+                        break
         if not found:
-            _fail("no submerged solid floor for breach")
+            _fail("no submerged sample beside a solid shore for lateral breach")
             return
         # Materialize the current presentation and verify the edit does
         # not make the old reservoir disappear before worker publication.
@@ -145,7 +155,7 @@ func _test() -> void:
         if int(runtime.session.hydraulic_report()["litres"])!=mass:
             _fail("wet breach mass")
             return
-        print("V3_HYDRAULIC_WET_BREACH_PASS point=",cut," observed_steps=",first_wet+1," mass=",mass)
+        print("V3_HYDRAULIC_WET_BREACH_PASS lateral_shore=true point=",cut," observed_steps=",first_wet+1," mass=",mass)
         # Let every edited tile finish publication before the next brush.
         while int(runtime.session.hydraulic_report()["active_tiles"])<9 or int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
