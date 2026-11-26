@@ -1,0 +1,5 @@
+# V3.4 — líquidos localizados
+
+Status IN_PROGRESS. Base checkpoint/v3-3-20261126 (1872e5dcd8d064ffc0881d5d191e662b695f5b4d).
+
+Incremento 1: solver celular C++ independente do renderer, 1m³, capacidade 1000 litros inteiros (conservação exata, sem erro de arredondamento de massa). Estado esparso limitado a 65536 células molhadas; fila de fronteira FIFO estável, orçamento por tick, proposta/commit com reservas de saída/entrada, gravidade primeiro e equalização lateral limitada por tipo. Não transporta líquido recém-chegado no mesmo tick. Não mistura tipos; fronteira indisponível é bloqueada e reavaliada, com backlog explícito; células estáveis dormem e são acordadas por vizinhança/edição. Reabertura valida contadores e massa. Sem pressão, capilaridade ou reação água-lava. Testes unitários de barreira, propagação por tick, drenagem, restauração, bloqueio de fronteira, lava mais lenta e conservação. Integração com Godot, fontes finitas, persistência real, renderização e física ainda pendentes.
