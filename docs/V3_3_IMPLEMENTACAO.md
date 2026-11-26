@@ -1,6 +1,6 @@
 # V3.3 — cavernas naturais
 
-Status V3.3b_FUNCTIONAL_HEADLESS_PASS — RETEST_VISUAL_PENDING. Base checkpoint/v3-2-20261126, d02cae1dd6a0a07e278fb599927e6fe37213fd60. V3.2 autorizada a avançar com limitação visual registrada.
+Status V3.3c_FUNCTIONAL_HEADLESS_PASS — RETEST_VISUAL_PENDING. Base checkpoint/v3-2-20261126, d02cae1dd6a0a07e278fb599927e6fe37213fd60. V3.2 autorizada a avançar com limitação visual registrada.
 
 Mod data-only karst, perfis karst:natural e karst:wide. Seeds de cinco campos derivados por SHA-256 de seed, ID do perfil, versão e papel, compilados no registry antes de abrir stores. Compatibilidade de save fixa perfil geológico e de cavernas, pins e gerador v3_3_caves_v1. Worlds V3.3 isolados em user://worlds_v33.
 
@@ -55,3 +55,18 @@ Não comparar custo absoluto com run anterior como se fosse mesmo hardware/carga
 ## V3.3c — entradas orgânicas
 
 Usuário aprovou melhora relativa da superfície da V3.3b, mas rejeitou aparência cilíndrica das entradas. Alteração limitada ao campo das entradas: seção diagonal alongada (aspecto nominal dos semieixos 1,48²), cisalhamento dependente do campo 3D, inclinação maior nos primeiros 12m, curvatura contínua usando os dois campos existentes, relevo de parede por FBM adicional de escala 8/10m e amplitude limitada a 1,15/1,35m. Mantém cobertura, profundidade, espaçamento, rede subterrânea e bolsões da V3.3b. Não é garantia de naturalidade visual. Schema valida os novos parâmetros e rejeita envelopes excessivos; karst 1.2.0 e gerador v3_3_caves_v3, saves novos user://worlds_v33c. Não reutilizar SQLite v2. Mesmos gates de superfície, conectividade, determinismo, LOD e persistência, mais rejeição de perfil circular/relief excessivo. Validação pendente.
+
+### Resultado V3.3c
+
+Candidato 6b81b6e8e2f694c728c93bfba356dc79e4f16e86, Actions 45852883354 SUCCESS (2min01s); contratos GCC/MSVC 45852884043 SUCCESS. A5 e V3.2 regressões, LOD0/1, conectividade e persistência passaram.
+
+| Métrica amostral | Natural | Wide |
+|---|---:|---:|
+| Colunas abertas à superfície | 20/6400 (0,3125%) | 47/6400 (0,7344%) |
+| Colunas com ar até 8m de profundidade | 1,2656% | 1,7188% |
+| Fração de ar subterrâneo | 8,68% | 11,66% |
+| Profundidade conectada | 69,18m | 89,02m |
+| Bolsões isolados | 22 | 16 |
+| Custo relativo V3.2 na mesma execução | 2,75x | 2,75x |
+
+Custo adicional de ruído/forma não é qualificação de FPS. Medidas não comprovam naturalidade visual. O lançador aponta ao artefato 15134590955 SHA256 3c1a4239bca1b9900c3baae5425250e573cc1740a6a378296517d5e15871f5dd e spawns de entrada (34,11,50), (-42,7,42). Reteste gráfico requerido antes de encerrar a etapa. Água permanece legada até V3.4.
