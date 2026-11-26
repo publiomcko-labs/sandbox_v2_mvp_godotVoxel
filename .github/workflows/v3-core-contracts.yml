@@ -1,0 +1,21 @@
+name: V3 core contracts
+on:
+  push:
+    branches: [v3/development]
+    paths:
+      - 'native/src/content_registry/**'
+      - 'tests/v3/**'
+      - '.github/workflows/v3-core-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run C++20 core contract (no Godot or GPU)
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_manifest.cpp -o /tmp/v3-manifest-test
+          /tmp/v3-manifest-test
