@@ -88,6 +88,9 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
             if(!inside(nx,nz))continue;
             int cap=ceiling;bool open=false;
             for(const auto &n:column(nx,nz)) {
+                // The same exposed basin already owns the entire next
+                // column. Never overlay its primary sheet with an apron.
+                if(n.top==top&&n.compartment==c.id){open=true;break;}
                 if(n.bottom<=v.bottom&&v.bottom<n.top){open=true;break;}
                 if(n.bottom>v.bottom)cap=std::min(cap,g.origin.y+n.bottom*g.step);
             }

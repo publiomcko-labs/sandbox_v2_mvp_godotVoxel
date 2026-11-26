@@ -145,6 +145,8 @@ int main(){
         for(auto p:{a0,b0,c0})assert(p.x>=0&&p.x<=1&&p.z>=0&&p.z<=1&&p.floor<=1);
     }
     assert(primary_area==1);
+    const auto full_slope=surface::build(sloped,sloped.compartments.front(),8);
+    assert(full_slope.size()==1&&full_slope.front().vertices.size()==4*4*6);
     const auto full_low=surface::build(divided,*std::find_if(divided.compartments.begin(),divided.compartments.end(),[&](const auto &c){return c.id==low;}),8);
     bool full_bank=false;
     for(const auto &patch:full_low)if(patch.ceiling==4)
@@ -159,7 +161,7 @@ int main(){
     auto initial_a=a;
     for(int y=2;y<4;++y)initial_a.air[static_cast<std::size_t>(y)]=0;
     assert(initial.publish(tp::extract(initial_a))&&initial.publish(tp::extract(b)));
-    std::set<core::Region> window{a.origin,b.origin,raised.origin};
+    std::set<sandbox::core::Region> window{a.origin,b.origin,raised.origin};
     assert(!initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
     assert(initial.graph().finite()==0);
     assert(initial.publish(tp::extract(raised)));
