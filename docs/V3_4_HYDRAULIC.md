@@ -1,6 +1,6 @@
 # V3.4 — Hydraulic Volume Graph
 
-Status CORE_IMPLEMENTED, NATIVE_GEOMETRY_VALIDATION_PENDING.
+Status NATIVE_GEOMETRY_PASS, REMAP_VALIDATION_PENDING.
 
 Histórico celular encerrado por decisão do usuário: history/v3-4-cellular-20261126, 50beeefd3270835dbacd138d420ac6a8f88582ac. v3/development permanece congelado no mesmo estado histórico; nova linha de desenvolvimento v3/hydraulic deriva diretamente de checkpoint/v3-3-20261126 (1872e5dcd8d064ffc0881d5d191e662b695f5b4d), sem solver, mesher ou saves celulares. Main/A5 preservados.
 
@@ -17,3 +17,7 @@ Incremento nativo: copy_air_snapshot usa um único VoxelTool.copy de SDF em volu
 ## Evidência de validação inicial
 
 Contratos C++ GCC/MSVC 45871255844 SUCCESS no commit 5c52355 (grafo, topologia, conexão entre faces e codec de persistência). Cenário plano 2048m³ com 1 compartimento, 4096 compartimentos com apenas 1 portal ativo visitado por tick, transferência oceânica de 50.000 L e drenagem de 80.000 L, conservação e revisão de portal. Testes de armazenamento reabrem grafo com portais fechados até revalidação; não equivalem à persistência integrada do mundo. Candidato nativo 923751c, Actions 45871483259 iniciado para SDF real/edição/reopen. Ainda sem lançamento jogável hidráulico. Manter V3.3 como baseline funcional e v3/development congelada; toda evolução nova em v3/hydraulic, sem merge da implementação celular. Próximo incremento: remapeamento conservativo de massa em topologia editada, fila limitada de análise por região/revisão, conexão do grafo às regras mod-first, checkpoint e renderer. Só depois promover gate jogável.
+
+## Remapeamento e análise assíncrona
+
+Actions 45871483259 SUCCESS: SDF real 8³m antes da construção 512000 L, depois 104000 L e reabertura 104000 L; 17 compartimentos/24 portais, aquisição 33–44us e extração 43–64us após edição/reopen em hosted Windows. Sem qualificação de frame. Novo remap puro e transacional por tile: distribui interseções molhadas antigas em descendentes geométricos, conserva litros inteiros e redistribui resíduo/deslocamento exclusivamente em descendentes sobrepostos. Rejeita falta de capacidade e fusão de tipos incompatíveis. Nova cavidade sem interseção permanece seca. Ainda não integrado a preflight de construção, IDs globais ou commit do grafo. Worker com um snapshot em execução e oito pendentes, coalescência por origem e descarte de resultado obsoleto por revisão; somente C++ puro no worker. Contratos de divisão, união, falta de capacidade, mistura, criação seca e revisão obsoleta.
