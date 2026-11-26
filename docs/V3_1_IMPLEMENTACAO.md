@@ -1,6 +1,6 @@
 # V3.1 — World Core e mod-first
 
-Status: **IN_PROGRESS — loader e registry portáveis**. Checkpoint V3.0: 78d540e6da554082bb83e2949d11c5116e8a40c8. Não modificar o streamer nem a autoridade SDF/material do Voxel Tools. Runtime A5 permanece inalterado neste incremento.
+Status: **COMPLETE — gate funcional headless aprovado**. Checkpoint V3.0: 78d540e6da554082bb83e2949d11c5116e8a40c8. Não modificar o streamer nem a autoridade SDF/material do Voxel Tools. Runtime A5 permanece inalterado neste incremento.
 
 ## Primeiro incremento
 
@@ -51,3 +51,7 @@ Onze tipos previstos no projeto agora possuem schemas fechados, validação de p
 ## Incremento 7 — runtime jogável opt-in
 
 Entrada res://scenes/v3_main.tscn instancia cena A5 sem alterar a entrada default. Antes de adicionar ao SceneTree, abre V3WorldSession, valida mods/pins e usa saves absolutos isolados user://worlds_v3/<world_id> (override V3_WORLD_ROOT); mods externos user://mods_v3 (override V3_MOD_ROOT); V3_WORLD_ID default world, V3_WORLD_SEED default 20261119 (faixa 0..2147483000 para gerador A5). Requer árvore fonte no disco; export PCK/instalador V3 ainda não suportado. EditController reutiliza raycast e input A5, encaminhando exclusivamente pelo submit_brush/World Core. Sinal síncrono TerrainEdited entregue e confirmado em ordem. Scheduler monotônico 10Hz com orçamento de quatro ticks/frame e dívida preservada, interest window atualizado com posição do jogador. Ainda não há consumidor de gameplay de fluido/entidade. Ctrl+S faz flush dos stores, não encerra sessão nem libera marcador; fechar janela congela inputs/movimento, salva ambos stores, remove mundo e finaliza checkpoint. Interrupção anormal bloqueia reopen; sem recuperação automática. Fixture headless adicional usa entrypoint V3, dois mods externos, edição real, entrega de eventos, interest, flush sem liberar marcador, close/reopen e persistência. Sem mudança na autoridade de terreno nem qualificação gráfica. Comando fonte, após build: .tools/godot.exe --path godot res://scenes/v3_main.tscn.
+
+## Encerramento V3.1 — 26/11/2026
+
+Candidato 6a98345b9f18df9c1d78ac1c577eb41446da5031: Actions 45840418732 SUCCESS, build real, A5_HEADLESS_E2E_PASS, V3_SESSION_SQLITE_REOPEN_PASS, V3_RUNTIME_FIXTURE_PASS write/reopen, V3_RUNTIME_CLEAN_CLOSE_PASS gerações 1/2, revisão e comando 2 preservados, tiers 27/98/218, fila e backlog zerados. Contratos dos 11 handlers e seed idêntica 3139458821192814562 em Linux/MSVC (45840266763). Gate V3.1 funcional aprovado; não inclui execução gráfica, recuperação de crash, implementação futura dos consumidores, nem qualificação dos gates estritos. Checkpoint imutável checkpoint/v3-1-20261126. Próximo V3.2 geologia, materiais e persistência volumétrica.
