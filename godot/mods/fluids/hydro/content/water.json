@@ -1,0 +1,18 @@
+{
+  "id": "hydro:water",
+  "type": "liquid",
+  "data": {
+    "density": 1000,
+    "viscosity": 1,
+    "albedo": [
+      0.045,
+      0.3,
+      0.43
+    ],
+    "emission": [
+      0,
+      0,
+      0
+    ]
+  }
+}

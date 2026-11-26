@@ -10,6 +10,9 @@
 #include "persistence/checkpoint.hpp"
 #include "content_registry/geology.hpp"
 #include "content_registry/caves.hpp"
+#include "content_registry/fluid_profile.hpp"
+#include "persistence/fluid_store.hpp"
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/classes/voxel_format.hpp>
@@ -20,6 +23,7 @@ namespace sc = sandbox::core;
 namespace ct = sandbox::content;
 namespace ps = sandbox::persistence;
 namespace fs = std::filesystem;
+namespace fl = sandbox::fluid;
 
 namespace {
 std::string narrow(const String &s) { return s.utf8().get_data(); }
@@ -85,6 +89,25 @@ public:
             ? sc::ApplyResult::applied : sc::ApplyResult::deferred;
     }
 };
+fl::Cell fluid_cell(Vector3 p) {return {static_cast<int>(std::floor(p.x)),static_cast<int>(std::floor(p.y)),static_cast<int>(std::floor(p.z))};}
+fl::Passage probe_cell(const Ref<VoxelTool> &tool,fl::Cell p) {
+    if(tool.is_null()||!fl::valid(p))return fl::Passage::unavailable;
+    const Vector3i base(p.x,p.y,p.z);
+    if(!tool->is_area_editable(AABB(Vector3(base),Vector3(2,2,2))))return fl::Passage::unavailable;
+    // All eight corners of a 1m cell must be air. Subcell apertures
+    // are deliberately impermeable at this resolution.
+    for(int x=0;x<=1;++x)for(int y=0;y<=1;++y)for(int z=0;z<=1;++z)
+        if(tool->get_voxel_f(base+Vector3i(x,y,z))<=0.1)return fl::Passage::solid;
+    return fl::Passage::open;
+}
+Ref<VoxelTool> fluid_tool(WorldBootstrap *world) {
+    if(!world)return {};
+    auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+    if(!terrain)return {};
+    auto tool=terrain->get_voxel_tool();
+    if(tool.is_valid())tool->set_channel(VoxelBuffer::CHANNEL_SDF);
+    return tool;
+}
 const char *status_name(sc::CommandResult r) {
     switch(r) {
         case sc::CommandResult::accepted: return "accepted";
@@ -105,6 +128,11 @@ struct V3WorldSession::State {
     sc::InterestWindow interest;
     std::optional<ct::GeologyPalette> geology;
     ct::Json caves;
+    std::optional<ct::FluidProfile> fluid_profile;
+    std::unique_ptr<fl::Solver> fluids;
+    std::set<std::string> seeded;
+    Vector3 interest_position;
+    fl::TickReport fluid_report;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -114,6 +142,14 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("open","first_party","external","world_root","world_id","seed"), &V3WorldSession::open);
     ClassDB::bind_method(D_METHOD("open_geology","first_party","external","world_root","world_id","seed","geology_root","profile"), &V3WorldSession::open_geology);
     ClassDB::bind_method(D_METHOD("open_caves","first_party","external","world_root","world_id","seed","geology_root","profile","cave_root","cave_profile"), &V3WorldSession::open_caves);
+    ClassDB::bind_method(D_METHOD("open_fluids","first_party","external","world_root","world_id","seed","geology_root","profile","cave_root","cave_profile","fluid_root"), &V3WorldSession::open_fluids);
+    ClassDB::bind_method(D_METHOD("get_fluid_json"), &V3WorldSession::get_fluid_json);
+    ClassDB::bind_method(D_METHOD("get_seeded_reservoirs"), &V3WorldSession::get_seeded_reservoirs);
+    ClassDB::bind_method(D_METHOD("seed_reservoir","world","id","cells"), &V3WorldSession::seed_reservoir);
+    ClassDB::bind_method(D_METHOD("fluid_at","point"), &V3WorldSession::fluid_at);
+    ClassDB::bind_method(D_METHOD("fluid_cells","lo","hi"), &V3WorldSession::fluid_cells);
+    ClassDB::bind_method(D_METHOD("take_fluid_dirty","budget"), &V3WorldSession::take_fluid_dirty);
+    ClassDB::bind_method(D_METHOD("flush_fluids"), &V3WorldSession::flush_fluids);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
     ClassDB::bind_method(D_METHOD("submit_material","world","command","center","add","radius","material_id"), &V3WorldSession::submit_material);
@@ -132,31 +168,38 @@ void V3WorldSession::_bind_methods() {
 }
 bool V3WorldSession::open(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed) {
-    return open_impl(first_party,external,world_root,world_id,seed,String(),String(),String(),String());
+    return open_impl(first_party,external,world_root,world_id,seed,String(),String(),String(),String(),String());
 }
 bool V3WorldSession::open_geology(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile) {
     if(geology_root.is_empty() || profile.is_empty()) return false;
-    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,String(),String());
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,String(),String(),String());
 }
 bool V3WorldSession::open_caves(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile,
                          const String &cave_root,const String &cave_profile) {
     if(geology_root.is_empty() || profile.is_empty() || cave_root.is_empty() || cave_profile.is_empty()) return false;
-    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile);
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile,String());
+}
+bool V3WorldSession::open_fluids(const String &first_party,const String &external,const String &world_root,
+                         const String &world_id,int64_t seed,const String &geology_root,const String &profile,
+                         const String &cave_root,const String &cave_profile,const String &fluid_root) {
+    if(geology_root.is_empty()||profile.is_empty()||cave_root.is_empty()||cave_profile.is_empty()||fluid_root.is_empty())return false;
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile,fluid_root);
 }
 bool V3WorldSession::open_impl(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile,
-                         const String &cave_root,const String &cave_profile) {
+                         const String &cave_root,const String &cave_profile,const String &fluid_root) {
     try {
         ct::require(!state_ && seed>=0,"invalid or already initialized session");
         auto next=std::make_unique<State>();
         std::vector<fs::path> roots{path_of(first_party),path_of(external)};
         if(!geology_root.is_empty()) roots.push_back(path_of(geology_root));
         if(!cave_root.is_empty()) roots.push_back(path_of(cave_root));
+        if(!fluid_root.is_empty())roots.push_back(path_of(fluid_root));
         next->snapshot=ct::load(roots,ct::initial_registry());
         std::string generator(ps::generator_version);
         if(!geology_root.is_empty()) {
@@ -167,7 +210,14 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
             next->caves=ct::compile_caves(*next->snapshot,narrow(cave_profile),static_cast<uint64_t>(seed));
             generator="v3_3_caves_v3:"+next->geology->profile_id+":"+narrow(cave_profile);
         }
+        if(!fluid_root.is_empty()) {
+            next->fluid_profile=ct::compile_fluids(*next->snapshot);
+            next->fluids=std::make_unique<fl::Solver>(next->fluid_profile->types);
+            generator="v3_4_fluids_v1:"+generator;
+        }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
+        if(next->fluids && next->store.header().generation>0)
+            next->seeded=ps::load_fluid(next->store.path(),*next->fluids,next->fluid_profile->config);
         const auto c=next->store.header().core;
         constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
         ct::require(c.last_command<limit && c.terrain_revision<limit && c.completed_tick<limit &&
@@ -202,6 +252,76 @@ bool V3WorldSession::bind_world(WorldBootstrap *world) {
         last_error_=String();
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
+}
+String V3WorldSession::get_fluid_json() const {
+    if(!state_||!state_->fluid_profile)return {};
+    return String::utf8(state_->fluid_profile->config.dump().c_str());
+}
+Array V3WorldSession::get_seeded_reservoirs() const {
+    Array out;
+    if(state_)for(const auto &id:state_->seeded)out.push_back(String::utf8(id.c_str()));
+    return out;
+}
+String V3WorldSession::seed_reservoir(WorldBootstrap *world,const String &id,const Array &cells) {
+    if(!state_||!state_->fluids||!state_->store.is_open()||!world||
+        state_->bound_world!=world->get_instance_id()||cells.size()>4096)return "rejected";
+    try {
+        const auto key=narrow(id);
+        if(state_->seeded.contains(key))return "seeded";
+        const ct::Json *rule=nullptr;
+        for(const auto &r:state_->fluid_profile->config.at("reservoirs"))
+            if(ct::str(r.at("id"))==key)rule=&r;
+        if(!rule)return "rejected";
+        const int type=rule->at("slot").get<int>();
+        const int ax=rule->at("anchor_x").get<int>(),az=rule->at("anchor_z").get<int>();
+        auto tool=fluid_tool(world);
+        std::set<fl::Cell> candidates;
+        for(int64_t i=0;i<cells.size();++i) {
+            if(cells[i].get_type()!=Variant::VECTOR3I)return "rejected";
+            const Vector3i v=cells[i];
+            const fl::Cell p{v.x,v.y,v.z};
+            if(!fl::valid(p)||std::abs(p.x-ax)>32||std::abs(p.z-az)>32||p.y< -32||p.y>32)return "rejected";
+            const auto pass=probe_cell(tool,p);
+            if(pass==fl::Passage::unavailable)return "deferred";
+            if(pass==fl::Passage::open && !state_->fluids->at(p).litres)candidates.insert(p);
+        }
+        if(candidates.empty())return "empty";
+        if(state_->fluids->cells().size()+candidates.size()>fl::cell_limit)return "rejected";
+        auto open=[](fl::Cell){return fl::Passage::open;};
+        for(auto p:candidates)if(!state_->fluids->add(p,type,fl::capacity,open,true))throw std::logic_error("reservoir commit");
+        state_->seeded.insert(key);
+        return "seeded";
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return "rejected";}
+}
+Dictionary V3WorldSession::fluid_at(const Vector3 &point) const {
+    Dictionary d;
+    if(!state_||!state_->fluids||!sc::valid_point({point.x,point.y,point.z}))return d;
+    const auto p=fluid_cell(point);const auto a=state_->fluids->at(p);
+    if(!a.litres||point.y>=p.y+double(a.litres)/fl::capacity)return d;
+    d["slot"]=a.type;d["litres"]=a.litres;d["density"]=state_->fluids->types()[static_cast<std::size_t>(a.type)].density;
+    return d;
+}
+Array V3WorldSession::fluid_cells(const Vector3 &lo,const Vector3 &hi) const {
+    Array out;
+    if(!state_||!state_->fluids||!sc::valid_point({lo.x,lo.y,lo.z})||!sc::valid_point({hi.x,hi.y,hi.z}))return out;
+    try {
+        for(auto [p,a]:state_->fluids->query(fluid_cell(lo),fluid_cell(hi),4096)) {
+            Array row;row.push_back(Vector3i(p.x,p.y,p.z));row.push_back(a.type);row.push_back(a.litres);out.push_back(row);
+        }
+    }catch(const std::exception &){}
+    return out;
+}
+Array V3WorldSession::take_fluid_dirty(int64_t budget) {
+    Array out;
+    if(!state_||!state_->fluids||budget<0||budget>4096)return out;
+    for(auto p:state_->fluids->take_dirty(static_cast<std::size_t>(budget)))out.push_back(Vector3i(p.x,p.y,p.z));
+    return out;
+}
+bool V3WorldSession::flush_fluids() {
+    if(!state_||!state_->store.is_open())return false;
+    if(!state_->fluids)return true;
+    try {ps::save_fluid(state_->store.path(),*state_->fluids,state_->seeded);return true;}
+    catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }
 String V3WorldSession::get_cave_json() const {
     if(!state_ || state_->caves.is_null()) return {};
@@ -240,6 +360,13 @@ Dictionary V3WorldSession::get_state() const {
     d["active_regions"]=static_cast<int64_t>(regions.active_count());
     d["aggregate_regions"]=static_cast<int64_t>(regions.aggregate_count());
     d["dormant_regions"]=static_cast<int64_t>(regions.dormant_count());
+    if(state_->fluids) {
+        d["fluid_litres"]=static_cast<int64_t>(state_->fluids->volume());
+        d["fluid_initial_litres"]=static_cast<int64_t>(state_->fluids->initial());
+        d["fluid_cells"]=static_cast<int64_t>(state_->fluids->cells().size());
+        d["fluid_backlog"]=static_cast<int64_t>(state_->fluids->backlog());
+        d["fluid_blocked"]=static_cast<int64_t>(state_->fluid_report.blocked);
+    }
     d["open"]=state_->store.is_open();
     return d;
 }
@@ -256,9 +383,19 @@ String V3WorldSession::submit_material(WorldBootstrap *world,int64_t command,con
 String V3WorldSession::submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot) {
     if(!state_ || !state_->store.is_open() || !world || !state_->bound_world ||
        state_->bound_world!=world->get_instance_id() || command<=0) return "rejected";
+    if(state_->fluids && add && sc::valid_point({center.x,center.y,center.z}) && std::isfinite(radius)&&radius>=0.5&&radius<=8.0) {
+        const Vector3 extent(radius+2,radius+2,radius+2);
+        try {if(!state_->fluids->query(fluid_cell(center-extent),fluid_cell(center+extent)).empty())return "rejected";}
+        catch(const std::exception &){return "rejected";}
+    }
     state_->adapter.world=world;
     const auto r=state_->core->submit({static_cast<uint64_t>(command),{center.x,center.y,center.z},radius,add,slot});
     state_->adapter.world=nullptr;
+    if(state_->fluids&&r==sc::CommandResult::accepted) {
+        const Vector3 extent(radius+2,radius+2,radius+2);
+        try {state_->fluids->invalidate(fluid_cell(center-extent),fluid_cell(center+extent));}
+        catch(const std::exception &){/* outside bounded fluid domain */}
+    }
     return String(status_name(r));
 }
 Dictionary V3WorldSession::peek_terrain_event() const {
@@ -280,6 +417,7 @@ bool V3WorldSession::update_interest(const Vector3 &position) {
     if(!state_ || !state_->store.is_open()) return false;
     try {
         state_->interest.update({position.x,position.y,position.z});
+        state_->interest_position=position;
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
 }
@@ -291,13 +429,28 @@ int64_t V3WorldSession::advance_ticks(int64_t elapsed_ns,int64_t budget) {
         ct::require(static_cast<uint64_t>(elapsed_ns)<=limit-s.pending_ns() &&
                     static_cast<uint64_t>(budget)<=limit-s.completed(),"scheduler signed API limit");
         s.accrue(static_cast<uint64_t>(elapsed_ns));
-        // No simulation consumers yet; only scheduler cadence.
-        return static_cast<int64_t>(s.drain(static_cast<size_t>(budget),[](uint64_t,bool){return true;}));
+        return static_cast<int64_t>(s.drain(static_cast<size_t>(budget),[&](uint64_t,bool){
+            if(state_->fluids) {
+                auto *world=Object::cast_to<WorldBootstrap>(ObjectDB::get_instance(ObjectID(state_->bound_world)));
+                auto tool=fluid_tool(world);
+                const auto pos=state_->interest_position;
+                state_->fluid_report=state_->fluids->tick([&](fl::Cell p) {
+                    if(Vector3(p.x,p.y,p.z).distance_squared_to(pos)>96.0*96.0)return fl::Passage::unavailable;
+                    return probe_cell(tool,p);
+                },128);
+            }
+            return true;
+        }));
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return -1;}
 }
 bool V3WorldSession::finish(bool terrain_saved,bool rocks_saved) {
     try {
         ct::require(state_ && state_->bound_world,"unbound session");
+        if(state_->fluids) {
+            ct::require(terrain_saved&&rocks_saved,"external stores not saved");
+            ct::require(flush_fluids(),"fluid checkpoint save failed");
+            ps::plain_unique_file(state_->store.path()/"fluids.json");
+        }
         state_->store.finish(state_->core->checkpoint(),terrain_saved,rocks_saved);
         last_error_=String();
         return true;

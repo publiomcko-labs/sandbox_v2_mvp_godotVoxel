@@ -1,0 +1,10 @@
+{
+  "mod_id": "hydro",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "script_policy": "data_only",
+  "dependencies": [],
+  "content_roots": [
+    "content"
+  ]
+}

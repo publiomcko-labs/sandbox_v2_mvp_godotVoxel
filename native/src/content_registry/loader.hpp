@@ -160,7 +160,15 @@ inline Registry initial_registry() {
         return std::vector<Reference>{{str(j.at("material")), "material"}};
     });
     r.add("liquid", [](const Json &j) {
-        fields(j, {"density","viscosity"});
+        if(j.size()==2) fields(j, {"density","viscosity"});
+        else {
+            fields(j, {"density","viscosity","albedo","emission"});
+            for(const auto *key:{"albedo","emission"}) {
+                const auto &v=j.at(key);
+                require(v.is_array() && v.size()==3,"liquid color");
+                for(const auto &c:v) require(c.is_number() && c.get<double>()>=0 && c.get<double>()<=1,"liquid color range");
+            }
+        }
         positive(j.at("density"), 100000); positive(j.at("viscosity"), 100000);
         return std::vector<Reference>{};
     });
@@ -248,6 +256,15 @@ inline Registry initial_registry() {
         return std::vector<Reference>{};
     });
     r.add("liquid_source_rule", [](const Json &j) {
+        if(j.contains("anchor_x")) {
+            fields(j, {"liquid","source_kind","anchor_x","anchor_z","radius_m","fill_depth_m"});
+            require(str(j.at("source_kind"))=="finite_surface_reservoir","unknown finite reservoir");
+            for(const auto *key:{"anchor_x","anchor_z"})
+                require(j.at(key).is_number_integer() && std::abs(j.at(key).get<double>())<=100000,"reservoir anchor");
+            require(positive(j.at("radius_m"),12)>=3,"reservoir radius");
+            positive(j.at("fill_depth_m"),5);
+            return std::vector<Reference>{{str(j.at("liquid")),"liquid"}};
+        }
         fields(j, {"liquid","source_kind","level_m","rate_per_tick"});
         const auto kind=str(j.at("source_kind"));
         require(kind=="surface_basin" || kind=="spring" || kind=="vent","unknown source kind");

@@ -16,7 +16,7 @@ class V3WorldSession : public RefCounted {
     String last_error_;
     bool open_impl(const String &first_party,const String &external,const String &world_root,
                    const String &world_id,int64_t seed,const String &geology_root,const String &profile,
-                   const String &cave_root,const String &cave_profile);
+                   const String &cave_root,const String &cave_profile,const String &fluid_root);
     String submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot);
 protected:
     static void _bind_methods();
@@ -30,6 +30,16 @@ public:
     bool open_caves(const String &first_party,const String &external,const String &world_root,
                     const String &world_id,int64_t seed,const String &geology_root,const String &profile,
                     const String &cave_root,const String &cave_profile);
+    bool open_fluids(const String &first_party,const String &external,const String &world_root,
+                    const String &world_id,int64_t seed,const String &geology_root,const String &profile,
+                    const String &cave_root,const String &cave_profile,const String &fluid_root);
+    String get_fluid_json() const;
+    Array get_seeded_reservoirs() const;
+    String seed_reservoir(WorldBootstrap *world,const String &id,const Array &cells);
+    Dictionary fluid_at(const Vector3 &point) const;
+    Array fluid_cells(const Vector3 &lo,const Vector3 &hi) const;
+    Array take_fluid_dirty(int64_t budget);
+    bool flush_fluids();
     String get_geology_json() const;
     String get_cave_json() const;
     String submit_material(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,const String &material_id);

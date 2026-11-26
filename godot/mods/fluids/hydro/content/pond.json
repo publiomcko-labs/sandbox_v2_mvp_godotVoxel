@@ -1,0 +1,12 @@
+{
+  "id": "hydro:pond",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:water",
+    "source_kind": "finite_surface_reservoir",
+    "anchor_x": 10,
+    "anchor_z": 30,
+    "radius_m": 10,
+    "fill_depth_m": 3
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "hydro:lake",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:water",
+    "source_kind": "finite_surface_reservoir",
+    "anchor_x": -42,
+    "anchor_z": -18,
+    "radius_m": 12,
+    "fill_depth_m": 4
+  }
+}

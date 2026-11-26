@@ -1,0 +1,12 @@
+{
+  "id": "hydro:lava_pool",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:lava",
+    "source_kind": "finite_surface_reservoir",
+    "anchor_x": 48,
+    "anchor_z": -28,
+    "radius_m": 7,
+    "fill_depth_m": 3
+  }
+}
