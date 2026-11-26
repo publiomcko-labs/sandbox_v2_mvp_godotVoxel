@@ -1,0 +1,112 @@
+name: V3.0 survey diagnostic (two cold runs, no video)
+on:
+  push:
+    branches: [v3/development]
+    paths:
+      - 'godot/tests/comparison_v1*.gd'
+      - 'scripts/comparison-v1-windows.ps1'
+      - 'scripts/v3_0_triage.py'
+      - '.github/workflows/v3-0-survey.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: v3-0-survey
+  cancel-in-progress: false
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -p 'test_comparison*.py' -v
+      - run: python3 -m py_compile scripts/v3_0_triage.py scripts/a7_streaming_present_report.py
+  parse:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - shell: powershell
+        run: |
+          foreach ($path in @('scripts/comparison-v1-windows.ps1','scripts/a7-etw-session-guard.ps1')) {
+            $tokens=$null; $errors=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $path),[ref]$tokens,[ref]$errors)
+            if ($errors.Count) { $errors | Format-List | Out-String | Write-Host; exit 1 }
+          }
+  interactive:
+    needs: [contracts, parse]
+    runs-on: [self-hosted, Windows, X64, interactive-gpu]
+    timeout-minutes: 15
+    env:
+      PSExecutionPolicyPreference: Bypass
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: v3-survey-isolated
+      - name: Preflight physical desktop
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:COMPUTERNAME -ne 'DESKTOP-SAFGO15') { throw 'Baseline host mismatch' }
+          if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Session 0 is not a graphical desktop' }
+          if (@(Get-CimInstance Win32_VideoController | ForEach-Object Name) -notcontains 'NVIDIA GeForce GTX 1050 Ti') { throw 'Baseline GPU mismatch' }
+          Add-Type -AssemblyName System.Windows.Forms
+          $screen=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          if ($screen.Width -lt 1920 -or $screen.Height -lt 1080) { throw 'Desktop smaller than 1920x1080' }
+          if (@(Get-Process -Name 'godot*','PresentMon*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Concurrent Godot or PresentMon process; abort rather than interfere' }
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.13.9"
+          enable-cache: false
+      - name: Isolated Python
+        shell: powershell
+        run: |
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Python install failed' }
+          $venv=Join-Path $env:RUNNER_TEMP 'v3-survey-python'
+          uv venv $venv --python 3.12
+          if ($LASTEXITCODE -ne 0) { throw 'Python environment failed' }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $venv 'Scripts')
+      - uses: actions/download-artifact@v4
+        with:
+          name: a0-build-snapshot
+          run-id: 44522153759
+          github-token: ${{ github.token }}
+          path: v3-survey-isolated
+      - name: Restore pinned runtime
+        working-directory: v3-survey-isolated
+        shell: powershell
+        run: ./scripts/bootstrap-windows.ps1 -RuntimeOnly
+      - name: Download pinned PresentMon
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=Join-Path $env:RUNNER_TEMP 'PresentMon-2.6.0-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe' -OutFile $exe -UseBasicParsing
+          if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne 'B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF') { throw 'PresentMon hash mismatch' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "V3_PRESENTMON=$exe"
+      - name: Two survey arms and diagnostic triage
+        working-directory: v3-survey-isolated
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path (Get-Location) 'reports/generated/v3/run-${{ github.run_id }}-${{ github.run_attempt }}'
+          & ./scripts/comparison-v1-windows.ps1 -Profile cold -OutputRoot (Join-Path $root 'control')
+          & ./scripts/comparison-v1-windows.ps1 -Profile cold -OutputRoot (Join-Path $root 'traced') -V3Trace -PresentMonExe $env:V3_PRESENTMON
+          $control=@(Get-ChildItem (Join-Path $root 'control') -Directory)
+          $traced=@(Get-ChildItem (Join-Path $root 'traced') -Directory)
+          if ($control.Count -ne 1 -or $traced.Count -ne 1) { throw 'Unexpected survey count' }
+          python scripts/v3_0_triage.py --control $control[0].FullName --traced $traced[0].FullName --out (Join-Path $root 'triage.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Trace integrity failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v3-0-survey-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            v3-survey-isolated/reports/generated/v3/**/*.json
+            v3-survey-isolated/reports/generated/v3/**/*.csv
+            v3-survey-isolated/reports/generated/v3/**/*.txt
+            !v3-survey-isolated/reports/generated/v3/**/world/**
