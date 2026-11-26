@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   native-headless:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 55
     defaults:
       run:
@@ -33,12 +33,12 @@ jobs:
         with:
           version: "0.13.9"
           enable-cache: false
-      - name: Require installed MSVC x64 before fetching engine
+      - name: Require installed VS2022 MSVC x64 before fetching engine
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (!(Test-Path -LiteralPath $vswhere)) { throw 'MSVC discovery tool unavailable' }
-          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vs = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (!$vs -or !(Test-Path "$vs\VC\Auxiliary\Build\vcvars64.bat")) { throw 'MSVC x64 toolchain unavailable' }
           $cl = @(Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" -File)
           if (!$cl.Count) { throw 'MSVC cl.exe unavailable' }
@@ -56,6 +56,11 @@ jobs:
           $cache=Join-Path $env:RUNNER_TOOL_CACHE 'sandbox-voxel-a0-scons-cache'
           New-Item -ItemType Directory -Force $cache | Out-Null
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "SCONS_CACHE=$cache"
+      - name: Verify pinned SCons actually detects MSVC before engine download
+        run: |
+          $ErrorActionPreference='Stop'
+          & .venv/Scripts/python.exe -c "from SCons.Script import Environment; from SCons.Tool import msvc; e=Environment(tools=[]); assert msvc.exists(e), 'Pinned SCons cannot discover installed MSVC'; print('V3_SCONS_MSVC_DISCOVERY_PASS')"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned SCons MSVC discovery failed' }
       - name: Parse PowerShell entrypoints before build
         run: |
           foreach ($file in @('scripts/bootstrap-windows.ps1','scripts/v3-session-smoke-windows.ps1')) {

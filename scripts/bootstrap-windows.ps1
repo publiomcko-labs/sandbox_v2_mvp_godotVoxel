@@ -5,6 +5,8 @@ param(
     [switch] $RuntimeOnly
 )
 $ErrorActionPreference = 'Stop'
+# Avoid Windows PowerShell per-byte progress rendering during locked downloads.
+$ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $lock = Get-Content (Join-Path $root 'third_party.lock') -Raw | ConvertFrom-Json
@@ -55,7 +57,7 @@ if (-not $RuntimeOnly) {
 
 if (-not $SkipDownload) {
     Write-Host 'Fetching locked custom Godot editor...'
-    Invoke-WebRequest -Uri $lock.godot.editor_windows.url -OutFile $archive
+    Invoke-WebRequest -Uri $lock.godot.editor_windows.url -OutFile $archive -UseBasicParsing
     $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $lock.godot.editor_windows.sha256) {
         throw "Editor SHA-256 mismatch: expected $($lock.godot.editor_windows.sha256), got $actual"
