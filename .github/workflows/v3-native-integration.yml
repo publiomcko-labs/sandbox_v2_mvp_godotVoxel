@@ -20,6 +20,8 @@ on:
       - 'godot/scripts/terrain_sdf.gd'
       - 'godot/shaders/**'
       - 'godot/tests/v3_geology_smoke.gd'
+      - 'godot/tests/v3_caves_smoke.gd'
+      - 'godot/scenes/v3_caves_main.tscn'
       - 'godot/mods/**'
       - 'examples/v3/**'
       - '.github/workflows/v3-native-integration.yml'

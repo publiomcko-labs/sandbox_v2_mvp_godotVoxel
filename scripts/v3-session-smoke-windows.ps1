@@ -91,3 +91,42 @@ if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
     throw 'V3 geology checkpoint contract failed'
 }
 Write-Host 'V3_GEOLOGY_E2E_PASS (headless; no graphical qualification)'
+
+# Two seeds/profiles; only the primary world needs a second reopen process.
+$env:V3_WORLD_ROOT=Join-Path $results 'cave-worlds'
+New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+foreach ($case in @(
+    @{id='natural_fixture';seed='20261119';profile='karst:natural';phases=@('write','reopen')},
+    @{id='wide_fixture';seed='20261120';profile='karst:wide';phases=@('write')}
+)) {
+    $env:V3_WORLD_ID=$case.id
+    $env:V3_WORLD_SEED=$case.seed
+    $env:V3_CAVE_PROFILE=$case.profile
+    $env:V3_GEOLOGY_PROFILE='earth:temperate'
+    foreach ($phase in $case.phases) {
+        $stdout=Join-Path $results "caves-$($case.id)-$phase.stdout.log"
+        $stderr=Join-Path $results "caves-$($case.id)-$phase.stderr.log"
+        $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_caves_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+        $null=$p.Handle
+        if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "V3 caves $phase timed out" }
+        $p.WaitForExit()
+        Get-Content $stdout
+        Get-Content $stderr
+        if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|Shader compilation failed|SCRIPT ERROR:|V3_CAVES_FAIL:') {
+            throw "V3 caves $phase contains errors"
+        }
+        if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or
+            -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_CAVES_FIXTURE_PASS phase=$phase") -or
+            -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {
+            throw "V3 caves $phase failed exit=$($p.ExitCode)"
+        }
+    }
+    $worldPath=Join-Path $env:V3_WORLD_ROOT $case.id
+    $checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json
+    if ($checkpoint.generation -ne $case.phases.Count -or $checkpoint.core.terrain_revision -ne 1 -or
+        $checkpoint.generator_version -ne "v3_3_caves_v1:earth:temperate:$($case.profile)" -or
+        $checkpoint.pins.Count -ne 5 -or (Test-Path (Join-Path $worldPath 'session_pending'))) {
+        throw 'V3 caves checkpoint contract failed'
+    }
+}
+Write-Host 'V3_CAVES_E2E_PASS (headless topology and persistence; graphical route pending)'
