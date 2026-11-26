@@ -11,6 +11,8 @@
 #include "content_registry/geology.hpp"
 #include "content_registry/caves.hpp"
 #include "hydraulic_voxel_snapshot.hpp"
+#include "hydraulic_runtime.hpp"
+#include "persistence/hydraulic_domain_store.hpp"
 #include <chrono>
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
@@ -107,6 +109,7 @@ struct V3WorldSession::State {
     sc::InterestWindow interest;
     std::optional<ct::GeologyPalette> geology;
     ct::Json caves;
+    std::unique_ptr<sandbox::hydraulic::Runtime> hydraulic;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -116,6 +119,14 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("open","first_party","external","world_root","world_id","seed"), &V3WorldSession::open);
     ClassDB::bind_method(D_METHOD("open_geology","first_party","external","world_root","world_id","seed","geology_root","profile"), &V3WorldSession::open_geology);
     ClassDB::bind_method(D_METHOD("open_caves","first_party","external","world_root","world_id","seed","geology_root","profile","cave_root","cave_profile"), &V3WorldSession::open_caves);
+    ClassDB::bind_method(D_METHOD("open_hydraulic","first_party","external","world_root","world_id","seed","geology_root","profile","cave_root","cave_profile","hydraulic_root"), &V3WorldSession::open_hydraulic);
+    ClassDB::bind_method(D_METHOD("get_hydraulic_json"), &V3WorldSession::get_hydraulic_json);
+    ClassDB::bind_method(D_METHOD("hydraulic_frame","world","position","elapsed_ns"), &V3WorldSession::hydraulic_frame);
+    ClassDB::bind_method(D_METHOD("hydraulic_at","point"), &V3WorldSession::hydraulic_at);
+    ClassDB::bind_method(D_METHOD("hydraulic_surfaces"), &V3WorldSession::hydraulic_surfaces);
+    ClassDB::bind_method(D_METHOD("hydraulic_mesh","id"), &V3WorldSession::hydraulic_mesh);
+    ClassDB::bind_method(D_METHOD("hydraulic_report"), &V3WorldSession::hydraulic_report);
+    ClassDB::bind_method(D_METHOD("flush_hydraulic"), &V3WorldSession::flush_hydraulic);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
     ClassDB::bind_method(D_METHOD("submit_material","world","command","center","add","radius","material_id"), &V3WorldSession::submit_material);
@@ -135,31 +146,39 @@ void V3WorldSession::_bind_methods() {
 }
 bool V3WorldSession::open(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed) {
-    return open_impl(first_party,external,world_root,world_id,seed,String(),String(),String(),String());
+    return open_impl(first_party,external,world_root,world_id,seed,String(),String(),String(),String(),String());
 }
 bool V3WorldSession::open_geology(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile) {
     if(geology_root.is_empty() || profile.is_empty()) return false;
-    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,String(),String());
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,String(),String(),String());
 }
 bool V3WorldSession::open_caves(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile,
                          const String &cave_root,const String &cave_profile) {
     if(geology_root.is_empty() || profile.is_empty() || cave_root.is_empty() || cave_profile.is_empty()) return false;
-    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile);
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile,String());
+}
+bool V3WorldSession::open_hydraulic(const String &first_party,const String &external,
+                         const String &world_root,const String &world_id,int64_t seed,
+                         const String &geology_root,const String &profile,const String &cave_root,
+                         const String &cave_profile,const String &hydraulic_root) {
+    if(geology_root.is_empty()||profile.is_empty()||cave_root.is_empty()||cave_profile.is_empty()||hydraulic_root.is_empty())return false;
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile,hydraulic_root);
 }
 bool V3WorldSession::open_impl(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile,
-                         const String &cave_root,const String &cave_profile) {
+                         const String &cave_root,const String &cave_profile,const String &hydraulic_root) {
     try {
         ct::require(!state_ && seed>=0,"invalid or already initialized session");
         auto next=std::make_unique<State>();
         std::vector<fs::path> roots{path_of(first_party),path_of(external)};
         if(!geology_root.is_empty()) roots.push_back(path_of(geology_root));
         if(!cave_root.is_empty()) roots.push_back(path_of(cave_root));
+        if(!hydraulic_root.is_empty())roots.push_back(path_of(hydraulic_root));
         next->snapshot=ct::load(roots,ct::initial_registry());
         std::string generator(ps::generator_version);
         if(!geology_root.is_empty()) {
@@ -170,7 +189,18 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
             next->caves=ct::compile_caves(*next->snapshot,narrow(cave_profile),static_cast<uint64_t>(seed));
             generator="v3_3_caves_v3:"+next->geology->profile_id+":"+narrow(cave_profile);
         }
+        std::optional<ct::HydraulicProfile> hydraulic_profile;
+        if(!hydraulic_root.is_empty()) {
+            hydraulic_profile=ct::compile_hydraulic(*next->snapshot);
+            generator="v3_4_hydraulic_v1:"+generator;
+        }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
+        if(hydraulic_profile) {
+            if(next->store.header().generation>0) {
+                auto domain=ps::load_domain(next->store.path(),hydraulic_profile->types);
+                next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),std::move(domain));
+            }else next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile));
+        }
         const auto c=next->store.header().core;
         constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
         ct::require(c.last_command<limit && c.terrain_revision<limit && c.completed_tick<limit &&
@@ -205,6 +235,38 @@ bool V3WorldSession::bind_world(WorldBootstrap *world) {
         last_error_=String();
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
+}
+String V3WorldSession::get_hydraulic_json() const {
+    return state_&&state_->hydraulic?String::utf8(state_->hydraulic->profile().config.dump().c_str()):String();
+}
+bool V3WorldSession::hydraulic_frame(WorldBootstrap *world,const Vector3 &position,int64_t elapsed_ns) {
+    try {
+        ct::require(state_&&state_->hydraulic&&state_->store.is_open()&&world&&state_->bound_world==world->get_instance_id()&&elapsed_ns>=0,"invalid hydraulic frame");
+        auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+        ct::require(terrain!=nullptr,"missing terrain");
+        state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns));
+        return true;
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
+}
+Dictionary V3WorldSession::hydraulic_at(const Vector3 &point) const {
+    return state_&&state_->hydraulic?state_->hydraulic->at({point.x,point.y,point.z}):Dictionary();
+}
+Array V3WorldSession::hydraulic_surfaces() const {
+    return state_&&state_->hydraulic?state_->hydraulic->surfaces():Array();
+}
+Array V3WorldSession::hydraulic_mesh(int64_t id) const {
+    if(!state_||!state_->hydraulic||id<=0||id>std::numeric_limits<sandbox::hydraulic::Id>::max())return {};
+    return state_->hydraulic->mesh(static_cast<sandbox::hydraulic::Id>(id));
+}
+Dictionary V3WorldSession::hydraulic_report() const {
+    return state_&&state_->hydraulic?state_->hydraulic->report():Dictionary();
+}
+bool V3WorldSession::flush_hydraulic() {
+    try {
+        ct::require(state_&&state_->store.is_open(),"closed hydraulic session");
+        if(state_->hydraulic)ps::save_domain(state_->store.path(),state_->hydraulic->domain());
+        return true;
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }
 String V3WorldSession::get_cave_json() const {
     if(!state_ || state_->caves.is_null()) return {};
@@ -286,9 +348,11 @@ String V3WorldSession::submit_material(WorldBootstrap *world,int64_t command,con
 String V3WorldSession::submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot) {
     if(!state_ || !state_->store.is_open() || !world || !state_->bound_world ||
        state_->bound_world!=world->get_instance_id() || command<=0) return "rejected";
+    if(state_->hydraulic&&!state_->hydraulic->allows_edit({center.x,center.y,center.z},radius,add))return "rejected";
     state_->adapter.world=world;
     const auto r=state_->core->submit({static_cast<uint64_t>(command),{center.x,center.y,center.z},radius,add,slot});
     state_->adapter.world=nullptr;
+    if(state_->hydraulic&&r==sc::CommandResult::accepted)state_->hydraulic->edited({center.x,center.y,center.z},radius,state_->core->revision());
     return String(status_name(r));
 }
 Dictionary V3WorldSession::peek_terrain_event() const {
@@ -328,6 +392,7 @@ int64_t V3WorldSession::advance_ticks(int64_t elapsed_ns,int64_t budget) {
 bool V3WorldSession::finish(bool terrain_saved,bool rocks_saved) {
     try {
         ct::require(state_ && state_->bound_world,"unbound session");
+        if(state_->hydraulic)ct::require(terrain_saved&&rocks_saved&&flush_hydraulic(),"hydraulic checkpoint save failed");
         state_->store.finish(state_->core->checkpoint(),terrain_saved,rocks_saved);
         last_error_=String();
         return true;

@@ -17,7 +17,7 @@ class V3WorldSession : public RefCounted {
     String last_error_;
     bool open_impl(const String &first_party,const String &external,const String &world_root,
                    const String &world_id,int64_t seed,const String &geology_root,const String &profile,
-                   const String &cave_root,const String &cave_profile);
+                   const String &cave_root,const String &cave_profile,const String &hydraulic_root);
     String submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot);
 protected:
     static void _bind_methods();
@@ -31,6 +31,16 @@ public:
     bool open_caves(const String &first_party,const String &external,const String &world_root,
                     const String &world_id,int64_t seed,const String &geology_root,const String &profile,
                     const String &cave_root,const String &cave_profile);
+    bool open_hydraulic(const String &first_party,const String &external,const String &world_root,
+                    const String &world_id,int64_t seed,const String &geology_root,const String &profile,
+                    const String &cave_root,const String &cave_profile,const String &hydraulic_root);
+    String get_hydraulic_json() const;
+    bool hydraulic_frame(WorldBootstrap *world,const Vector3 &position,int64_t elapsed_ns);
+    Dictionary hydraulic_at(const Vector3 &point) const;
+    Array hydraulic_surfaces() const;
+    Array hydraulic_mesh(int64_t id) const;
+    Dictionary hydraulic_report() const;
+    bool flush_hydraulic();
     String get_geology_json() const;
     String get_cave_json() const;
     String submit_material(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,const String &material_id);
