@@ -47,6 +47,23 @@ func _test() -> void:
     if int(presentation["meshes"])!=expected or expected<1:
         _fail("surface missing")
         return
+    var varying_floor:=false
+    for row: Array in runtime.session.hydraulic_surfaces():
+        var raw: Array=runtime.session.hydraulic_mesh(int(row[0]))
+        if raw.size()!=2:
+            continue
+        var uv: PackedVector2Array=raw[1]
+        if uv.is_empty():
+            continue
+        for sample: Vector2 in uv:
+            if absf(sample.x-uv[0].x)>0.1:
+                varying_floor=true
+                break
+    if write and not varying_floor:
+        _fail("source basin mesh has no interpolated floor")
+        return
+    if write:
+        print("V3_HYDRAULIC_BASIN_RUNTIME_PASS varying_floor=true")
     var builds:=int(presentation["mesh_builds"])
     water.call("refresh")
     if int(water.call("get_report")["mesh_builds"])!=builds:
@@ -82,7 +99,7 @@ func _test() -> void:
             for x in range(-16,0):
                 if found:
                     break
-                for y in range(-3,4):
+                for y in range(-12,4):
                     var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
                     var wet: Dictionary=runtime.session.hydraulic_at(p)
                     if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01:

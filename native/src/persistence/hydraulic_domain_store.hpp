@@ -21,12 +21,12 @@ inline Json encode_domain(const hy::Domain &d) {
         oceans.push_back({{"id",id},{"anchor",{o.anchor.x,o.anchor.y,o.anchor.z}},
             {"type",d.graph().types().at(v.type).id},{"level",v.ocean_level},{"area",o.area}});
     }
-    return {{"schema",1},{"initial",d.graph().initial()},{"injected",d.graph().injected()},
+    return {{"schema",2},{"initial",d.graph().initial()},{"injected",d.graph().injected()},
         {"drained",d.graph().drained()},{"tiles",tiles},{"oceans",oceans},{"seeded",d.seeded()}};
 }
 inline hy::Domain decode_domain(const Json &j,const std::vector<hy::Liquid> &types) {
     content::fields(j,{"schema","initial","injected","drained","tiles","oceans","seeded"});
-    require(j.at("schema")==1&&j.at("tiles").is_array()&&j.at("tiles").size()<=256&&
+    require(j.at("schema")==2&&j.at("tiles").is_array()&&j.at("tiles").size()<=256&&
         j.at("oceans").is_array()&&j.at("oceans").size()<=64&&j.at("seeded").is_array()&&j.at("seeded").size()<=64,"hydraulic domain schema");
     hy::Domain d(types);
     auto integer=[](const Json &v,int lo,int hi){return static_cast<int>(hydraulic_integer(v,lo,hi));};

@@ -65,6 +65,25 @@ int main(){
             if(std::abs(a0.x-b0.x)>0.01&&std::abs(a0.z-b0.z)>0.01)diagonal=true;
         }
     assert(diagonal);
+    // The mesh is static across levels but its UV floor varies
+    // continuously across the basin. Shader clips at the current head.
+    tp::Snapshot slope{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=x;y<8;++y)
+        slope.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    auto sloped=tp::extract(slope);
+    assert(sloped.compartments.size()==1);
+    auto sheet=surface::build(sloped,sloped.compartments.front());
+    assert(sheet.size()==1);
+    double min_floor=100,max_floor=-100;bool interpolates=false;
+    for(std::size_t i=0;i<sheet.front().vertices.size();i+=3) {
+        const auto &v=sheet.front().vertices;
+        for(std::size_t j=0;j<3;++j){
+            min_floor=std::min(min_floor,v[i+j].floor);max_floor=std::max(max_floor,v[i+j].floor);
+            if(std::abs(v[i+j].floor-v[i+(j+1)%3].floor)>0.1)interpolates=true;
+        }
+    }
+    assert(min_floor==0&&max_floor==3&&interpolates);
+    std::cout<<"V3_HYDRAULIC_BASIN_SURFACE_PASS interpolated_floor one_static_sheet\n";
     std::cout<<"V3_HYDRAULIC_CONTOUR_PASS diagonal_edges tile_bounds retained_unloaded\n";
     std::cout<<"V3_HYDRAULIC_DOMAIN_PASS regional_publish boundary_flow unload mass_remap ocean_idempotent\n";
 }

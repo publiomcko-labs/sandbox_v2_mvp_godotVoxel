@@ -1,14 +1,14 @@
 #pragma once
 #include "hydraulic_topology.hpp"
 namespace sandbox::hydraulic::surface {
-struct Point {double x{},z{};};
+struct Point {double x{},z{},floor{};};
 struct Patch {int ceiling{};std::vector<Point> vertices;};
 // Contours are evaluated at column centers, with a ghost ring clamped
 // to the edge of the tile. Triangular interpolation removes the square
 // corners without generating a volume mesh or tracking wet samples.
 inline std::vector<Patch> build(const topology::Result &g,const topology::Compartment &c) {
-    std::map<int,std::set<std::pair<int,int>>> layers;
-    for(const auto &s:c.spans)layers[s.top].insert({s.x,s.z});
+    std::map<int,std::map<std::pair<int,int>,int>> layers;
+    for(const auto &s:c.spans)layers[s.top].emplace(std::pair{s.x,s.z},s.bottom);
     std::vector<Patch> out;
     const auto sample=[&](int x,int z) {
         return std::pair{std::clamp(x,0,g.nx-1),std::clamp(z,0,g.nz-1)};
@@ -19,24 +19,24 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
     for(const auto &[ceiling,mask]:layers) {
         Patch p{g.origin.y+ceiling*g.step,{}};
         auto member=[&](int x,int z){return mask.contains(sample(x,z));};
-        auto solid_margin=[&](int x,int z) {
+        auto floor_at=[&](int x,int z){return double(g.origin.y+mask.at(sample(x,z))*g.step);};
+        auto solid_margin=[&](int x,int z,double floor) {
             const auto [ix,iz]=sample(x,z);
             const auto &runs=g.column_runs[static_cast<std::size_t>(iz*g.nx+ix)];
             // A different open interval may own the neighboring surface.
             // Extend only toward the conservative solid classification.
-            const auto floor=c.curve.knots().front().mm*0.001;
             const double y=(floor-g.origin.y)/g.step+0.5;
             for(const auto &s:runs)if(y>=s.bottom&&y<s.top)return false;
             return true;
         };
         for(int z=-1;z<g.nz;++z)for(int x=-1;x<g.nx;++x) {
             constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
-            std::array<Point,4> pos{};std::array<bool,4> wet{},solid{};
+            std::array<Point,4> pos{};std::array<bool,4> wet{};
             int count=0;
             for(std::size_t i=0;i<4;++i) {
                 const auto [dx,dz]=offsets[i];pos[i]=position(x+dx,z+dz);
-                wet[i]=member(x+dx,z+dz);solid[i]=solid_margin(x+dx,z+dz);
-                if(wet[i])++count;
+                wet[i]=member(x+dx,z+dz);
+                if(wet[i]){++count;pos[i].floor=floor_at(x+dx,z+dz);}
             }
             if(!count)continue;
             const auto emit=[&](Point a,Point b,Point c0){
@@ -55,8 +55,15 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
                         const auto w=wet[a]?a:b,n=wet[a]?b:a;
                         // Extend a little into terrain to let actual terrain
                         // depth occlude the conservative sampled shoreline.
-                        const double t=solid[n]?0.9:0.5;
-                        poly.push_back({pos[w].x+(pos[n].x-pos[w].x)*t,pos[w].z+(pos[n].z-pos[w].z)*t});
+                        const auto [dx,dz]=offsets[n];
+                        const bool solid=solid_margin(x+dx,z+dz,pos[w].floor);
+                        const double t=solid?0.9:0.5;
+                        // At a boundary against another basin, use the
+                        // shared midline. Against solid, let terrain depth
+                        // clip the modest extension. Floor is interpolated
+                        // only on the immutable surface; no liquid cells.
+                        poly.push_back({pos[w].x+(pos[n].x-pos[w].x)*t,
+                            pos[w].z+(pos[n].z-pos[w].z)*t,pos[w].floor});
                     }
                 }
                 for(std::size_t i=1;i+1<poly.size();++i)emit(poly[0],poly[i],poly[i+1]);

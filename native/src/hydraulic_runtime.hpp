@@ -152,7 +152,11 @@ public:
         godot::Dictionary out;const auto wet=domain_.wet_at(p);if(!wet)return out;
         out["slot"]=static_cast<int64_t>(wet->type);out["density"]=domain_.graph().types().at(wet->type).density;
         const auto &v=domain_.graph().volumes().at(*domain_.volume_at(p));
-        out["level"]=v.level();out["floor"]=v.curve.knots().front().mm*0.001;out["id"]=static_cast<int64_t>(v.id);
+        const auto &g=*domain_.tiles().at(key(p)).geometry;
+        const auto *span=tp::span_at(g,p);
+        out["level"]=v.level();
+        out["floor"]=span?double(g.origin.y+span->bottom*g.step):v.curve.knots().front().mm*0.001;
+        out["id"]=static_cast<int64_t>(v.id);
         return out;
     }
     godot::Array surfaces()const {
@@ -172,7 +176,7 @@ public:
             PackedVector3Array vertices;PackedVector2Array uv;
             for(const auto &patch:surface::build(*t.geometry,c))for(auto p:patch.vertices) {
                 vertices.push_back(Vector3(k.x+p.x*t.geometry->step,0,k.z+p.z*t.geometry->step));
-                uv.push_back(Vector2(0,patch.ceiling));
+                uv.push_back(Vector2(p.floor,patch.ceiling));
             }
             out.push_back(vertices);out.push_back(uv);return out;
         }

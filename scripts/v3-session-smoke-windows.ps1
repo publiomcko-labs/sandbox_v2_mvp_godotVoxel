@@ -159,7 +159,7 @@ foreach ($phase in @('write','reopen')) {
     if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw "Hydraulic $phase failed" }
     $observed=[int64]$marker.Matches[0].Groups[1].Value
     if ($phase -eq 'write') {
-        if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_WET_BREACH_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_VISIBILITY_PASS')) { throw 'Missing breach/visibility evidence' }
+        if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_BASIN_RUNTIME_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_WET_BREACH_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_VISIBILITY_PASS')) { throw 'Missing breach/visibility evidence' }
         $mass=$observed
     }
     elseif ($mass -ne $observed) { throw 'Hydraulic mass changed on reopen' }

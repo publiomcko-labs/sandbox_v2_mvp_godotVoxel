@@ -192,7 +192,7 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
         std::optional<ct::HydraulicProfile> hydraulic_profile;
         if(!hydraulic_root.is_empty()) {
             hydraulic_profile=ct::compile_hydraulic(*next->snapshot);
-            generator="v3_4_hydraulic_v1:"+generator;
+            generator="v3_4_hydraulic_v2:"+generator;
         }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         if(hydraulic_profile) {

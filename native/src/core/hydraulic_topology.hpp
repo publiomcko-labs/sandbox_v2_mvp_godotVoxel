@@ -5,8 +5,8 @@
 
 namespace sandbox::hydraulic::topology {
 // Transient geometric samples only. No simulation quantity is attached to
-// a sample. Equal-floor, overlapping air intervals are compressed into
-// compartments, retaining distinct basins when their floors differ.
+// a sample. Plateaus drain into a single downhill surface basin; distinct
+// minima, large drops and enclosed air intervals retain separate portals.
 struct Snapshot {
     core::Region origin; // metres; X/Z tile origin, lower Y sample plane
     int nx{},ny{},nz{},step=1;
@@ -63,10 +63,29 @@ inline Result extract(const Snapshot &s) {
             }
     };
     pairs([&](std::size_t a,std::size_t b,int,int) {
-        if(spans[a].bottom!=spans[b].bottom)return;
+        if(spans[a].bottom!=spans[b].bottom||(spans[a].top==s.ny)!=(spans[b].top==s.ny))return;
         a=root(a);b=root(b);
         if(a!=b)parent[std::max(a,b)]=std::min(a,b);
     });
+    // First form equal-floor plateaus, then give each exposed plateau one
+    // strictly descending outlet. Every path to its basin minimum stays
+    // at or below its own floor: one free head is valid within the basin.
+    // A saddle can belong to only one basin; other minima stay behind
+    // portals at the actual saddle elevation. Never merge a roofed cave
+    // into a surface basin or collapse a large waterfall into a plane.
+    std::map<std::size_t,std::size_t> downhill;
+    pairs([&](std::size_t a,std::size_t b,int,int) {
+        if(spans[a].top!=s.ny||spans[b].top!=s.ny)return;
+        a=root(a);b=root(b);
+        if(a==b||spans[a].bottom==spans[b].bottom)return;
+        if(spans[a].bottom<spans[b].bottom)std::swap(a,b);
+        if((spans[a].bottom-spans[b].bottom)*s.step>2)return;
+        auto it=downhill.find(a);
+        if(it==downhill.end()||
+            std::pair{spans[b].bottom,b}<std::pair{spans[it->second].bottom,it->second})
+            downhill[a]=b;
+    });
+    for(auto [a,b]:downhill)parent[a]=b;
     std::map<Id,std::vector<Span>> groups;
     for(std::size_t i=0;i<spans.size();++i) {
         auto &v=spans[i];v.compartment=static_cast<Id>(root(i)+1);
@@ -110,13 +129,17 @@ inline Result extract(const Snapshot &s) {
 // Finite snapshot occupation at a known level, independent of litres per
 // sample. The caller must still reject unloaded/unknown terrain and solid
 // sub-sample geometry; this query never invents ocean connectivity.
-inline std::optional<Id> compartment_at(const Result &r,core::Vec3 point) {
+inline const Span* span_at(const Result &r,core::Vec3 point) {
     if(!core::valid_point(point))return {};
     const double x=(point.x-r.origin.x)/r.step,y=(point.y-r.origin.y)/r.step,z=(point.z-r.origin.z)/r.step;
     if(x<0||z<0||x>=r.nx||z>=r.nz)return {};
     const int ix=static_cast<int>(x),iz=static_cast<int>(z);
     for(const auto &s:r.column_runs.at(static_cast<std::size_t>(iz*r.nx+ix)))
-        if(y>=s.bottom&&y<s.top)return s.compartment;
+        if(y>=s.bottom&&y<s.top)return &s;
+    return nullptr;
+}
+inline std::optional<Id> compartment_at(const Result &r,core::Vec3 point) {
+    if(const auto *s=span_at(r,point))return s->compartment;
     return {};
 }
 // Match only adjacent, simultaneously known tiles. No implicit connectivity
