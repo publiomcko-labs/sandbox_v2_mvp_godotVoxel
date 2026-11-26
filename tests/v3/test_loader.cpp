@@ -1,3 +1,4 @@
+#include "content_registry/hydraulic_profile.hpp"
 #include "content_registry/loader.hpp"
 #include "content_registry/seed.hpp"
 #include "content_registry/geology.hpp"
@@ -154,5 +155,12 @@ int main(int argc, char **argv) {
     rejected([&]{reg.validate("cave_profile",bad);});
     rejected([&]{compile_caves(*caves,"earth:temperate",0);});
     std::cout << "V3_CAVE_PROFILE_PASS seeds=" << natural.at("noise_seeds").dump() << "\n";
+    auto hydro=load({repo/"godot/mods/first-party",repo/"godot/mods/hydraulic"},reg);
+    auto profile=compile_hydraulic(*hydro);
+    assert(profile.types.size()==2&&profile.config.at("sources").size()==3);
+    assert(profile.types[0].id=="hydro:lava"&&profile.types[1].id=="hydro:water");
+    auto invalid=profile.config.at("sources")[0];invalid.erase("id");invalid.erase("slot");invalid["level_m"]=-100;
+    rejected([&]{reg.validate("liquid_source_rule",invalid);});
+    std::cout << "V3_HYDRAULIC_MOD_PASS two_types three_explicit_sources\n";
     std::cout << "V3_LOADER_CONTRACT_PASS\n";
 }

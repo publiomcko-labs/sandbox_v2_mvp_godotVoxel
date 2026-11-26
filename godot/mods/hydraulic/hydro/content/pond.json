@@ -1,0 +1,14 @@
+{
+  "id": "hydro:pond",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:water",
+    "source_kind": "finite_reservoir",
+    "anchor_m": [
+      -4,
+      1,
+      28
+    ],
+    "level_m": 4
+  }
+}

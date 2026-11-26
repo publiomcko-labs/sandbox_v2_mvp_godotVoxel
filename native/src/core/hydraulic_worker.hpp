@@ -12,11 +12,12 @@ class Worker {
     std::map<core::Region,std::uint64_t> requested_;
     std::optional<std::future<Result>> running_;
     std::optional<core::Region> active_;
+    bool active_invalidated_=false;
     void launch() {
         if(running_||pending_.empty())return;
         auto it=pending_.begin();
         auto snapshot=std::move(it->second);
-        active_=it->first;pending_.erase(it);
+        active_=it->first;active_invalidated_=false;pending_.erase(it);
         running_.emplace(std::async(std::launch::async,[s=std::move(snapshot)](){return extract(s);}));
     }
 public:
@@ -29,6 +30,7 @@ public:
         pending_.insert_or_assign(key,std::move(snapshot));launch();return true;
     }
     void invalidate(core::Region key) {
+        if(active_&&*active_==key)active_invalidated_=true;
         pending_.erase(key);requested_.erase(key);
     }
     bool busy()const{return running_.has_value()||!pending_.empty();}
@@ -40,7 +42,7 @@ public:
         try {
             auto result=future.get();
             const auto current=requested_.find(key);
-            const bool valid=current!=requested_.end()&&current->second==result.revision;
+            const bool valid=!active_invalidated_&&current!=requested_.end()&&current->second==result.revision;
             if(valid)requested_.erase(current);
             launch();
             if(valid)return result;

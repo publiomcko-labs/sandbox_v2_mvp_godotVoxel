@@ -1,0 +1,14 @@
+{
+  "id": "hydro:lava_pool",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:lava",
+    "source_kind": "finite_reservoir",
+    "anchor_m": [
+      48,
+      0,
+      -28
+    ],
+    "level_m": 3
+  }
+}

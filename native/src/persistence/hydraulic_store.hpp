@@ -8,7 +8,7 @@ inline Json encode_hydraulic(const hy::Graph &g) {
     for(const auto &[id,v]:g.volumes()) {
         Json curve=Json::array();
         for(auto k:v.curve.knots())curve.push_back({k.mm,k.litres});
-        volumes.push_back({{"id",id},{"type",g.types().at(v.type).id},{"curve",curve},{"litres",v.litres},
+        volumes.push_back({{"id",id},{"type",v.type==hy::no_liquid?Json(nullptr):Json(g.types().at(v.type).id)},{"curve",curve},{"litres",v.litres},
                            {"ocean",v.ocean},{"level",v.ocean_level}});
     }
     for(const auto &[id,p]:g.portals())portals.push_back({{"id",id},{"a",p.a},{"b",p.b},{"sill",p.sill_m},
@@ -31,15 +31,16 @@ inline hy::Graph decode_hydraulic(const Json &j,const std::vector<hy::Liquid> &t
     auto id=[](const Json &v){return static_cast<hy::Id>(hydraulic_integer(v,1,std::numeric_limits<hy::Id>::max()));};
     for(const auto &v:j.at("volumes")) {
         content::fields(v,{"id","type","curve","litres","ocean","level"});
-        const auto type=content::str(v.at("type"));
+        const bool dry=v.at("type").is_null();
+        const auto type=dry?std::string{}:content::str(v.at("type"));
         auto t=std::find_if(types.begin(),types.end(),[&](const auto &l){return l.id==type;});
-        require(t!=types.end()&&v.at("ocean").is_boolean()&&v.at("curve").is_array()&&v.at("curve").size()<=256,"hydraulic volume format");
+        require((dry||t!=types.end())&&v.at("ocean").is_boolean()&&v.at("curve").is_array()&&v.at("curve").size()<=256,"hydraulic volume format");
         std::vector<hy::Knot> knots;
         for(const auto &k:v.at("curve")) {
             require(k.is_array()&&k.size()==2,"hydraulic curve knot");
             knots.push_back({static_cast<int>(hydraulic_integer(k[0],-100000000,100000000)),hydraulic_integer(k[1],0,hy::volume_limit)});
         }
-        g.add_volume({id(v.at("id")),static_cast<std::size_t>(t-types.begin()),hy::Curve(std::move(knots)),
+        g.add_volume({id(v.at("id")),dry?hy::no_liquid:static_cast<std::size_t>(t-types.begin()),hy::Curve(std::move(knots)),
             hydraulic_integer(v.at("litres"),0,hy::volume_limit),v.at("ocean").get<bool>(),hydraulic_number(v.at("level"))});
     }
     for(const auto &p:j.at("portals")) {

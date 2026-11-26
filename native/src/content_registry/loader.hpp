@@ -160,7 +160,14 @@ inline Registry initial_registry() {
         return std::vector<Reference>{{str(j.at("material")), "material"}};
     });
     r.add("liquid", [](const Json &j) {
-        fields(j, {"density","viscosity"});
+        if(j.size()==2)fields(j, {"density","viscosity"});
+        else {
+            fields(j, {"density","viscosity","albedo","emission"});
+            for(const auto *key:{"albedo","emission"}) {
+                const auto &a=j.at(key);require(a.is_array()&&a.size()==3,"hydraulic color");
+                for(const auto &c:a)require(c.is_number()&&c.get<double>()>=0&&c.get<double>()<=1,"hydraulic color range");
+            }
+        }
         positive(j.at("density"), 100000); positive(j.at("viscosity"), 100000);
         return std::vector<Reference>{};
     });
@@ -248,6 +255,17 @@ inline Registry initial_registry() {
         return std::vector<Reference>{};
     });
     r.add("liquid_source_rule", [](const Json &j) {
+        if(j.contains("anchor_m")) {
+            fields(j, {"liquid","source_kind","level_m","anchor_m"});
+            const auto kind=str(j.at("source_kind"));
+            require(kind=="finite_reservoir"||kind=="fixed_head_ocean","hydraulic source kind");
+            const auto &a=j.at("anchor_m");
+            require(a.is_array()&&a.size()==3,"hydraulic anchor");
+            for(const auto &v:a)require(v.is_number_integer()&&std::abs(v.get<double>())<=100000,"hydraulic anchor bounds");
+            require(j.at("level_m").is_number()&&std::abs(j.at("level_m").get<double>())<=4096&&
+                j.at("level_m").get<double>()>a[1].get<double>(),"hydraulic source level");
+            return std::vector<Reference>{{str(j.at("liquid")),"liquid"}};
+        }
         fields(j, {"liquid","source_kind","level_m","rate_per_tick"});
         const auto kind=str(j.at("source_kind"));
         require(kind=="surface_basin" || kind=="spring" || kind=="vent","unknown source kind");

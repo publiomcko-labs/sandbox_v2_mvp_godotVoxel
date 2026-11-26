@@ -10,6 +10,7 @@ inline constexpr Litres volume_limit=1'000'000'000'000LL;
 inline constexpr Litres ledger_limit=1'000'000'000'000'000LL;
 inline constexpr std::size_t volume_count_limit=4096,portal_count_limit=16384;
 inline constexpr double tick_s=0.05;
+inline constexpr std::size_t no_liquid=std::numeric_limits<std::size_t>::max();
 struct Knot {int mm{};Litres litres{};auto operator<=>(const Knot&)const=default;};
 class Curve {
     std::vector<Knot> knots_;
@@ -103,11 +104,12 @@ public:
     Litres drained()const{return drained_;}
     std::size_t backlog()const{return frontier_.size();}
     void add_volume(Volume v) {
-        if(!v.id||volumes_.contains(v.id)||volumes_.size()>=volume_count_limit||v.type>=types_.size()||
+        if(!v.id||volumes_.contains(v.id)||volumes_.size()>=volume_count_limit||(v.type>=types_.size()&&!(v.type==no_liquid&&!v.litres&&!v.ocean))||
             v.litres<0||v.litres>v.curve.capacity()||
             (v.ocean&&(v.litres||!std::isfinite(v.ocean_level)||std::abs(v.ocean_level)>100000))||
             initial_>ledger_limit-v.litres)
             throw std::invalid_argument("volume definition");
+        if(!v.ocean&&!v.litres)v.type=no_liquid;
         initial_+=v.litres;finite_+=v.litres;
         adjacency_.try_emplace(v.id);
         volumes_.emplace(v.id,std::move(v));
@@ -150,6 +152,7 @@ public:
         Report r;
         if(budget>portal_count_limit)throw std::invalid_argument("portal budget");
         std::map<Id,Litres> incoming,outgoing;
+        std::map<Id,std::size_t> incoming_type;
         std::set<Id> changed,retry;
         Litres inject=0,drain=0;
         const auto count=std::min(budget,frontier_.size());
@@ -159,8 +162,10 @@ public:
             if(!p.available)continue;
             ++r.visited;
             const Volume *a=&volumes_.at(p.a),*b=&volumes_.at(p.b);
-            if(a->type!=b->type)continue;
             if(a->level()<b->level())std::swap(a,b);
+            if(a->type==no_liquid||(!a->ocean&&!a->litres))continue;
+            if((b->type!=no_liquid&&a->type!=b->type)||
+                (incoming_type.contains(b->id)&&incoming_type.at(b->id)!=a->type))continue;
             const double head=a->level()-std::max(b->level(),p.sill_m);
             if(head<=0.00001)continue;
             // Torricelli-type simplified discharge; not a Navier-Stokes solver.
@@ -173,14 +178,18 @@ public:
             auto n=equilibrium(*a,*b,p,std::min({rate,free,room}),incoming[a->id]-outgoing[a->id],incoming[b->id]-outgoing[b->id]);
             if(n<=0)continue;
             if(a->ocean)inject+=n;else outgoing[a->id]+=n;
-            if(b->ocean)drain+=n;else incoming[b->id]+=n;
+            if(b->ocean)drain+=n;else {incoming[b->id]+=n;incoming_type[b->id]=a->type;}
             changed.insert(a->id);changed.insert(b->id);
             retry.insert(id);
             r.moved+=n;r.flows.push_back({id,a->id,b->id,n});
         }
         for(auto id:changed) {
             auto &v=volumes_.at(id);
-            if(!v.ocean)v.litres+=incoming[id]-outgoing[id];
+            if(!v.ocean){
+                if(incoming_type.contains(id))v.type=incoming_type.at(id);
+                v.litres+=incoming[id]-outgoing[id];
+                if(!v.litres)v.type=no_liquid;
+            }
         }
         injected_+=inject;drained_+=drain;finite_+=inject-drain;
         for(auto id:changed)wake_volume(id);

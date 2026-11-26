@@ -38,6 +38,11 @@ int main(){
     viscosity.tick();
     const auto water=viscosity.volumes().at(2).litres,lava=viscosity.volumes().at(4).litres;
     assert(lava>0&&water>=lava*9&&viscosity.finite()==200000);
+    Graph dry({{"water",1,1000},{"lava",10,2800}});
+    dry.add_volume({1,1,tank(),100000});dry.add_volume({2,no_liquid,tank(),0});
+    dry.add_portal({1,1,2,0,1,0.62,true,0});
+    dry.tick();
+    assert(dry.volumes().at(2).type==1&&dry.volumes().at(2).litres>0);
     // Volume count does not determine the tick work: 4096 dormant bodies,
     // one opening, one portal visit. A billion litres is still one node.
     Graph scale({{"water",1,1000}});
