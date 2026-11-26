@@ -7,10 +7,10 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='204ce6999a49c5abd1f55426ecb7aa86d7ed62b5'
-$run='45892475273'
+$candidate='e50852205f90d9058c25851fe021e9365e568948'
+$run='45902703591'
 $artifact='v3-native-integration-evidence'
-$zipSha='8f28bc3b884e6e1f95d70b42d89d7ef4d84ff7f7ad949c6e64808514ea92706a'
+$zipSha='ea8b9204c640fe9dfbed4a03cfad7ed5c675bdb570f5abb0bfe6e84173330587'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- godot native third_party.lock
@@ -39,7 +39,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45892475273/artifacts/15152217463 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45902703591/artifacts/15156104459 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -70,7 +70,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 hydraulic H4: inspect the shoreline contact, excavate the bank and check that the old water stays visible until replacement; close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
+Write-Host 'V3 hydraulic H5: inspect basin junctions and active flow curtains, excavate the bank and check that the old water stays visible until replacement; close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
