@@ -170,6 +170,16 @@ public:
         graph_=std::move(staged);oceans_=std::move(sources);seeded_=std::move(seeded);
         next_node_=node;next_portal_=portal;return true;
     }
+    // Restore a validated archive. Graph IDs are session-local and can be
+    // regenerated; source IDs and exact finite mass are persistent.
+    bool restore_content(core::Region origin,Id local,std::size_t type,Litres litres) {
+        return graph_.initialize(tiles_.at(origin).ids.at(local),type,litres);
+    }
+    void restore_ledger(Litres initial,Litres injected,Litres drained) {graph_.restore_ledger(initial,injected,drained);}
+    void restore_seeded(const std::string &id) {
+        if(id.empty())throw std::invalid_argument("source id");
+        seeded_.insert(id);
+    }
     Report tick(std::size_t budget=256){return graph_.tick(budget);}
 };
 }
