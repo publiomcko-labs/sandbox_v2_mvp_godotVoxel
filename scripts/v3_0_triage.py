@@ -43,7 +43,7 @@ def analyze(control, traced):
         require(prev is None or r["previous_usec"] == prev["now_usec"], "trace discontinuity")
         dt = (r["now_usec"] - r["previous_usec"])/1000
         sec = (r["now_usec"] - meta["start_usec"])/1e6
-        require(abs(dt-float(frame["interval_ms"])) < .002 and abs(sec-float(frame["t_s"])) < .000002, "frame mismatch")
+        require(abs(dt-float(frame["interval_ms"])) < .002 and abs(sec-float(frame["t_s"])) < .000005, "frame mismatch")
         if dt >= 33:
             # A frame-start gap contains the PREVIOUS callback, not the current one.
             parts = None if prev is None else {

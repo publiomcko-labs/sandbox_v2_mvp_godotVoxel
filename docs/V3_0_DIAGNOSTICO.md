@@ -26,3 +26,6 @@ Usar checkout isolado V3, Godot/DLL A5 pinados, Python e PresentMon 2.6.0 verifi
 ## Checkpoint
 
 Preparação diagnóstica, não encerramento da V3.0. Causa, reprodução, overhead e resultado gráfico pendentes de evidência real; sem otimização.
+
+### Resultado CI inicial — 26/11/2026
+Run [45824145413](https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45824145413), commit 77b7a6d: 8/8 testes de comparação PASS; compilação sintática Python e parse PowerShell PASS. Runner DESKTOP-SAFGO15 encontrado, preflight falhou em Session 0. Nenhuma rodada de survey iniciada. Status GPU: BLOCKED_INTERACTIVE_SESSION; causa UNATTRIBUTED. Corrigida tolerância de comparação temporal CSV/trace para 5 µs devido ao armazenamento de t_s no Vector2 float32 original (sem alterar os dados). A execução local reutiliza o mesmo harness, com dois braços e ZIP sem saves. Esta atualização não dispara nova campanha automaticamente.
