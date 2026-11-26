@@ -127,13 +127,12 @@ public:
         std::sort(candidates.begin(),candidates.end(),[&](auto a,auto b){
             const auto dist=[&](auto k){return std::abs(k.x-center.x)+std::abs(k.z-center.z);};return dist(a)<dist(b);
         });
-        int attempts=0;
         for(auto k:candidates) {
             const auto t=domain_.tiles().find(k);
             if(t!=domain_.tiles().end()&&t->second.available)continue;
             if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==revision))continue;
             if(domain_.tiles().size()>=256&&t==domain_.tiles().end())continue;
-            if(++attempts>3)break;
+            if(!resident(tool,k))continue;
             const auto start=std::chrono::steady_clock::now();
             auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),revision);
             const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());

@@ -14,7 +14,7 @@ inline Json encode_domain(const hy::Domain &d) {
             const auto &v=d.graph().volumes().at(id);
             if(v.litres)wet.push_back({local,d.graph().types().at(v.type).id,v.litres});
         }
-        tiles.push_back({{"origin",{key.x,key.y,key.z}},{"revision",g.revision},{"runs",runs},{"wet",wet}});
+        tiles.push_back({{"origin",{key.x,key.y,key.z}},{"revision",g.revision},{"expected_revision",t.expected_revision},{"runs",runs},{"wet",wet}});
     }
     for(const auto &[id,o]:d.oceans()) {
         const auto &v=d.graph().volumes().at(o.ocean);
@@ -32,11 +32,16 @@ inline hy::Domain decode_domain(const Json &j,const std::vector<hy::Liquid> &typ
     auto integer=[](const Json &v,int lo,int hi){return static_cast<int>(hydraulic_integer(v,lo,hi));};
     auto slot=[&](const Json &v){const auto id=content::str(v);auto it=std::find_if(types.begin(),types.end(),[&](const auto &t){return t.id==id;});
         require(it!=types.end(),"hydraulic type absent");return static_cast<std::size_t>(it-types.begin());};
+    std::map<sandbox::core::Region,std::uint64_t> revisions;
     for(const auto &t:j.at("tiles")) {
-        content::fields(t,{"origin","revision","runs","wet"});
+        if(t.contains("expected_revision"))content::fields(t,{"origin","revision","expected_revision","runs","wet"});
+        else content::fields(t,{"origin","revision","runs","wet"});
         const auto &o=t.at("origin");require(o.is_array()&&o.size()==3,"tile origin");
         sandbox::core::Region key{integer(o[0],-1000000,1000000),integer(o[1],-32,-32),integer(o[2],-1000000,1000000)};
         require(!d.tiles().contains(key),"duplicate tile");
+        const auto expected=t.contains("expected_revision")?uint(t.at("expected_revision")):uint(t.at("revision"));
+        require(expected>=uint(t.at("revision")),"invalid pending revision");
+        revisions.emplace(key,expected);
         hy::tp::Snapshot s{key,16,64,16,1,uint(t.at("revision")),std::vector<std::uint8_t>(16*64*16)};
         require(t.at("runs").is_array()&&t.at("runs").size()<=16384&&t.at("wet").is_array()&&t.at("wet").size()<=4096,"tile rows");
         for(const auto &r:t.at("runs")) {
@@ -64,7 +69,7 @@ inline hy::Domain decode_domain(const Json &j,const std::vector<hy::Liquid> &typ
     d.restore_ledger(hydraulic_integer(j.at("initial"),0,hy::ledger_limit),
         hydraulic_integer(j.at("injected"),0,hy::ledger_limit),hydraulic_integer(j.at("drained"),0,hy::ledger_limit));
     // Snapshot residency is never restored. Keep old geometry for remap.
-    for(const auto &[key,t]:d.tiles())d.invalidate(key,t.geometry->revision);
+    for(const auto &[key,revision]:revisions)d.invalidate(key,revision);
     return d;
 }
 inline void save_domain(const fs::path &world,const hy::Domain &d) {

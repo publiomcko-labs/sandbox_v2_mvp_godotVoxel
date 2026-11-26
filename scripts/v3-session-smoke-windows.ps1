@@ -158,10 +158,13 @@ foreach ($phase in @('write','reopen')) {
     $marker=Select-String -LiteralPath $stdout -Pattern "V3_HYDRAULIC_RUNTIME_PASS phase=$phase mass=(\d+)"
     if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw "Hydraulic $phase failed" }
     $observed=[int64]$marker.Matches[0].Groups[1].Value
-    if ($phase -eq 'write') { $mass=$observed }
+    if ($phase -eq 'write') {
+        if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_WET_BREACH_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYDRAULIC_VISIBILITY_PASS')) { throw 'Missing breach/visibility evidence' }
+        $mass=$observed
+    }
     elseif ($mass -ne $observed) { throw 'Hydraulic mass changed on reopen' }
 }
 $worldPath=Join-Path $env:V3_WORLD_ROOT 'hydraulic_fixture'
 $checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json
-if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 1 -or $checkpoint.pins.Count -ne 6 -or !(Test-Path (Join-Path $worldPath 'hydraulic_domain.json')) -or (Test-Path (Join-Path $worldPath 'session_pending'))) { throw 'Hydraulic checkpoint contract failed' }
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or $checkpoint.pins.Count -ne 6 -or !(Test-Path (Join-Path $worldPath 'hydraulic_domain.json')) -or (Test-Path (Join-Path $worldPath 'session_pending'))) { throw 'Hydraulic checkpoint contract failed' }
 Write-Host "V3_HYDRAULIC_E2E_PASS mass=$mass"
