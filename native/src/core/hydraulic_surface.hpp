@@ -18,7 +18,13 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
     };
     for(const auto &[ceiling,mask]:layers) {
         Patch p{g.origin.y+ceiling*g.step,{}};
-        auto member=[&](int x,int z){return mask.contains(sample(x,z));};
+        auto owner=[&](int x,int z)->Id {
+            const auto [ix,iz]=sample(x,z);
+            for(const auto &run:g.column_runs[static_cast<std::size_t>(iz*g.nx+ix)])
+                if(run.top==ceiling)return run.compartment;
+            return 0;
+        };
+        auto member=[&](int x,int z){return owner(x,z)==c.id;};
         auto floor_at=[&](int x,int z){return double(g.origin.y+mask.at(sample(x,z))*g.step);};
         auto bank_cap=[&](int x,int z,double floor) {
             const auto [ix,iz]=sample(x,z);
@@ -36,11 +42,18 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
         for(int z=-1;z<g.nz;++z)for(int x=-1;x<g.nx;++x) {
             constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
             std::array<Point,4> pos{};std::array<bool,4> wet{};
+            std::array<Id,4> owners{};
             int count=0;
             for(std::size_t i=0;i<4;++i) {
                 const auto [dx,dz]=offsets[i];pos[i]=position(x+dx,z+dz);
+                owners[i]=owner(x+dx,z+dz);
                 wet[i]=member(x+dx,z+dz);
                 if(wet[i]){++count;pos[i].floor=floor_at(x+dx,z+dz);}
+                else if(owners[i]) {
+                    const auto [ix,iz]=sample(x+dx,z+dz);
+                    for(const auto &run:g.column_runs[static_cast<std::size_t>(iz*g.nx+ix)])
+                        if(run.top==ceiling){pos[i].floor=g.origin.y+run.bottom*g.step;break;}
+                }
             }
             if(!count)continue;
             const auto emit=[&](Patch &target,Point a,Point b,Point c0){
@@ -50,6 +63,30 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
                 target.vertices.insert(target.vertices.end(),{a,b,c0});
             };
             const auto clip=[&](std::array<int,3> tri) {
+                // Three different labels cannot be represented by three
+                // independent binary midpoint contours: they leave a hole
+                // (or overlap with incompatible diagonals). Partition the
+                // shared triangle at its centroid and edge midpoints.
+                const auto i0=static_cast<std::size_t>(tri[0]),i1=static_cast<std::size_t>(tri[1]),i2=static_cast<std::size_t>(tri[2]);
+                auto midpoint=[&](std::size_t a,std::size_t b){
+                    const double floor=owners[a]&&owners[b]?(pos[a].floor+pos[b].floor)*0.5:
+                        (owners[a]?pos[a].floor:pos[b].floor);
+                    return Point{(pos[a].x+pos[b].x)*0.5,(pos[a].z+pos[b].z)*0.5,floor};
+                };
+                if(owners[i0]!=owners[i1]&&owners[i1]!=owners[i2]&&owners[i0]!=owners[i2]) {
+                    double floor=0;int n=0;
+                    for(auto i:{i0,i1,i2})if(owners[i]){floor+=pos[i].floor;++n;}
+                    const Point center{(pos[i0].x+pos[i1].x+pos[i2].x)/3.0,
+                        (pos[i0].z+pos[i1].z+pos[i2].z)/3.0,n?floor/n:0};
+                    for(int i=0;i<3;++i) {
+                        const auto a=static_cast<std::size_t>(tri[i]);
+                        if(!wet[a])continue;
+                        const auto b=static_cast<std::size_t>(tri[(i+1)%3]),d=static_cast<std::size_t>(tri[(i+2)%3]);
+                        emit(p,pos[a],midpoint(a,b),center);
+                        emit(p,pos[a],center,midpoint(d,a));
+                    }
+                    return;
+                }
                 std::vector<Point> poly;
                 std::array<Point,2> mid{},outer{};
                 int crossings=0,cap=p.ceiling;
@@ -67,7 +104,7 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
                                 pos[w].z+(pos[n].z-pos[w].z)*t,pos[w].floor};
                         };
                         const auto j=static_cast<std::size_t>(crossings++);
-                        mid[j]=blend(0.5);outer[j]=mid[j];
+                        mid[j]=midpoint(w,n);outer[j]=mid[j];
                         poly.push_back(mid[j]);
                         if(clearance>0) {
                             // Visual-only apron reaches the solid column
@@ -88,14 +125,16 @@ inline std::vector<Patch> build(const topology::Result &g,const topology::Compar
                     if(!apron.vertices.empty())out.push_back(std::move(apron));
                 }
             };
-            // Choose the diagonal between dry corners for a single wet
-            // corner; equivalent complement rule prevents diagonal spikes.
-            if(count==1||count==3) {
-                const bool minority=count==1;
-                const bool diagonal=(wet[1]==minority||wet[3]==minority);
-                if(diagonal){clip({0,1,2});clip({0,2,3});}
-                else{clip({0,1,3});clip({1,2,3});}
-            }else{clip({0,1,2});clip({0,2,3});}
+            // Choose ONE diagonal for every owner in this square. Preserve
+            // the smooth single-corner shoreline rule for binary labels,
+            // but never choose a diagonal independently for each basin.
+            std::map<Id,int> counts;
+            for(auto id:owners)++counts[id];
+            bool diagonal=true;
+            if(counts.size()==2)for(const auto &[label,n]:counts)if(n==1)
+                diagonal=owners[1]==label||owners[3]==label;
+            if(diagonal){clip({0,1,2});clip({0,2,3});}
+            else{clip({0,1,3});clip({1,2,3});}
         }
         if(!p.vertices.empty())out.push_back(std::move(p));
     }

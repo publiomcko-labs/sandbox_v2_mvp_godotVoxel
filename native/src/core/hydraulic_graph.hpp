@@ -63,6 +63,9 @@ class Graph {
     std::map<Id,std::set<Id>> adjacency_;
     std::set<Id> queued_;
     std::deque<Id> frontier_;
+    // Sub-litre discharge credit belongs to an active directed portal,
+    // never to a cell or to the conserved mass ledger.
+    std::map<Id,std::pair<Id,double>> discharge_credit_;
     Litres initial_=0,injected_=0,drained_=0,finite_=0;
     void wake(Id id) {
         if(portals_.contains(id)&&portals_.at(id).available&&queued_.insert(id).second)frontier_.push_back(id);
@@ -135,7 +138,7 @@ public:
         for(auto id:removed) {
             const auto p=portals_.at(id);
             adjacency_.at(p.a).erase(id);adjacency_.at(p.b).erase(id);
-            portals_.erase(id);queued_.erase(id);
+            portals_.erase(id);queued_.erase(id);discharge_credit_.erase(id);
         }
         frontier_.erase(std::remove_if(frontier_.begin(),frontier_.end(),[&](Id id){return removed.contains(id);}),frontier_.end());
         for(auto id:ids){finite_-=volumes_.at(id).litres;volumes_.erase(id);adjacency_.erase(id);}
@@ -151,11 +154,11 @@ public:
         auto &p=portals_.at(id);
         if(revision<p.revision)return false;
         auto next=p;next.sill_m=sill;next.area_m2=area;next.available=available;next.revision=revision;
-        check_portal(next);p=next;wake(id);return true;
+        check_portal(next);p=next;discharge_credit_.erase(id);wake(id);return true;
     }
     void invalidate_portal(Id id,std::uint64_t revision) {
         auto &p=portals_.at(id);
-        if(revision>=p.revision){p.available=false;p.revision=revision;}
+        if(revision>=p.revision){p.available=false;p.revision=revision;discharge_credit_.erase(id);}
     }
     // Geometry replacement is fail-closed; caller must first conservatively
     // redistribute excess mass if a new curve cannot hold the current volume.
@@ -187,21 +190,38 @@ public:
             ++r.visited;
             const Volume *a=&volumes_.at(p.a),*b=&volumes_.at(p.b);
             if(a->level()<b->level())std::swap(a,b);
-            if(a->type==no_liquid||(!a->ocean&&!a->litres))continue;
+            if(a->type==no_liquid||(!a->ocean&&!a->litres)){discharge_credit_.erase(id);continue;}
             if((b->type!=no_liquid&&a->type!=b->type)||
-                (incoming_type.contains(b->id)&&incoming_type.at(b->id)!=a->type))continue;
+                (incoming_type.contains(b->id)&&incoming_type.at(b->id)!=a->type)){discharge_credit_.erase(id);continue;}
             const double head=a->level()-std::max(b->level(),p.sill_m);
-            if(head<=0.00001)continue;
+            if(head<=0.00001){discharge_credit_.erase(id);continue;}
             // Torricelli-type simplified discharge; not a Navier-Stokes solver.
             const double area=p.opening_height_m>0?p.area_m2*std::clamp((a->level()-p.sill_m)/p.opening_height_m,0.0,1.0):p.area_m2;
             const auto q=p.coefficient*area*std::sqrt(2.0*9.81*head)*1000*tick_s/types_[a->type].viscosity;
-            const auto rate=static_cast<Litres>(std::floor(std::min(q,double(volume_limit))));
+            const auto credit=discharge_credit_.find(id);
+            const double prior=credit!=discharge_credit_.end()&&credit->second.first==a->id?credit->second.second:0.0;
+            const double discharge=std::min(q+prior,double(volume_limit));
+            const auto rate=static_cast<Litres>(std::floor(discharge));
             auto free=a->ocean?std::min(volume_limit,ledger_limit-injected_-inject):
                 std::max<Litres>(0,a->litres-a->curve.at_level(p.sill_m)-outgoing[a->id]);
             auto room=b->ocean?std::min(volume_limit,ledger_limit-drained_-drain):
                 b->curve.capacity()-b->litres-incoming[b->id];
-            auto n=equilibrium(*a,*b,p,std::min({rate,free,room}),incoming[a->id]-outgoing[a->id],incoming[b->id]-outgoing[b->id]);
-            if(n<=0)continue;
+            const auto possible=std::min(free,room);
+            const auto da=incoming[a->id]-outgoing[a->id],db=incoming[b->id]-outgoing[b->id];
+            auto n=equilibrium(*a,*b,p,std::min(rate,possible),da,db);
+            if(n<=0) {
+                // A small but real opening must not stop permanently just
+                // because its per-tick discharge rounds below one litre.
+                // Stop retrying when even one litre would reverse the head.
+                if(rate==0&&possible>0&&equilibrium(*a,*b,p,1,da,db)>0) {
+                    discharge_credit_[id]={a->id,discharge};
+                    retry.insert(id);
+                } else discharge_credit_.erase(id);
+                continue;
+            }
+            const double fraction=discharge-double(rate);
+            if(n==rate&&fraction>0)discharge_credit_[id]={a->id,fraction};
+            else discharge_credit_.erase(id);
             if(a->ocean)inject+=n;else outgoing[a->id]+=n;
             if(b->ocean)drain+=n;else {incoming[b->id]+=n;incoming_type[b->id]=a->type;}
             changed.insert(a->id);changed.insert(b->id);

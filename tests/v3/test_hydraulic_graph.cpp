@@ -43,6 +43,18 @@ int main(){
     dry.add_portal({1,1,2,0,1,0.62,true,0});
     dry.tick();
     assert(dry.volumes().at(2).type==1&&dry.volumes().at(2).litres>0);
+    // A positive head with a sub-litre discharge must keep transferring.
+    Graph trickle({{"water",1,1000}});
+    trickle.add_volume({1,0,tank(),20000});trickle.add_volume({2,0,tank(),0});
+    trickle.add_portal({1,1,2,0,0.001,0.62,true,1});
+    assert(trickle.tick().moved==0&&trickle.backlog()==1);
+    for(int i=0;i<20;++i)trickle.tick();
+    assert(trickle.volumes().at(2).litres>0&&trickle.finite()==20000);
+    trickle.invalidate_portal(1,2);
+    const auto retained=trickle.volumes().at(2).litres;
+    for(int i=0;i<20;++i)trickle.tick();
+    assert(trickle.volumes().at(2).litres==retained);
+    std::cout<<"V3_HYDRAULIC_TRICKLE_PASS sub_litre_credit closed_portal exact_mass\n";
     // Volume count does not determine the tick work: 4096 dormant bodies,
     // one opening, one portal visit. A billion litres is still one node.
     Graph scale({{"water",1,1000}});

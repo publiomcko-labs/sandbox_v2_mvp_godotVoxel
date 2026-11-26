@@ -100,6 +100,24 @@ int main(){
             if(patch.ceiling==8)for(auto v:patch.vertices)assert(v.x<=2.0+1e-8);
         }
     assert(capped);
+    // Four independent high-drop columns share a square. Their exposed
+    // surfaces must tile the whole 2x2 footprint exactly once, including
+    // the three-label junction inside a triangle. Ignore capped aprons.
+    tp::Snapshot junction{{0,0,0},2,16,2,1,1,std::vector<std::uint8_t>(2*16*2,0)};
+    const std::array<int,4> junction_floors{0,4,8,12};
+    for(int z=0;z<2;++z)for(int x=0;x<2;++x)
+        for(int y=junction_floors[z*2+x];y<16;++y)
+            junction.air[static_cast<std::size_t>((z*2+x)*16+y)]=1;
+    auto j=tp::extract(junction);
+    assert(j.compartments.size()==4);
+    double total_area=0;
+    for(const auto &c:j.compartments)for(const auto &patch:surface::build(j,c))if(patch.ceiling==16)
+        for(std::size_t i=0;i<patch.vertices.size();i+=3) {
+            const auto a0=patch.vertices[i],b0=patch.vertices[i+1],c0=patch.vertices[i+2];
+            total_area+=std::abs((b0.x-a0.x)*(c0.z-a0.z)-(b0.z-a0.z)*(c0.x-a0.x))*0.5;
+        }
+    assert(std::abs(total_area-4.0)<1e-8);
+    std::cout<<"V3_HYDRAULIC_JUNCTION_PASS shared_diagonal three_owner_partition area="<<total_area<<"\n";
     // An edit on a shared tile boundary: the higher dry bank is
     // carved below the pond head. Both old portals close until their
     // new topology is published. No source or mass is recreated.
