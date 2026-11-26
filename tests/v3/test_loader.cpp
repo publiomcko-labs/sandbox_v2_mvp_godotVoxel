@@ -1,6 +1,7 @@
 #include "content_registry/loader.hpp"
 #include "content_registry/seed.hpp"
 #include "content_registry/geology.hpp"
+#include "content_registry/caves.hpp"
 #include <cassert>
 #include <chrono>
 #include <iostream>
@@ -135,5 +136,15 @@ int main(int argc, char **argv) {
     assert(temperate.config.at("materials").size()==6 && coastal.config.at("sand_height_m")!=temperate.config.at("sand_height_m"));
     rejected([&]{compile_geology(*geology,"base:stone");});
     std::cout << "V3_GEOLOGY_PALETTE_PASS\n";
+    auto caves=load({repo/"godot/mods/first-party",repo/"godot/mods/geology",repo/"godot/mods/caves"},reg);
+    auto natural=compile_caves(*caves,"karst:natural",20261119);
+    auto wide=compile_caves(*caves,"karst:wide",20261119);
+    assert(natural.at("noise_seeds").size()==5 && natural.at("noise_seeds")!=wide.at("noise_seeds"));
+    assert(natural==compile_caves(*caves,"karst:natural",20261119));
+    assert(natural.at("noise_seeds")!=compile_caves(*caves,"karst:natural",20261120).at("noise_seeds"));
+    auto bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["pocket_radius_m"]=16;
+    rejected([&]{reg.validate("cave_profile",bad);});
+    rejected([&]{compile_caves(*caves,"earth:temperate",0);});
+    std::cout << "V3_CAVE_PROFILE_PASS seeds=" << natural.at("noise_seeds").dump() << "\n";
     std::cout << "V3_LOADER_CONTRACT_PASS\n";
 }

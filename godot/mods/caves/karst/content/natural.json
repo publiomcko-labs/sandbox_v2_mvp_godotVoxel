@@ -1,0 +1,15 @@
+{
+  "id": "karst:natural",
+  "type": "cave_profile",
+  "data": {
+    "period_m": 52,
+    "radius_m": 3.2,
+    "max_depth_m": 112,
+    "threshold": 0.42,
+    "chamber_radius_m": 8.5,
+    "pocket_radius_m": 7,
+    "pocket_period_m": 32,
+    "entrance_cover_m": 5,
+    "pocket_warp_m": 1.7
+  }
+}

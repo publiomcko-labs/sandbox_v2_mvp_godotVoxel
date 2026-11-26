@@ -197,6 +197,22 @@ inline Registry initial_registry() {
             {str(j.at("subsurface_material")),"material"},{str(j.at("bedrock_material")),"material"}};
     });
     r.add("cave_profile", [](const Json &j) {
+        if(j.size()!=4) {
+            fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m"});
+            const auto period=positive(j.at("period_m"),256);
+            const auto radius=positive(j.at("radius_m"),12);
+            const auto chamber=positive(j.at("chamber_radius_m"),32);
+            const auto depth=positive(j.at("max_depth_m"),512);
+            const auto pocket_period=positive(j.at("pocket_period_m"),128);
+            const auto pocket=positive(j.at("pocket_radius_m"),20);
+            const auto warp=positive(j.at("pocket_warp_m"),8);
+            require(period>=24 && radius>=2 && chamber>radius && chamber<period*0.35,"cave network scale");
+            require(depth>=64 && pocket_period>=20 && pocket>=3 && pocket+warp+2<pocket_period*0.5,
+                    "pocket separation");
+            require(positive(j.at("entrance_cover_m"),12)<depth*0.2,"entrance cover");
+            positive(j.at("threshold"),1);
+            return std::vector<Reference>{};
+        }
         fields(j, {"period_m","radius_m","max_depth_m","threshold"});
         const auto period=positive(j.at("period_m"),4096);
         require(positive(j.at("radius_m"),128)<period,"cave radius must be smaller than period");

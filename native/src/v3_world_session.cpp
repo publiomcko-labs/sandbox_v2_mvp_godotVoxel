@@ -9,6 +9,7 @@
 #include <godot_cpp/variant/node_path.hpp>
 #include "persistence/checkpoint.hpp"
 #include "content_registry/geology.hpp"
+#include "content_registry/caves.hpp"
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/classes/voxel_format.hpp>
@@ -103,6 +104,7 @@ struct V3WorldSession::State {
     VoxelAdapter adapter;
     sc::InterestWindow interest;
     std::optional<ct::GeologyPalette> geology;
+    ct::Json caves;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -111,6 +113,8 @@ V3WorldSession::~V3WorldSession()=default;
 void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("open","first_party","external","world_root","world_id","seed"), &V3WorldSession::open);
     ClassDB::bind_method(D_METHOD("open_geology","first_party","external","world_root","world_id","seed","geology_root","profile"), &V3WorldSession::open_geology);
+    ClassDB::bind_method(D_METHOD("open_caves","first_party","external","world_root","world_id","seed","geology_root","profile","cave_root","cave_profile"), &V3WorldSession::open_caves);
+    ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
     ClassDB::bind_method(D_METHOD("submit_material","world","command","center","add","radius","material_id"), &V3WorldSession::submit_material);
     ClassDB::bind_method(D_METHOD("bind_world","world"), &V3WorldSession::bind_world);
@@ -128,27 +132,40 @@ void V3WorldSession::_bind_methods() {
 }
 bool V3WorldSession::open(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed) {
-    return open_impl(first_party,external,world_root,world_id,seed,String(),String());
+    return open_impl(first_party,external,world_root,world_id,seed,String(),String(),String(),String());
 }
 bool V3WorldSession::open_geology(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
                          const String &geology_root,const String &profile) {
     if(geology_root.is_empty() || profile.is_empty()) return false;
-    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile);
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,String(),String());
+}
+bool V3WorldSession::open_caves(const String &first_party,const String &external,
+                         const String &world_root,const String &world_id,int64_t seed,
+                         const String &geology_root,const String &profile,
+                         const String &cave_root,const String &cave_profile) {
+    if(geology_root.is_empty() || profile.is_empty() || cave_root.is_empty() || cave_profile.is_empty()) return false;
+    return open_impl(first_party,external,world_root,world_id,seed,geology_root,profile,cave_root,cave_profile);
 }
 bool V3WorldSession::open_impl(const String &first_party,const String &external,
                          const String &world_root,const String &world_id,int64_t seed,
-                         const String &geology_root,const String &profile) {
+                         const String &geology_root,const String &profile,
+                         const String &cave_root,const String &cave_profile) {
     try {
         ct::require(!state_ && seed>=0,"invalid or already initialized session");
         auto next=std::make_unique<State>();
         std::vector<fs::path> roots{path_of(first_party),path_of(external)};
         if(!geology_root.is_empty()) roots.push_back(path_of(geology_root));
+        if(!cave_root.is_empty()) roots.push_back(path_of(cave_root));
         next->snapshot=ct::load(roots,ct::initial_registry());
         std::string generator(ps::generator_version);
         if(!geology_root.is_empty()) {
             next->geology=ct::compile_geology(*next->snapshot,narrow(profile));
             generator="v3_2_single_s4_v1:"+next->geology->profile_id;
+        }
+        if(!cave_root.is_empty()) {
+            next->caves=ct::compile_caves(*next->snapshot,narrow(cave_profile),static_cast<uint64_t>(seed));
+            generator="v3_3_caves_v1:"+next->geology->profile_id+":"+narrow(cave_profile);
         }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         const auto c=next->store.header().core;
@@ -185,6 +202,10 @@ bool V3WorldSession::bind_world(WorldBootstrap *world) {
         last_error_=String();
         return true;
     } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
+}
+String V3WorldSession::get_cave_json() const {
+    if(!state_ || state_->caves.is_null()) return {};
+    return String::utf8(state_->caves.dump().c_str());
 }
 String V3WorldSession::get_geology_json() const {
     if(!state_ || !state_->geology) return {};

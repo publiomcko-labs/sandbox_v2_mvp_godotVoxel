@@ -1,0 +1,15 @@
+{
+  "id": "karst:wide",
+  "type": "cave_profile",
+  "data": {
+    "period_m": 68,
+    "radius_m": 4.5,
+    "max_depth_m": 144,
+    "threshold": 0.38,
+    "chamber_radius_m": 11,
+    "pocket_radius_m": 9,
+    "pocket_period_m": 40,
+    "entrance_cover_m": 6,
+    "pocket_warp_m": 2.2
+  }
+}

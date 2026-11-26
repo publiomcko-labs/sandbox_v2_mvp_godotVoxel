@@ -6,6 +6,8 @@ const WORLD_SCENE := preload("res://scenes/main.tscn")
 const EDITOR := preload("res://scripts/v3_edit_controller.gd")
 const TICK_BUDGET := 4
 @export var geology_enabled := false
+@export var caves_enabled := false
+var cave_config: Dictionary = {}
 var geology_config: Dictionary = {}
 var selected_material := 0
 var session: V3WorldSession
@@ -31,7 +33,7 @@ func _ready() -> void:
     if mods.is_empty():
         mods = ProjectSettings.globalize_path("user://mods_v3")
     if worlds.is_empty():
-        worlds = ProjectSettings.globalize_path("user://worlds_v32" if geology_enabled else "user://worlds_v3")
+        worlds = ProjectSettings.globalize_path("user://worlds_v33" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3"))
     if world_id.is_empty():
         world_id = "world"
     if seed_text.is_empty():
@@ -51,8 +53,22 @@ func _ready() -> void:
         var profile := OS.get_environment("V3_GEOLOGY_PROFILE")
         if profile.is_empty():
             profile = "earth:temperate"
-        opened = session.open_geology(first, mods, worlds, world_id, seed_text.to_int(),
-            ProjectSettings.globalize_path("res://mods/geology"), profile)
+        if caves_enabled:
+            var cave_profile := OS.get_environment("V3_CAVE_PROFILE")
+            if cave_profile.is_empty():
+                cave_profile = "karst:natural"
+            opened = session.open_caves(first, mods, worlds, world_id, seed_text.to_int(),
+                ProjectSettings.globalize_path("res://mods/geology"),profile,
+                ProjectSettings.globalize_path("res://mods/caves"),cave_profile)
+            if opened:
+                var cave_parsed: Variant = JSON.parse_string(session.get_cave_json())
+                if not cave_parsed is Dictionary:
+                    _fatal("invalid compiled cave config")
+                    return
+                cave_config = cave_parsed
+        else:
+            opened = session.open_geology(first, mods, worlds, world_id, seed_text.to_int(),
+                ProjectSettings.globalize_path("res://mods/geology"), profile)
         if opened:
             var parsed: Variant = JSON.parse_string(session.get_geology_json())
             if not parsed is Dictionary:
@@ -71,7 +87,15 @@ func _ready() -> void:
     terrain = world.get_node("Terrain") as VoxelLodTerrain
     terrain.set("world_seed", seed_text.to_int())
     terrain.set("geology_config", geology_config)
+    terrain.set("cave_config", cave_config)
     player = world.get_node("Player") as Node3D
+    # Optional explicit exploratory spawn from validated fixture coordinates.
+    if caves_enabled:
+        var spawn := OS.get_environment("V3_CAVE_SPAWN").split(",")
+        if spawn.size()==3 and spawn[0].is_valid_float() and spawn[1].is_valid_float() and spawn[2].is_valid_float():
+            var pos := Vector3(float(spawn[0]),float(spawn[1]),float(spawn[2]))
+            if pos.is_finite() and pos.length()<1000000.0:
+                player.position=pos
     rocks = world.get_node("RockManager") as Node3D
     status = world.get_node("HUD/Status") as Label
     var editor := world.get_node("EditController")
