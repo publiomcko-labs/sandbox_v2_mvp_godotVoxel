@@ -48,13 +48,72 @@ inline std::vector<FlowFace> flow_faces(const topology::Result &a,Id from,
     }
     return out;
 }
+// Exposed free surfaces use a conservative full-footprint sheet. The
+// ownership of a certified open column is never reduced to a diagonal
+// contour: that contour can cut through the actual wet space. Only the
+// opaque terrain and the bounded floor/roof clips determine the shoreline.
+// These are static geometric triangles, not simulated water cells.
+inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology::Compartment &c,int top) {
+    const int ceiling=g.origin.y+top*g.step;
+    std::vector<Patch> out;
+    Patch sheet{ceiling,{}};
+    std::map<int,Patch> aprons;
+    const auto column=[&](int x,int z)->const std::vector<topology::Span>& {
+        return g.column_runs.at(static_cast<std::size_t>(z*g.nx+x));
+    };
+    const auto inside=[&](int x,int z){return x>=0&&x<g.nx&&z>=0&&z<g.nz;};
+    const auto floor_at=[&](int x,int z,int floor) {
+        if(inside(x,z))for(const auto &v:column(x,z))
+            if(v.top==top&&v.compartment==c.id)floor=std::min(floor,g.origin.y+v.bottom*g.step);
+        return floor;
+    };
+    const auto quad=[](Patch &p,Point a,Point b,Point d,Point e) {
+        p.vertices.insert(p.vertices.end(),{a,b,d,a,d,e});
+    };
+    for(const auto &v:c.spans)if(v.top==top) {
+        const int x=v.x,z=v.z,floor=g.origin.y+v.bottom*g.step;
+        auto corner=[&](int dx,int dz) {
+            int h=floor;
+            for(int oz=dz-1;oz<=dz;++oz)for(int ox=dx-1;ox<=dx;++ox)
+                h=floor_at(x+ox,z+oz,h);
+            return Point{double(x+dx),double(z+dz),double(h)};
+        };
+        quad(sheet,corner(0,0),corner(1,0),corner(1,1),corner(0,1));
+        // Extend only into known classified solid. The first higher air
+        // interval sets the cap; no extension above that opening or into
+        // unknown tiles. Full edges (rather than diagonal slivers) share
+        // precisely the same boundary as the primary sheet.
+        for(const auto d:{core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
+            const int nx=x+d.x,nz=z+d.z;
+            if(!inside(nx,nz))continue;
+            int cap=ceiling;bool open=false;
+            for(const auto &n:column(nx,nz)) {
+                if(n.bottom<=v.bottom&&v.bottom<n.top){open=true;break;}
+                if(n.bottom>v.bottom)cap=std::min(cap,g.origin.y+n.bottom*g.step);
+            }
+            if(open||cap<=floor)continue;
+            auto &p=aprons.try_emplace(cap,Patch{cap,{}}).first->second;
+            Point a,b;
+            if(d.x){a=corner(d.x>0?1:0,0);b=corner(d.x>0?1:0,1);}
+            else{a=corner(0,d.z>0?1:0);b=corner(1,d.z>0?1:0);}
+            Point e=a,q=b;
+            e.x+=d.x*0.5;e.z+=d.z*0.5;
+            q.x+=d.x*0.5;q.z+=d.z*0.5;
+            // Match primary edge's UV exactly to avoid a shader-cut seam.
+            if(d.x<0||d.z>0)quad(p,b,a,e,q);else quad(p,a,b,q,e);
+        }
+    }
+    if(!sheet.vertices.empty())out.push_back(std::move(sheet));
+    for(auto &[cap,p]:aprons){(void)cap;if(!p.vertices.empty())out.push_back(std::move(p));}
+    return out;
+}
 // Contours are evaluated at column centers, with a ghost ring clamped
 // to the edge of the tile. Triangular interpolation removes the square
 // corners without generating a volume mesh or tracking wet samples.
-inline std::vector<Patch> build(const topology::Result &g,const topology::Compartment &c) {
+inline std::vector<Patch> build(const topology::Result &g,const topology::Compartment &c,int exposed_top=-1) {
     std::map<int,std::map<std::pair<int,int>,int>> layers;
-    for(const auto &s:c.spans)layers[s.top].emplace(std::pair{s.x,s.z},s.bottom);
-    std::vector<Patch> out;
+    for(const auto &s:c.spans)if(s.top!=exposed_top)layers[s.top].emplace(std::pair{s.x,s.z},s.bottom);
+    auto out=exposed_top>0?exposed_sheet(g,c,exposed_top):std::vector<Patch>{};
     const auto sample=[&](int x,int z) {
         return std::pair{std::clamp(x,0,g.nx-1),std::clamp(z,0,g.nz-1)};
     };

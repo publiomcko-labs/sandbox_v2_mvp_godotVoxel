@@ -9,6 +9,8 @@ var _flow_materials: Array[ShaderMaterial]=[]
 var _flow_nodes: Dictionary={}
 var _flow_previous: Dictionary={}
 var _flow_quads:=0
+var _initial_presented:=false
+var _initial_cohort: Dictionary={}
 var _meshes: Dictionary={}
 var _mesh_tiles: Dictionary={}
 var _deferred_swaps:=0
@@ -83,6 +85,20 @@ func refresh() -> void:
         node.material_override=_materials[int(row[1])]
         node.position.y=float(row[2])
         _level_updates+=1
+    # First presentation is a cohort across tiles, not the first available
+    # single rectangular mesh. Existing per-tile atomic replacement remains
+    # unchanged after startup. No physics or simulated time is hidden.
+    if not _initial_presented and not live.is_empty():
+        if _initial_cohort.is_empty():
+            _initial_cohort=live.duplicate()
+        var initial_ready:=true
+        for id: int in _initial_cohort:
+            if live.has(id) and not _meshes.has(id):
+                initial_ready=false
+                break
+        if initial_ready:
+            _initial_presented=true
+            _initial_cohort.clear()
     # Replacement is atomic per tile, not per compartment. Never remove
     # the old visible water while the bounded new mesh queue is incomplete.
     var ready: Dictionary={}
@@ -95,7 +111,7 @@ func refresh() -> void:
         var complete:=int(ready.get(tile,0))==int(wanted.get(tile,0))
         var node: MeshInstance3D=_meshes[id]
         if live.has(id):
-            if complete:
+            if complete and _initial_presented:
                 node.visible=true
         elif complete or not node.visible:
             node.visible=false

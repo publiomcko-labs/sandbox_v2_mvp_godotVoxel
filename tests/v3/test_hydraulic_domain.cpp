@@ -131,6 +131,48 @@ int main(){
         }
     assert(std::abs(total_area-4.0)<1e-8);
     std::cout<<"V3_HYDRAULIC_JUNCTION_PASS shared_diagonal three_owner_partition area="<<total_area<<"\n";
+    // H6 primary exposed geometry must cover every certified open column,
+    // including the diagonal corners the old binary contour cut away.
+    tp::Snapshot footprint{{0,0,0},2,8,2,1,1,std::vector<std::uint8_t>(2*8*2,0)};
+    for(int y=1;y<8;++y)footprint.air[static_cast<std::size_t>(y)]=1;
+    auto foot=tp::extract(footprint);
+    const auto full=surface::build(foot,foot.compartments.front(),8);
+    assert(!full.empty()&&full.front().vertices.size()==6);
+    double primary_area=0;
+    for(std::size_t i=0;i<full.front().vertices.size();i+=3) {
+        const auto a0=full.front().vertices[i],b0=full.front().vertices[i+1],c0=full.front().vertices[i+2];
+        primary_area+=std::abs((b0.x-a0.x)*(c0.z-a0.z)-(b0.z-a0.z)*(c0.x-a0.x))*0.5;
+        for(auto p:{a0,b0,c0})assert(p.x>=0&&p.x<=1&&p.z>=0&&p.z<=1&&p.floor<=1);
+    }
+    assert(primary_area==1);
+    const auto full_low=surface::build(divided,*std::find_if(divided.compartments.begin(),divided.compartments.end(),[&](const auto &c){return c.id==low;}),8);
+    bool full_bank=false;
+    for(const auto &patch:full_low)if(patch.ceiling==4)
+        for(auto p:patch.vertices)if(p.x>2)full_bank=true;
+    assert(full_bank);
+    // Two connected tiles initialize at the same declared head. A third
+    // tile behind a sill above the head and an isolated cave remain dry.
+    Domain initial({{"water",1,1000}},4,4,1,0);
+    auto raised=b;raised.origin.x=8;
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=0;y<4;++y)
+        raised.air[static_cast<std::size_t>((z*4+x)*8+y)]=0;
+    auto initial_a=a;
+    for(int y=2;y<4;++y)initial_a.air[static_cast<std::size_t>(y)]=0;
+    assert(initial.publish(tp::extract(initial_a))&&initial.publish(tp::extract(b)));
+    std::set<core::Region> window{a.origin,b.origin,raised.origin};
+    assert(!initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
+    assert(initial.graph().finite()==0);
+    assert(initial.publish(tp::extract(raised)));
+    assert(initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
+    const auto ia=*initial.volume_at({1,1,1}),ib=*initial.volume_at({5,1,1});
+    assert(std::abs(initial.graph().volumes().at(ia).level()-3)<0.001);
+    assert(std::abs(initial.graph().volumes().at(ib).level()-3)<0.001);
+    assert(!initial.wet_at({0.5,0.5,0.5})&&!initial.wet_at({8.5,4.1,0.5}));
+    const auto initial_mass=initial.graph().finite();
+    assert(initial_mass>0&&!initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
+    assert(initial.graph().finite()==initial_mass);
+    std::cout<<"V3_HYDRAULIC_INITIAL_BASIN_PASS common_head cross_tile closed_sill covered_dry idempotent\n";
+    std::cout<<"V3_HYDRAULIC_FULL_FOOTPRINT_PASS full_column no_diagonal_cut capped_apron\n";
     // An edit on a shared tile boundary: the higher dry bank is
     // carved below the pond head. Both old portals close until their
     // new topology is published. No source or mass is recreated.

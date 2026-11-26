@@ -156,6 +156,47 @@ public:
         if(!graph_.initialize(*id,type,amount))return false;
         seeded_.insert(source);return true;
     }
+    // Initial finite lake only: seed the declared head across the known
+    // exposed, hydraulically reachable component. Never traverse a closed
+    // or above-head sill, a covered interval, or an already seeded body.
+    // Later edits and new tiles use the ordinary conservative solver.
+    bool seed_surface_basin(const std::string &source,core::Vec3 anchor,std::size_t type,
+            double level,int ceiling,const std::set<core::Region> &window) {
+        if(source.empty()||!std::isfinite(level)||level<=anchor.y||
+            type>=graph_.types().size()||seeded_.contains(source))return false;
+        const auto root=volume_at(anchor);if(!root)return false;
+        std::set<Id> exposed;
+        for(const auto &k:window) {
+            const auto it=tiles_.find(k);
+            if(it==tiles_.end()||!it->second.available)return false;
+            const auto &t=it->second;
+            for(const auto &c:t.geometry->compartments)
+                if(std::any_of(c.spans.begin(),c.spans.end(),[&](const auto &s){
+                    return t.geometry->origin.y+s.top*t.geometry->step==ceiling;
+                }))exposed.insert(t.ids.at(c.id));
+        }
+        const auto eligible=[&](Id id){
+            const auto &v=graph_.volumes().at(id);
+            return exposed.contains(id)&&!v.ocean&&!v.litres&&v.curve.at_level(level)>0;
+        };
+        if(!eligible(*root))return false;
+        std::set<Id> reached{*root};
+        std::deque<Id> queue{*root};
+        while(!queue.empty()) {
+            const auto id=queue.front();queue.pop_front();
+            for(auto pid:graph_.incident(id)) {
+                const auto &p=graph_.portals().at(pid);
+                if(!p.available||p.sill_m>=level||p.opening_height_m<=0||
+                    p.sill_m+p.opening_height_m<double(ceiling)-0.001)continue;
+                const auto next=p.a==id?p.b:p.a;
+                if(eligible(next)&&reached.insert(next).second)queue.push_back(next);
+            }
+        }
+        auto staged=graph_;
+        for(auto id:reached)
+            if(!staged.initialize(id,type,staged.volumes().at(id).curve.at_level(level)))return false;
+        graph_=std::move(staged);seeded_.insert(source);return true;
+    }
     bool add_ocean(const std::string &source,core::Vec3 anchor,std::size_t type,double level,double area,bool exposure_certified) {
         if(source.empty()||!exposure_certified||seeded_.contains(source)||!core::valid_point(anchor)||
             !std::isfinite(level)||level<=anchor.y||!std::isfinite(area)||area<=0||area>4096)return false;

@@ -98,14 +98,17 @@ class Runtime {
         }
         return out;
     }
-    void seed(const core::Region &k) {
-        const auto &tile=domain_.tiles().at(k);
+    void seed(const core::Region &center) {
         for(const auto &rule:profile_.config.at("sources")) {
             const auto id=content::str(rule.at("id"));
             if(domain_.seeded().contains(id))continue;
             const auto &a=rule.at("anchor_m");
             core::Vec3 anchor{a[0].get<double>()+0.5,a[1].get<double>()+0.5,a[2].get<double>()+0.5};
-            if(key(anchor)!=k)continue;
+            const auto k=key(anchor);
+            if(!within_interest(k,center))continue;
+            auto found=domain_.tiles().find(k);
+            if(found==domain_.tiles().end()||!found->second.available)continue;
+            const auto &tile=found->second;
             const double level=rule.at("level_m").get<double>();
             // Explicit source tile only. Pick closest column whose air run
             // reaches the top of the bounded surface band and lies below head.
@@ -121,7 +124,14 @@ class Runtime {
             const auto slot=rule.at("slot").get<std::size_t>();
             if(rule.at("source_kind")=="fixed_head_ocean")
                 domain_.add_ocean(id,*chosen,slot,level,4,true);
-            else domain_.seed_finite(id,*chosen,slot,level,true);
+            else {
+                // Seed only when all nine near-source tiles are available;
+                // do not reveal a rectangular single-tile lake on startup.
+                std::set<core::Region> window;
+                for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)
+                    window.insert({k.x+x*side,base,k.z+z*side});
+                domain_.seed_surface_basin(id,*chosen,slot,level,base+height,window);
+            }
         }
     }
 public:
@@ -164,10 +174,11 @@ public:
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
             if(hydraulic_interest(k,center)&&resident(tool,k)) {
-                if(domain_.publish(std::move(*result))){edited_tiles_.erase(k);++publications_;seed(k);}
+                if(domain_.publish(std::move(*result))){edited_tiles_.erase(k);++publications_;}
                 else blocked_[k]=revision;
             }
         }
+        seed(center);
         // At most one immutable copy per frame. Prioritize nearest tiles.
         std::vector<core::Region> candidates(edited_tiles_.begin(),edited_tiles_.end());
         for(const auto &[k,t]:domain_.tiles())if(wet_tile(t)) {
@@ -241,7 +252,7 @@ public:
             if(t.ids.at(c.id)!=id)continue;
             PackedVector3Array vertices;PackedVector2Array uv;
             const bool exposed=std::any_of(c.spans.begin(),c.spans.end(),[](const auto &s){return s.top==height;});
-            for(const auto &patch:surface::build(*t.geometry,c))for(auto p:patch.vertices) {
+            for(const auto &patch:surface::build(*t.geometry,c,height))for(auto p:patch.vertices) {
                 vertices.push_back(Vector3(k.x+p.x*t.geometry->step,0,k.z+p.z*t.geometry->step));
                 // Exposed basin banks may extend into solid by one sample.
                 // Roofed intervals keep the conservative lower clip.
