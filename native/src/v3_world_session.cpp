@@ -10,6 +10,8 @@
 #include "persistence/checkpoint.hpp"
 #include "content_registry/geology.hpp"
 #include "content_registry/caves.hpp"
+#include "hydraulic_voxel_snapshot.hpp"
+#include <chrono>
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/classes/voxel_format.hpp>
@@ -123,6 +125,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_content_ids"), &V3WorldSession::get_content_ids);
     ClassDB::bind_method(D_METHOD("get_record_json","id"), &V3WorldSession::get_record_json);
     ClassDB::bind_method(D_METHOD("get_state"), &V3WorldSession::get_state);
+    ClassDB::bind_method(D_METHOD("inspect_hydraulic_tile","world","origin","extent"), &V3WorldSession::inspect_hydraulic_tile);
     ClassDB::bind_method(D_METHOD("submit","world","command","center","add","radius"), &V3WorldSession::submit);
     ClassDB::bind_method(D_METHOD("peek_terrain_event"), &V3WorldSession::peek_terrain_event);
     ClassDB::bind_method(D_METHOD("ack_terrain_event","revision"), &V3WorldSession::ack_terrain_event);
@@ -225,6 +228,33 @@ String V3WorldSession::get_record_json(const String &id) const {
     const auto &r=state_->snapshot->records[it->second];
     const auto value=ct::Json{{"id",r.id},{"type",r.type},{"data",r.data}}.dump();
     return String::utf8(value.c_str());
+}
+Dictionary V3WorldSession::inspect_hydraulic_tile(WorldBootstrap *world,const Vector3i &origin,const Vector3i &extent) {
+    namespace hy=sandbox::hydraulic;
+    Dictionary out;
+    out["status"]="rejected";
+    try {
+        ct::require(state_&&state_->store.is_open()&&world&&state_->bound_world==world->get_instance_id(),"unbound hydraulic snapshot");
+        auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+        ct::require(terrain!=nullptr,"terrain missing");
+        const auto start=std::chrono::steady_clock::now();
+        auto snapshot=hy::copy_air_snapshot(terrain->get_voxel_tool(),origin,extent,state_->core->revision());
+        if(!snapshot){out["status"]="deferred";return out;}
+        const auto copied=std::chrono::steady_clock::now();
+        const auto geometry=hy::topology::extract(*snapshot);
+        const auto end=std::chrono::steady_clock::now();
+        hy::Litres capacity=0;
+        for(const auto &c:geometry.compartments)capacity+=c.curve.capacity();
+        out["status"]="ready";
+        out["revision"]=static_cast<int64_t>(geometry.revision);
+        out["compartments"]=static_cast<int64_t>(geometry.compartments.size());
+        out["portals"]=static_cast<int64_t>(geometry.openings.size());
+        out["boundary_intervals"]=static_cast<int64_t>(geometry.boundaries.size());
+        out["capacity_litres"]=capacity;
+        out["snapshot_usec"]=static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(copied-start).count());
+        out["extract_usec"]=static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(end-copied).count());
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());out["error"]=last_error_;}
+    return out;
 }
 Dictionary V3WorldSession::get_state() const {
     Dictionary d;

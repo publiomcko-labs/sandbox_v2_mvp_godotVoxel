@@ -103,6 +103,7 @@ foreach ($case in @(
     $env:V3_WORLD_SEED=$case.seed
     $env:V3_CAVE_PROFILE=$case.profile
     $env:V3_GEOLOGY_PROFILE='earth:temperate'
+    $hydraulicCapacity=$null
     foreach ($phase in $case.phases) {
         $stdout=Join-Path $results "caves-$($case.id)-$phase.stdout.log"
         $stderr=Join-Path $results "caves-$($case.id)-$phase.stderr.log"
@@ -116,10 +117,16 @@ foreach ($case in @(
             throw "V3 caves $phase contains errors"
         }
         if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or
+            -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_HYDRAULIC_SDF_PASS phase=$phase") -or
             -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_CAVES_FIXTURE_PASS phase=$phase") -or
             -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {
             throw "V3 caves $phase failed exit=$($p.ExitCode)"
         }
+        $marker=Select-String -LiteralPath $stdout -Pattern 'V3_HYDRAULIC_SDF_PASS.*capacity_after=(\d+)'
+        if (!$marker) { throw 'Hydraulic SDF evidence missing' }
+        $observed=[int64]$marker.Matches[0].Groups[1].Value
+        if ($phase -eq 'write') { $hydraulicCapacity=$observed }
+        elseif ($observed -ne $hydraulicCapacity) { throw 'Hydraulic geometry differs across SQLite reopen' }
     }
     $worldPath=Join-Path $env:V3_WORLD_ROOT $case.id
     $checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json

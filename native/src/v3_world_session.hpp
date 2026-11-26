@@ -4,6 +4,7 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/variant/vector3i.hpp>
 #include <memory>
 #include <cstdint>
 
@@ -39,6 +40,7 @@ public:
     Array get_content_ids() const;
     String get_record_json(const String &id) const;
     Dictionary get_state() const;
+    Dictionary inspect_hydraulic_tile(WorldBootstrap *world,const Vector3i &origin,const Vector3i &extent);
     String submit(WorldBootstrap *world, int64_t command, const Vector3 &center,
                   bool add, double radius);
     Dictionary peek_terrain_event() const;

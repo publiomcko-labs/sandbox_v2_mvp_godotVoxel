@@ -258,6 +258,12 @@ func _test() -> void:
             return
         await process_frame
     var tool:=terrain.get_voxel_tool()
+    var sample_origin:=Vector3i(11,22,11)
+    var sample_extent:=Vector3i(8,8,8)
+    var before: Dictionary=runtime.session.inspect_hydraulic_tile(world,sample_origin,sample_extent)
+    if before.get("status")!="ready" or int(before.get("compartments",0))<1:
+        _fail("hydraulic snapshot unavailable "+str(before))
+        return
     if write:
         if not runtime.select_material(5) or runtime.submit_brush(ADD,true,RADIUS)!="accepted":
             _fail("material construction")
@@ -274,5 +280,19 @@ func _test() -> void:
         _fail("persisted material")
         return
     tool.channel=VoxelBuffer.CHANNEL_SDF
+    var after: Dictionary=runtime.session.inspect_hydraulic_tile(world,sample_origin,sample_extent)
+    if after.get("status")!="ready" or int(after.get("revision",-1))!=1:
+        _fail("hydraulic geometry revision")
+        return
+    if write and int(after["capacity_litres"])>=int(before["capacity_litres"]):
+        _fail("construction did not reduce hydraulic capacity")
+        return
+    if not write and int(after["capacity_litres"])!=int(before["capacity_litres"]):
+        _fail("hydraulic geometry repeat mismatch")
+        return
+    print("V3_HYDRAULIC_SDF_PASS phase=","write" if write else "reopen"," seed=",seed_value,
+        " capacity_before=",before["capacity_litres"]," capacity_after=",after["capacity_litres"],
+        " compartments=",after["compartments"]," portals=",after["portals"],
+        " snapshot_usec=",after["snapshot_usec"]," extract_usec=",after["extract_usec"])
     print("V3_CAVES_FIXTURE_PASS phase=","write" if write else "reopen"," seed=",seed_value)
     runtime.request_close()

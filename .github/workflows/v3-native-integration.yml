@@ -1,9 +1,10 @@
 name: V3 native integration and isolated SQLite reopen
 on:
   push:
-    branches: [v3/development]
+    branches: [v3/hydraulic]
     paths:
       - 'native/src/v3_world_session.*'
+      - 'native/src/hydraulic_voxel_snapshot.hpp'
       - 'native/src/register_types.cpp'
       - 'native/SConstruct'
       - 'native/src/core/**'
@@ -29,7 +30,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: v3-native-integration
+  group: v3-hydraulic-native-integration
   cancel-in-progress: false
 jobs:
   native-headless:

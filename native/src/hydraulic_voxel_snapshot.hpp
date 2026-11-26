@@ -1,0 +1,39 @@
+#pragma once
+#include "core/hydraulic_topology.hpp"
+#include <godot_cpp/classes/voxel_buffer.hpp>
+#include <godot_cpp/classes/voxel_tool.hpp>
+#include <godot_cpp/variant/aabb.hpp>
+#include <godot_cpp/variant/vector3i.hpp>
+
+namespace sandbox::hydraulic {
+namespace tp=topology;
+// Must be called on the engine main thread. The returned snapshot owns
+// plain C++ data only, suitable for off-thread topology extraction later.
+// It is a geometric classification, not an additional terrain store.
+inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::VoxelTool>& tool,
+        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision) {
+    using namespace godot;
+    if(extent.x<1||extent.x>16||extent.z<1||extent.z>16||extent.y<1||extent.y>64||
+        std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
+        std::abs(std::int64_t(origin.z))>1000000)
+        throw std::invalid_argument("hydraulic voxel snapshot bounds");
+    const auto size=extent+Vector3i(1,1,1);
+    if(tool.is_null()||!tool->is_area_editable(AABB(Vector3(origin),Vector3(size))))return {};
+    Ref<VoxelBuffer> buffer;buffer.instantiate();buffer->create(size.x,size.y,size.z);
+    tool->copy(origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
+    tp::Snapshot snapshot{{origin.x,origin.y,origin.z},extent.x,extent.y,extent.z,1,revision,{}};
+    snapshot.air.resize(static_cast<std::size_t>(extent.x*extent.y*extent.z));
+    // Each corner is classified once; reuse between adjacent samples.
+    std::vector<std::uint8_t> corners(static_cast<std::size_t>(size.x*size.y*size.z));
+    auto index=[&](int x,int y,int z){return static_cast<std::size_t>((z*size.x+x)*size.y+y);};
+    for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x)for(int y=0;y<size.y;++y)
+        corners[index(x,y,z)]=buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF)>0.1?1:0;
+    for(int z=0;z<extent.z;++z)for(int x=0;x<extent.x;++x)for(int y=0;y<extent.y;++y) {
+        bool open=true;
+        for(int dx=0;dx<=1;++dx)for(int dy=0;dy<=1;++dy)for(int dz=0;dz<=1;++dz)
+            open=open&&corners[index(x+dx,y+dy,z+dz)]!=0;
+        snapshot.air[static_cast<std::size_t>((z*extent.x+x)*extent.y+y)]=open?1:0;
+    }
+    return snapshot;
+}
+}
