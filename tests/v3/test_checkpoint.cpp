@@ -59,5 +59,15 @@ int main() {
     invalid=encode(next); invalid["core"]["last_command"]=-1;
     rejected([&]{decode(invalid);});
     rejected([&]{retry.begin(t.path,"../escape",42,pins);});
+    CheckpointStore geology;
+    geology.begin(t.path,"geology",42,pins,"v3_2_single_s4_v1:earth:temperate");
+    external_fixture(geology.path());
+    geology.finish({},true,true);
+    CheckpointStore mismatch;
+    rejected([&]{mismatch.begin(t.path,"geology",42,pins);});
+    rejected([&]{mismatch.begin(t.path,"geology",42,pins,"v3_2_single_s4_v1:earth:coastal");});
+    CheckpointStore geo_reopen;
+    geo_reopen.begin(t.path,"geology",42,pins,"v3_2_single_s4_v1:earth:temperate");
+    geo_reopen.finish({},true,true);
     std::cout<<"V3_CHECKPOINT_CONTRACT_PASS\n";
 }

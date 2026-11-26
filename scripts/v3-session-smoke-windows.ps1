@@ -59,3 +59,32 @@ if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
     throw 'V3 runtime clean checkpoint failed'
 }
 Write-Host 'V3_RUNTIME_E2E_PASS (headless)'
+
+# V3.2 has its own schema/format and cannot reuse a V3.1 SQLite world.
+$env:V3_WORLD_ROOT=Join-Path $results 'geology-worlds'
+$env:V3_WORLD_ID='geology_fixture'
+$env:V3_GEOLOGY_PROFILE='earth:temperate'
+New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+foreach ($phase in @('write','reopen')) {
+    $stdout=Join-Path $results "geology-$phase.stdout.log"
+    $stderr=Join-Path $results "geology-$phase.stderr.log"
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_geology_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "V3 geology fixture $phase timed out" }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or
+        -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_GEOLOGY_FIXTURE_PASS phase=$phase") -or
+        -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {
+        throw "V3 geology $phase failed exit=$($p.ExitCode)"
+    }
+}
+$geologyWorld=Join-Path $env:V3_WORLD_ROOT 'geology_fixture'
+$checkpoint=Get-Content (Join-Path $geologyWorld 'checkpoint.json') -Raw | ConvertFrom-Json
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
+    $checkpoint.generator_version -ne 'v3_2_single_s4_v1:earth:temperate' -or
+    $checkpoint.pins.Count -ne 4 -or (Test-Path (Join-Path $geologyWorld 'session_pending'))) {
+    throw 'V3 geology checkpoint contract failed'
+}
+Write-Host 'V3_GEOLOGY_E2E_PASS (headless; no graphical qualification)'

@@ -8,7 +8,8 @@ func _ready() -> void:
 func _do_edit(center: Vector3, add: bool) -> void:
     var result: String = coordinator.call("submit_brush", center, add, BRUSH_RADIUS_M)
     if result == "accepted":
-        _set_status("V3 edit accepted | revision %d | Ctrl+S flush" % coordinator.get("last_revision"))
+        var selected: String = coordinator.call("selected_material_id")
+        _set_status("V3 edit accepted | revision %d | %s | Ctrl+S flush" % [coordinator.get("last_revision"), selected])
     else:
         _set_status("V3 edit: " + result)
 

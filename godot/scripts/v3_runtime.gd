@@ -5,6 +5,9 @@ signal terrain_edited(bounds: AABB, revision: int, command: int)
 const WORLD_SCENE := preload("res://scenes/main.tscn")
 const EDITOR := preload("res://scripts/v3_edit_controller.gd")
 const TICK_BUDGET := 4
+@export var geology_enabled := false
+var geology_config: Dictionary = {}
+var selected_material := 0
 var session: V3WorldSession
 var world: WorldBootstrap
 var terrain: VoxelLodTerrain
@@ -28,7 +31,7 @@ func _ready() -> void:
     if mods.is_empty():
         mods = ProjectSettings.globalize_path("user://mods_v3")
     if worlds.is_empty():
-        worlds = ProjectSettings.globalize_path("user://worlds_v3")
+        worlds = ProjectSettings.globalize_path("user://worlds_v32" if geology_enabled else "user://worlds_v3")
     if world_id.is_empty():
         world_id = "world"
     if seed_text.is_empty():
@@ -43,7 +46,22 @@ func _ready() -> void:
         _fatal("cannot create V3 directories")
         return
     session = V3WorldSession.new()
-    if not session.open(first, mods, worlds, world_id, seed_text.to_int()):
+    var opened := false
+    if geology_enabled:
+        var profile := OS.get_environment("V3_GEOLOGY_PROFILE")
+        if profile.is_empty():
+            profile = "earth:temperate"
+        opened = session.open_geology(first, mods, worlds, world_id, seed_text.to_int(),
+            ProjectSettings.globalize_path("res://mods/geology"), profile)
+        if opened:
+            var parsed: Variant = JSON.parse_string(session.get_geology_json())
+            if not parsed is Dictionary:
+                _fatal("invalid compiled geology config")
+                return
+            geology_config = parsed
+    else:
+        opened = session.open(first, mods, worlds, world_id, seed_text.to_int())
+    if not opened:
         _fatal("session open: " + session.get_last_error())
         return
     var path := session.get_world_path()
@@ -52,6 +70,7 @@ func _ready() -> void:
     world = WORLD_SCENE.instantiate() as WorldBootstrap
     terrain = world.get_node("Terrain") as VoxelLodTerrain
     terrain.set("world_seed", seed_text.to_int())
+    terrain.set("geology_config", geology_config)
     player = world.get_node("Player") as Node3D
     rocks = world.get_node("RockManager") as Node3D
     status = world.get_node("HUD/Status") as Label
@@ -59,7 +78,7 @@ func _ready() -> void:
     editor.set_script(EDITOR)
     editor.set("coordinator", self)
     add_child(world)
-    if not session.bind_world(world):
+    if not bool(terrain.get("graph_ready")) or not session.bind_world(world):
         _fatal("world bind: " + session.get_last_error())
         return
     var state := session.get_state()
@@ -67,6 +86,8 @@ func _ready() -> void:
     _next_command = int(state.get("last_command")) + 1
     _last_usec = Time.get_ticks_usec()
     running = true
+    if geology_enabled:
+        select_material(0)
     print("V3_RUNTIME_READY path=", path, " ids=", session.get_content_ids(), " state=", state)
 
 func _fatal(reason: String) -> void:
@@ -91,7 +112,11 @@ func _process(_delta: float) -> void:
 func submit_brush(center: Vector3, add: bool, radius: float) -> String:
     if not running or saving or closing:
         return "deferred"
-    var result := session.submit(world, _next_command, center, add, radius)
+    var result: String
+    if geology_enabled:
+        result = session.submit_material(world, _next_command, center, add, radius, selected_material_id())
+    else:
+        result = session.submit(world, _next_command, center, add, radius)
     if result == "accepted" or result == "no_effect":
         _next_command += 1
     if result == "accepted":
@@ -108,6 +133,19 @@ func submit_brush(center: Vector3, add: bool, radius: float) -> String:
             return "rejected"
     return result
 
+func selected_material_id() -> String:
+    if not geology_enabled:
+        return ""
+    var palette: Array = geology_config["palette"]
+    return String(palette[selected_material])
+
+func select_material(slot: int) -> bool:
+    if not geology_enabled or slot < 0 or slot >= 6 or closing:
+        return false
+    selected_material = slot
+    _set_status("V3.2 material: " + selected_material_id() + " | keys 1-6 | LMB/RMB | Ctrl+S")
+    return true
+
 func _input(event: InputEvent) -> void:
     if not running:
         return
@@ -115,6 +153,9 @@ func _input(event: InputEvent) -> void:
         get_viewport().set_input_as_handled()
         request_flush()
     elif closing:
+        get_viewport().set_input_as_handled()
+    elif geology_enabled and event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
+        select_material(int(event.keycode) - KEY_1)
         get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:

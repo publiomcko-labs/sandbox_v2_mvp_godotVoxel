@@ -1,5 +1,6 @@
 #include "content_registry/loader.hpp"
 #include "content_registry/seed.hpp"
+#include "content_registry/geology.hpp"
 #include <cassert>
 #include <chrono>
 #include <iostream>
@@ -127,5 +128,12 @@ int main(int argc, char **argv) {
     assert(seed!=composed_seed(20261119,"base:stone",-3,2,0,"generator_v2"));
     assert(seed!=composed_seed(20261119,"geology_demo:granite",-3,2,0,"generator_v1"));
     std::cout << "V3_ALL_11_HANDLERS_PASS seed=" << seed << "\n";
+    auto geology=load({repo/"godot/mods/first-party",repo/"godot/mods/geology"},reg);
+    auto temperate=compile_geology(*geology,"earth:temperate");
+    auto coastal=compile_geology(*geology,"earth:coastal");
+    assert(temperate.slot("earth:basalt")==5 && temperate.slot("earth:unknown")==-1);
+    assert(temperate.config.at("materials").size()==6 && coastal.config.at("sand_height_m")!=temperate.config.at("sand_height_m"));
+    rejected([&]{compile_geology(*geology,"base:stone");});
+    std::cout << "V3_GEOLOGY_PALETTE_PASS\n";
     std::cout << "V3_LOADER_CONTRACT_PASS\n";
 }
