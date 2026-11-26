@@ -7,10 +7,10 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='6671ec555d38f55dee7279b6e13f8a778da4ac1a'
-$run='45858953850'
+$candidate='2f5cef4d1518af57aa4be96a44124cc0f2498ea8'
+$run='45863463827'
 $artifact='v3-native-integration-evidence'
-$zipSha='e6fc3f3e27a5a31be1776ca952d1fd9c12e8df0d1c2e8fbaaf73fe63f9e50851'
+$zipSha='e3fc22c950d4b7ccb501d6b50c79aa8f8ee923593a0801161945f0c28d66cbd5'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- godot native third_party.lock
@@ -39,7 +39,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45858953850/artifacts/15137012178 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45863463827/artifacts/15139331707 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -70,7 +70,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3.4b: inspect continuous water surface, tile seams, local water and lava, excavate a path below the pond edge, check progressive flow and dry distant caves. Wet construction is rejected. G toggles physical swimming. Close the window normally.'
+Write-Host 'V3.4c: inspect open water sheets, smooth margins, faster flow and animated waterfalls, excavate a path below the pond edge, check progressive flow and dry distant caves. Wet construction is rejected. G toggles physical swimming. Close the window normally.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_fluids_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
