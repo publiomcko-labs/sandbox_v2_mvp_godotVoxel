@@ -37,5 +37,14 @@ int main(){
     auto same=a;same.revision=4;d.invalidate(a.origin,4);
     assert(d.publish(tp::extract(same))&&d.graph().finite()==equilibrium);
     assert(d.graph().portals().size()==2);
+    // Unload a neighbour whose own revision is older than its shared portal.
+    d.invalidate(b.origin,3);
+    for(const auto &[id,p]:d.graph().portals()) {
+        (void)id;
+        for(const auto &[local,node]:d.tiles().at(b.origin).ids) {
+            (void)local;
+            if(p.a==node||p.b==node)assert(!p.available);
+        }
+    }
     std::cout<<"V3_HYDRAULIC_DOMAIN_PASS regional_publish boundary_flow unload mass_remap ocean_idempotent\n";
 }

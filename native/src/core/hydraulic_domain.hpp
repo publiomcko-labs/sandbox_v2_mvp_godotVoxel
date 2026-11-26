@@ -63,7 +63,7 @@ public:
         t.available=false;t.expected_revision=revision;
         for(const auto &[local,id]:t.ids) {
             (void)local;
-            for(auto p:graph_.incident(id))graph_.invalidate_portal(p,revision);
+            for(auto p:graph_.incident(id))graph_.invalidate_portal(p,std::max(revision,graph_.portals().at(p).revision));
         }
     }
     bool publish(tp::Result geometry) {
