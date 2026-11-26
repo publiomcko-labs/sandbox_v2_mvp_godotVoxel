@@ -31,6 +31,7 @@ public:
                   bool add, double radius);
     Dictionary peek_terrain_event() const;
     bool ack_terrain_event(int64_t revision);
+    bool update_interest(const Vector3 &position);
     int64_t advance_ticks(int64_t elapsed_ns, int64_t budget);
     bool finish(bool terrain_saved, bool rocks_saved);
 };

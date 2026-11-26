@@ -54,6 +54,7 @@ struct V3WorldSession::State {
     std::shared_ptr<const ct::Snapshot> snapshot;
     ps::CheckpointStore store;
     VoxelAdapter adapter;
+    sc::InterestWindow interest;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -70,6 +71,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("submit","world","command","center","add","radius"), &V3WorldSession::submit);
     ClassDB::bind_method(D_METHOD("peek_terrain_event"), &V3WorldSession::peek_terrain_event);
     ClassDB::bind_method(D_METHOD("ack_terrain_event","revision"), &V3WorldSession::ack_terrain_event);
+    ClassDB::bind_method(D_METHOD("update_interest","position"), &V3WorldSession::update_interest);
     ClassDB::bind_method(D_METHOD("advance_ticks","elapsed_ns","budget"), &V3WorldSession::advance_ticks);
     ClassDB::bind_method(D_METHOD("finish","terrain_saved","rocks_saved"), &V3WorldSession::finish);
 }
@@ -136,6 +138,10 @@ Dictionary V3WorldSession::get_state() const {
     d["backlog_ticks"]=static_cast<int64_t>(core.scheduler().backlog());
     d["queued_events"]=static_cast<int64_t>(core.queued_events());
     d["checkpoint_generation"]=static_cast<int64_t>(state_->store.header().generation);
+    const auto &regions=state_->interest.regions();
+    d["active_regions"]=static_cast<int64_t>(regions.active_count());
+    d["aggregate_regions"]=static_cast<int64_t>(regions.aggregate_count());
+    d["dormant_regions"]=static_cast<int64_t>(regions.dormant_count());
     d["open"]=state_->store.is_open();
     return d;
 }
@@ -161,6 +167,13 @@ Dictionary V3WorldSession::peek_terrain_event() const {
 bool V3WorldSession::ack_terrain_event(int64_t revision) {
     return state_ && state_->store.is_open() && revision>0 &&
            state_->core->acknowledge(static_cast<uint64_t>(revision));
+}
+bool V3WorldSession::update_interest(const Vector3 &position) {
+    if(!state_ || !state_->store.is_open()) return false;
+    try {
+        state_->interest.update({position.x,position.y,position.z});
+        return true;
+    } catch(const std::exception &e) {last_error_=String::utf8(e.what());return false;}
 }
 int64_t V3WorldSession::advance_ticks(int64_t elapsed_ns,int64_t budget) {
     if(!state_ || !state_->store.is_open() || elapsed_ns<0 || budget<0 || budget>64) return -1;

@@ -1,5 +1,7 @@
 #pragma once
+#include <algorithm>
 #include <array>
+#include <utility>
 #include <cmath>
 #include <compare>
 #include <cstddef>
@@ -99,6 +101,30 @@ public:
                     if (resident_.contains({x,y,z})) result.push_back({x,y,z});
         return result;
     }
+};
+
+// Bounded logical interest window. The outer shell is dormant; outside
+// the window no region record is retained. This is not voxel residency.
+class InterestWindow {
+    Regions regions_{343};
+    std::optional<Region> center_;
+public:
+    bool update(Vec3 p) {
+        const auto c=region_at(p);
+        if(center_ && *center_==c) return false;
+        Regions next(343);
+        for(std::int32_t x=-3;x<=3;++x)
+            for(std::int32_t y=-3;y<=3;++y)
+                for(std::int32_t z=-3;z<=3;++z) {
+                    const auto dist=std::max(std::abs(x),std::max(std::abs(y),std::abs(z)));
+                    const auto tier=dist<=1?Tier::active:dist<=2?Tier::aggregate:Tier::dormant;
+                    if(!next.set({c.x+x,c.y+y,c.z+z},tier)) throw std::logic_error("interest capacity");
+                }
+        regions_=std::move(next);
+        center_=c;
+        return true;
+    }
+    const Regions &regions() const {return regions_;}
 };
 
 inline constexpr std::uint64_t tick_period_ns = 100'000'000; // 10 Hz

@@ -3,6 +3,7 @@
 #include "sha256.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -156,6 +157,66 @@ inline Registry initial_registry() {
         fields(j, {"energy_capacity","speed_mps"});
         positive(j.at("energy_capacity"), 100000); positive(j.at("speed_mps"), 100);
         return std::vector<Reference>{};
+    });
+    r.add("geology_profile", [](const Json &j) {
+        fields(j, {"surface_material","subsurface_material","bedrock_material","soil_depth_m","bedrock_depth_m"});
+        const auto soil=positive(j.at("soil_depth_m"),128);
+        require(positive(j.at("bedrock_depth_m"),4096)>soil,"bedrock depth must exceed soil depth");
+        return std::vector<Reference>{{str(j.at("surface_material")),"material"},
+            {str(j.at("subsurface_material")),"material"},{str(j.at("bedrock_material")),"material"}};
+    });
+    r.add("cave_profile", [](const Json &j) {
+        fields(j, {"period_m","radius_m","max_depth_m","threshold"});
+        const auto period=positive(j.at("period_m"),4096);
+        require(positive(j.at("radius_m"),128)<period,"cave radius must be smaller than period");
+        positive(j.at("max_depth_m"),4096);
+        positive(j.at("threshold"),1);
+        return std::vector<Reference>{};
+    });
+    r.add("liquid_source_rule", [](const Json &j) {
+        fields(j, {"liquid","source_kind","level_m","rate_per_tick"});
+        const auto kind=str(j.at("source_kind"));
+        require(kind=="surface_basin" || kind=="spring" || kind=="vent","unknown source kind");
+        require(j.at("level_m").is_number() && std::abs(j.at("level_m").get<double>())<=4096,"source level limit");
+        positive(j.at("rate_per_tick"),4096);
+        return std::vector<Reference>{{str(j.at("liquid")),"liquid"}};
+    });
+    r.add("procedural_tree", [](const Json &j) {
+        fields(j, {"trunk_material","foliage_material","height_m","crown_radius_m"});
+        const auto height=positive(j.at("height_m"),64);
+        require(positive(j.at("crown_radius_m"),32)<=height,"tree crown exceeds height");
+        return std::vector<Reference>{{str(j.at("trunk_material")),"material"},
+            {str(j.at("foliage_material")),"material"}};
+    });
+    r.add("static_population_rule", [](const Json &j) {
+        fields(j, {"archetype","archetype_type","density_per_km2","max_slope_deg"});
+        const auto type=str(j.at("archetype_type"));
+        require(type=="procedural_rock" || type=="procedural_tree","invalid static archetype");
+        positive(j.at("density_per_km2"),1000000);
+        require(j.at("max_slope_deg").is_number() && j.at("max_slope_deg").get<double>()>=0 &&
+                j.at("max_slope_deg").get<double>()<=90,"slope out of range");
+        return std::vector<Reference>{{str(j.at("archetype")),type}};
+    });
+    r.add("terrain_interaction_rule", [](const Json &j) {
+        fields(j, {"trigger","action","target_type","target"});
+        require(str(j.at("trigger"))=="terrain_edited","unknown interaction trigger");
+        const auto action=str(j.at("action")), type=str(j.at("target_type"));
+        require((action=="wake_liquid" && type=="liquid") ||
+                (action=="recheck_support" && (type=="procedural_rock" || type=="procedural_tree")),
+                "unsupported declarative interaction");
+        return std::vector<Reference>{{str(j.at("target")),type}};
+    });
+    r.add("simulation_profile", [](const Json &j) {
+        fields(j, {"entity","active_update_ticks","aggregate_update_ticks","max_active"});
+        const auto bounded_int=[](const Json &v, std::uint64_t limit) {
+            require(v.is_number_unsigned() && v.get<std::uint64_t>()>0 &&
+                    v.get<std::uint64_t>()<=limit,"invalid simulation integer");
+            return v.get<std::uint64_t>();
+        };
+        const auto active=bounded_int(j.at("active_update_ticks"),100);
+        require(bounded_int(j.at("aggregate_update_ticks"),10000)>=active,"aggregate cadence faster than active");
+        bounded_int(j.at("max_active"),10000);
+        return std::vector<Reference>{{str(j.at("entity")),"entity_archetype"}};
     });
     return r;
 }

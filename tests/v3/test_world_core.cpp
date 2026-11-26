@@ -63,5 +63,16 @@ int main() {
     try { regions.query({{0,0,0},{100000,100000,100000}}); }
     catch(const std::invalid_argument &){rejected=true;}
     assert(rejected);
+    InterestWindow window;
+    assert(window.update({0,0,0}));
+    assert(!window.update({63,1,1}));
+    assert(window.regions().active_count()==27);
+    assert(window.regions().aggregate_count()==98);
+    assert(window.regions().dormant_count()==218);
+    assert(window.update({-1,0,0}));
+    assert(window.regions().get({-1,0,0})==Tier::active);
+    assert(!window.regions().get({3,0,0}));
+    assert(window.update({100000,0,0}) && window.regions().size()==343);
+    assert(!window.regions().get({-1,0,0}));
     std::cout << "V3_WORLD_CORE_CONTRACT_PASS\n";
 }

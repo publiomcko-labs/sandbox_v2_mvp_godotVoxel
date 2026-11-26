@@ -1,4 +1,5 @@
 #include "content_registry/loader.hpp"
+#include "content_registry/seed.hpp"
 #include <cassert>
 #include <chrono>
 #include <iostream>
@@ -94,5 +95,37 @@ int main(int argc, char **argv) {
     } else std::cout << "JUNCTION_FIXTURE_UNAVAILABLE\n";
 #endif
     assert(load({base,external},reg,&s->pins)->records.size() == 5);
+    // All seven additional handlers are exercised using actual package files,
+    // without changing the existing first-party/external compatibility pins.
+    const auto content_dir=external/"geology_demo/content";
+    auto add_record=[&](const char *name,const char *type,Json data) {
+        write(content_dir/(std::string(name)+".json"),
+              Json{{"id",std::string("geology_demo:")+name},{"type",type},{"data",data}}.dump());
+    };
+    add_record("geology","geology_profile",{{"surface_material","base:stone"},{"subsurface_material","geology_demo:granite"},{"bedrock_material","base:stone"},{"soil_depth_m",3},{"bedrock_depth_m",30}});
+    add_record("cave","cave_profile",{{"period_m",100},{"radius_m",5},{"max_depth_m",100},{"threshold",0.5}});
+    add_record("water","liquid",{{"density",1000},{"viscosity",1}});
+    add_record("spring","liquid_source_rule",{{"liquid","geology_demo:water"},{"source_kind","spring"},{"level_m",-5},{"rate_per_tick",1}});
+    add_record("tree","procedural_tree",{{"trunk_material","base:stone"},{"foliage_material","base:stone"},{"height_m",8},{"crown_radius_m",3}});
+    add_record("forest","static_population_rule",{{"archetype","geology_demo:tree"},{"archetype_type","procedural_tree"},{"density_per_km2",100},{"max_slope_deg",45}});
+    add_record("support","terrain_interaction_rule",{{"trigger","terrain_edited"},{"action","recheck_support"},{"target_type","procedural_tree"},{"target","geology_demo:tree"}});
+    add_record("grazer","entity_archetype",{{"energy_capacity",100},{"speed_mps",3}});
+    add_record("simulation","simulation_profile",{{"entity","geology_demo:grazer"},{"active_update_ticks",1},{"aggregate_update_ticks",10},{"max_active",1000}});
+    auto extended=load({base,external},reg);
+    assert(extended->records.size()==14);
+    assert(load({external,base},reg,&extended->pins)->indices==extended->indices);
+    rejected([&]{load({base,external},reg,&s->pins);});
+    // Invalid rule vocabulary and mismatched references cannot be published.
+    add_record("support","terrain_interaction_rule",{{"trigger","terrain_edited"},{"action","execute_script"},{"target_type","procedural_tree"},{"target","geology_demo:tree"}});
+    rejected([&]{load({base,external},reg);});
+    add_record("support","terrain_interaction_rule",{{"trigger","terrain_edited"},{"action","wake_liquid"},{"target_type","liquid"},{"target","geology_demo:tree"}});
+    rejected([&]{load({base,external},reg);});
+    rejected([&]{reg.validate("cave_profile",Json{{"period_m",10},{"radius_m",20},{"max_depth_m",100},{"threshold",0.5}});});
+    const auto seed=composed_seed(20261119,"base:stone",-3,2,0,"generator_v1");
+    assert(seed==composed_seed(20261119,"base:stone",-3,2,0,"generator_v1"));
+    assert(seed!=composed_seed(20261119,"base:stone",-2,2,0,"generator_v1"));
+    assert(seed!=composed_seed(20261119,"base:stone",-3,2,0,"generator_v2"));
+    assert(seed!=composed_seed(20261119,"geology_demo:granite",-3,2,0,"generator_v1"));
+    std::cout << "V3_ALL_11_HANDLERS_PASS seed=" << seed << "\n";
     std::cout << "V3_LOADER_CONTRACT_PASS\n";
 }
