@@ -68,8 +68,21 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $file),[ref]$tokens,[ref]$errors)
             if ($errors.Count) { $errors | Format-List | Out-String | Write-Host; throw "PowerShell parse failed: $file" }
           }
+      - name: Restore SCons object cache across attempts
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: v3-vs2022-scons-4.10.0-${{ hashFiles('third_party.lock', 'native/SConstruct') }}-${{ github.sha }}
+          restore-keys: |
+            v3-vs2022-scons-4.10.0-${{ hashFiles('third_party.lock', 'native/SConstruct') }}-
       - name: Build new native DLL with locked custom Godot (never reuse A5 DLL)
         run: ./scripts/bootstrap-windows.ps1
+      - name: Save compiler cache even if native compilation fails
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: v3-vs2022-scons-4.10.0-${{ hashFiles('third_party.lock', 'native/SConstruct') }}-${{ github.sha }}
       - name: A5 compatibility fixture with new DLL
         run: ./scripts/a5-smoke-windows.ps1
       - name: V3 external mods, ordered VoxelTool edits and SQLite checkpoint/reopen

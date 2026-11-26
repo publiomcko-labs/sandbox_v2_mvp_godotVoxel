@@ -24,5 +24,7 @@ if env["target"] not in ("template_debug", "template_release"):
     Exit("Build target must be template_debug or template_release")
 # SCons treats a dotted architecture suffix as a file extension unless .dll is explicit.
 output = "../godot/bin/" + env.subst("$SHLIBPREFIX") + "sandbox_native" + suffix + env.subst("$SHLIBSUFFIX")
-library = env.SharedLibrary(target=output, source=sources)
+objects = env.SharedObject(source=sources)
+env.Alias("v3_native_objects", objects)
+library = env.SharedLibrary(target=output, source=objects)
 Default(library)

@@ -2,9 +2,10 @@
 #include "world_bootstrap.hpp"
 #include <godot_cpp/classes/voxel_lod_terrain.hpp>
 #include <godot_cpp/classes/voxel_stream.hpp>
-#include <godot_cpp/classes/voxel_stream_sqlite.hpp>
+#include <godot_cpp/classes/voxel_stream_sq_lite.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
+#include <godot_cpp/variant/char_string.hpp>
 #include <godot_cpp/variant/node_path.hpp>
 #include "persistence/checkpoint.hpp"
 

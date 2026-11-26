@@ -156,6 +156,10 @@ if (-not ($apiData.classes | Where-Object { $_.name -eq 'VoxelLodTerrain' })) {
     throw 'Custom Godot API contains no VoxelLodTerrain; wrong engine binary'
 }
 
+Write-Host "Compiling first-party native sources before building the full binding library ($Target)..."
+& scons -C (Join-Path $root 'native') 'platform=windows' "target=$Target" "custom_api_file=$api" '-j4' 'v3_native_objects'
+if ($LASTEXITCODE -ne 0) { throw "V3 first-party compile failed: exit $LASTEXITCODE" }
+Write-Host 'V3_NATIVE_OBJECTS_PASS'
 Write-Host "Building native GDExtension ($Target)..."
 & scons -C (Join-Path $root 'native') 'platform=windows' "target=$Target" "custom_api_file=$api" '-j4'
 if ($LASTEXITCODE -ne 0) { throw "SCons failed: exit $LASTEXITCODE" }
