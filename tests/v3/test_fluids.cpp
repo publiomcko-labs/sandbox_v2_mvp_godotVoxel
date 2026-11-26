@@ -36,5 +36,19 @@ int main(){
     assert(lava.at({2,0,0}).type==0&&lava.volume()==2000);
     bool rejected=false;try{Solver bad({{500,1000}});bad.restore(water.cells(),1,0,0);}catch(const std::invalid_argument&){rejected=true;}
     assert(rejected);
+    // Same per-substep budget and terrain: one accelerated macro tick
+    // is exactly five original water ticks; lava still executes once.
+    auto shaft=[](Cell p){return p.x>=0&&p.x<=1&&p.z==0&&p.y>=0&&p.y<=10?Passage::open:Passage::solid;};
+    Solver fast({{500,1000,5}}),normal({{500,1000,1}});
+    assert(fast.add({0,10,0},0,1000,shaft,true)&&normal.add({0,10,0},0,1000,shaft,true));
+    auto accelerated=fast.tick(shaft);
+    for(int i=0;i<5;++i)normal.tick(shaft);
+    assert(accelerated.substeps==5&&fast.cells()==normal.cells()&&fast.volume()==1000);
+    assert(fast.at({0,8,0}).litres>0);
+    Solver combined({{500,1000,5},{50,2800,1}}),slow({{500,1000,1},{50,2800,1}});
+    assert(combined.add({1,10,0},1,1000,shaft,true)&&slow.add({1,10,0},1,1000,shaft,true));
+    combined.tick(shaft);slow.tick(shaft);
+    assert(combined.cells()==slow.cells()&&combined.falling_at({1,10,0}).litres==50);
+    std::cout<<"V3_FLUID_5X_PASS five_water_substeps one_lava_substep same_mass\n";
     std::cout<<"V3_FLUID_CONSERVATION_PASS integer_litres progressive_flow blocked_boundary restore lava_rate no_mixing\n";
 }

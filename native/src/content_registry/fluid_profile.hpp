@@ -14,9 +14,10 @@ inline FluidProfile compile_fluids(const Snapshot &s) {
     for(const auto &r:s.records) if(r.type=="liquid" && r.data.contains("albedo")) {
         require(p.types.size()<32,"fluid type limit");
         const int rate=static_cast<int>(std::clamp(500.0/r.data.at("viscosity").get<double>(),1.0,1000.0));
-        p.types.push_back({rate,r.data.at("density").get<double>()});
+        const int substeps=r.data.value("substeps",1);
+        p.types.push_back({rate,r.data.at("density").get<double>(),substeps});
         p.ids.push_back(r.id);
-        auto entry=r.data;entry["id"]=r.id;entry["rate_litres"]=rate;
+        auto entry=r.data;entry["id"]=r.id;entry["rate_litres"]=rate;entry["substeps"]=substeps;
         p.config["liquids"].push_back(entry);
     }
     require(!p.types.empty(),"no complete liquid types");

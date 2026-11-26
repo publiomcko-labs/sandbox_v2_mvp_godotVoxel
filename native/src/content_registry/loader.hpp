@@ -162,7 +162,12 @@ inline Registry initial_registry() {
     r.add("liquid", [](const Json &j) {
         if(j.size()==2) fields(j, {"density","viscosity"});
         else {
-            fields(j, {"density","viscosity","albedo","emission"});
+            if(j.size()==4) fields(j, {"density","viscosity","albedo","emission"});
+            else {
+                fields(j, {"density","viscosity","albedo","emission","substeps"});
+                require(j.at("substeps").is_number_integer() && j.at("substeps").get<double>()>=1 &&
+                        j.at("substeps").get<double>()<=5,"liquid substeps");
+            }
             for(const auto *key:{"albedo","emission"}) {
                 const auto &v=j.at(key);
                 require(v.is_array() && v.size()==3,"liquid color");

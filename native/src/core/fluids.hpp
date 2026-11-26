@@ -17,32 +17,36 @@ enum class Passage { solid, open, unavailable };
 struct Liquid {
     int rate{}; // litres per source cell per tick
     double density{};
+    int substeps=1;
 };
 struct Amount {
     int type{}, litres{};
     auto operator<=>(const Amount &) const=default;
 };
 struct TickReport {
-    std::size_t processed{},blocked{},changed{},backlog{};
+    std::size_t processed{},blocked{},changed{},backlog{},substeps{};
     std::uint64_t transferred{};
 };
 class Solver {
     std::vector<Liquid> types_;
     std::map<Cell,Amount> wet_;
-    std::set<Cell> queued_, dirty_;
-    std::deque<Cell> frontier_;
+    std::set<Cell> dirty_;
+    std::set<std::pair<int,Cell>> queued_;
+    std::vector<std::deque<Cell>> frontiers_;
+    std::map<Cell,Amount> falls_, next_falls_;
     std::uint64_t initial_{},injected_{},drained_{},volume_{};
     void wake(Cell p) {
-        if(wet_.contains(p) && queued_.insert(p).second) frontier_.push_back(p);
+        auto a=at(p);
+        if(a.litres && queued_.insert({a.type,p}).second)frontiers_[static_cast<std::size_t>(a.type)].push_back(p);
     }
     void wake_halo(Cell p) {
         wake(p);
         for(auto d:neighbors) wake(plus(p,d));
     }
 public:
-    explicit Solver(std::vector<Liquid> types):types_(std::move(types)) {
+    explicit Solver(std::vector<Liquid> types):types_(std::move(types)),frontiers_(types_.size()) {
         if(types_.empty()||types_.size()>32) throw std::invalid_argument("fluid type limit");
-        for(auto t:types_) if(t.rate<1||t.rate>capacity||!std::isfinite(t.density)||t.density<=0)
+        for(auto t:types_) if(t.rate<1||t.rate>capacity||!std::isfinite(t.density)||t.density<=0||t.substeps<1||t.substeps>5)
             throw std::invalid_argument("invalid fluid properties");
     }
     const auto &cells() const{return wet_;}
@@ -51,7 +55,8 @@ public:
     std::uint64_t initial() const{return initial_;}
     std::uint64_t injected() const{return injected_;}
     std::uint64_t drained() const{return drained_;}
-    std::size_t backlog() const{return frontier_.size();}
+    std::size_t backlog() const {std::size_t n=0;for(const auto &q:frontiers_)n+=q.size();return n;}
+    Amount falling_at(Cell p) const {auto it=falls_.find(p);return it==falls_.end()?Amount{}:it->second;}
     Amount at(Cell p) const {
         auto it=wet_.find(p);return it==wet_.end()?Amount{}:it->second;
     }
@@ -79,7 +84,8 @@ public:
     // Two phases. Read old volumes, reserve both source and destination
     // budgets, then apply the complete delta. Incoming liquid cannot move
     // until a later tick. No cross-type mixing or volume deletion.
-    template<class Probe> TickReport tick(Probe probe,std::size_t budget=256) {
+private:
+    template<class Probe> TickReport step(Probe probe,int type,std::size_t budget) {
         TickReport report;
         std::map<Cell,int> outgoing,incoming,incoming_type;
         std::map<Cell,Passage> checked;
@@ -89,11 +95,12 @@ public:
             auto it=checked.find(p);if(it!=checked.end())return it->second;
             auto s=probe(p);checked.emplace(p,s);return s;
         };
-        const auto count=std::min(budget,frontier_.size());
+        auto &frontier=frontiers_[static_cast<std::size_t>(type)];
+        const auto count=std::min(budget,frontier.size());
         std::size_t new_cells=0;
         for(std::size_t i=0;i<count;++i) {
-            const auto p=frontier_.front();frontier_.pop_front();queued_.erase(p);
-            auto a=at(p);if(!a.litres)continue;
+            const auto p=frontier.front();frontier.pop_front();queued_.erase({type,p});
+            auto a=at(p);if(!a.litres||a.type!=type)continue;
             ++report.processed;
             if(passage(p)!=Passage::open){retry.insert(p);++report.blocked;continue;}
             int remaining=std::min(a.litres,types_[static_cast<std::size_t>(a.type)].rate);
@@ -113,6 +120,10 @@ public:
                 if(!b.litres&&!reserved)++new_cells;
                 outgoing[p]+=transfer;incoming[q]+=transfer;incoming_type[q]=a.type;
                 remaining-=transfer;report.transferred+=static_cast<std::uint64_t>(transfer);
+                if(n==0) {
+                    auto &fall=next_falls_[p];fall.type=a.type;
+                    fall.litres=std::min(capacity,fall.litres+transfer);
+                }
                 changed.insert(p);changed.insert(q);
             }
         }
@@ -126,8 +137,44 @@ public:
         }
         for(auto p:changed)wake_halo(p);
         for(auto p:retry)wake(p);
-        report.changed=changed.size();report.backlog=frontier_.size();
+        report.changed=changed.size();report.backlog=backlog();
         return report;
+    }
+public:
+    // One macro tick remains 100ms. Independent FIFO queues make the
+    // per-liquid cadence explicit and keep lava at its original cadence.
+    // Cache the unchanged terrain across substeps, never across edits.
+    template<class Probe> TickReport tick(Probe probe,std::size_t budget=256) {
+        TickReport total;
+        std::map<Cell,Passage> checked;
+        auto cached=[&](Cell p) {
+            auto it=checked.find(p);if(it!=checked.end())return it->second;
+            auto v=probe(p);checked.emplace(p,v);return v;
+        };
+        next_falls_.clear();
+        const auto share=budget/types_.size();
+        const auto remainder=budget%types_.size();
+        for(int round=0;round<5;++round) {
+            bool any=false;
+            for(std::size_t type=0;type<types_.size();++type) {
+                if(round>=types_[type].substeps)continue;
+                any=true;
+                const auto r=step(cached,static_cast<int>(type),share+(type<remainder?1:0));
+                total.processed+=r.processed;total.blocked+=r.blocked;
+                total.changed+=r.changed;total.transferred+=r.transferred;
+            }
+            if(any)++total.substeps;
+        }
+        // Transient visual-only downward transfer envelope, no save state.
+        // Retain a short fading trail so a waterfall is not one-frame noise.
+        for(auto [p,a]:falls_) {
+            dirty_.insert(p);
+            if(!next_falls_.contains(p)&&a.litres>80)next_falls_[p]={a.type,a.litres/2};
+        }
+        for(auto [p,a]:next_falls_){(void)a;dirty_.insert(p);}
+        falls_.swap(next_falls_);
+        total.backlog=backlog();
+        return total;
     }
     // Finite window query; never scan the entire dry world.
     std::vector<std::pair<Cell,Amount>> query(Cell lo,Cell hi,std::size_t limit=4096) const {

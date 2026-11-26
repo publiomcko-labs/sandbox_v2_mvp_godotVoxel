@@ -78,6 +78,12 @@ func _test() -> void:
         for i in range(liquids.size()):
             if liquids[i]["id"]=="hydro:water":
                 water_slot=i
+                if int(liquids[i]["substeps"])!=5:
+                    _fail("water cadence")
+                    return
+            elif liquids[i]["id"]=="hydro:lava" and int(liquids[i]["substeps"])!=1:
+                _fail("lava cadence")
+                return
         for item: Array in wet:
             var p: Vector3i=item[0]
             if int(item[1])!=water_slot or Vector2(p.x-10,p.z-30).length()>15.0:
@@ -119,12 +125,12 @@ func _test() -> void:
                 first_near=i
             if first_deep==0 and not runtime.session.fluid_at(deep).is_empty():
                 first_deep=i
-            if i==1 and first_deep!=0:
-                _fail("liquid crossed two cells in first tick")
+            if int(runtime.session.get_state()["fluid_substeps"])!=5:
+                _fail("water substeps not executed")
                 return
             if first_near>0 and first_deep>0:
                 break
-        if first_near==0 or first_deep<=first_near:
+        if first_near==0 or first_deep<first_near:
             _fail("progressive breach arrival near="+str(first_near)+" deep="+str(first_deep))
             return
         print("V3_FLUID_BREACH_PASS cell=",bottom," near_tick=",first_near," deep_tick=",first_deep)

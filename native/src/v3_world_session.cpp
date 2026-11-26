@@ -216,7 +216,7 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
         if(!fluid_root.is_empty()) {
             next->fluid_profile=ct::compile_fluids(*next->snapshot);
             next->fluids=std::make_unique<fl::Solver>(next->fluid_profile->types);
-            generator="v3_4_fluids_v1:"+generator;
+            generator="v3_4_fluids_v2:"+generator;
         }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         if(next->fluids && next->store.header().generation>0)
@@ -397,6 +397,7 @@ Dictionary V3WorldSession::get_state() const {
         d["fluid_backlog"]=static_cast<int64_t>(state_->fluids->backlog());
         d["fluid_blocked"]=static_cast<int64_t>(state_->fluid_report.blocked);
         d["fluid_transferred"]=static_cast<int64_t>(state_->fluid_report.transferred);
+        d["fluid_substeps"]=static_cast<int64_t>(state_->fluid_report.substeps);
     }
     d["open"]=state_->store.is_open();
     return d;

@@ -165,7 +165,7 @@ foreach ($phase in @('write','reopen')) {
 $fluidWorld=Join-Path $env:V3_WORLD_ROOT 'fluid_fixture'
 $checkpoint=Get-Content (Join-Path $fluidWorld 'checkpoint.json') -Raw | ConvertFrom-Json
 if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or
-    $checkpoint.generator_version -ne 'v3_4_fluids_v1:v3_3_caves_v3:earth:temperate:karst:natural' -or
+    $checkpoint.generator_version -ne 'v3_4_fluids_v2:v3_3_caves_v3:earth:temperate:karst:natural' -or
     $checkpoint.pins.Count -ne 6 -or (Test-Path (Join-Path $fluidWorld 'session_pending'))) {
     throw 'V3 fluid checkpoint contract failed'
 }
