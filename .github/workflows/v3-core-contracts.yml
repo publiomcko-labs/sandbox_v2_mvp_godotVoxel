@@ -4,18 +4,53 @@ on:
     branches: [v3/development]
     paths:
       - 'native/src/content_registry/**'
+      - 'native/src/core/**'
+      - 'godot/mods/**'
+      - 'examples/v3/**'
       - 'tests/v3/**'
       - '.github/workflows/v3-core-contracts.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  portable-core:
+  linux-core:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run C++20 core contract (no Godot or GPU)
+      - uses: actions/checkout@v4
+        with:
+          repository: nlohmann/json
+          ref: 55f93686c01528224f448c19128836e7df245f72
+          path: .deps/json
+          persist-credentials: false
+      - name: Build and run C++20 contracts
         run: |
-          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_manifest.cpp -o /tmp/v3-manifest-test
-          /tmp/v3-manifest-test
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_manifest.cpp -o /tmp/v3-manifest
+          /tmp/v3-manifest
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src -I .deps/json/single_include tests/v3/test_loader.cpp -lcrypto -o /tmp/v3-loader
+          /tmp/v3-loader "$PWD"
+  windows-core:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nlohmann/json
+          ref: 55f93686c01528224f448c19128836e7df245f72
+          path: .deps/json
+          persist-credentials: false
+      - name: Build and run MSVC contracts
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src tests\v3\test_manifest.cpp /Fe:v3-manifest.exe
+          if errorlevel 1 exit /b 1
+          v3-manifest.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /W4 /WX /I native\src /external:I .deps\json\single_include /external:W0 tests\v3\test_loader.cpp bcrypt.lib /Fe:v3-loader.exe
+          if errorlevel 1 exit /b 1
+          v3-loader.exe "%CD%"
+          if errorlevel 1 exit /b 1

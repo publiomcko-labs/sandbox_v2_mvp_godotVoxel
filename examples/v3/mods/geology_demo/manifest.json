@@ -1,0 +1,15 @@
+{
+  "mod_id": "geology_demo",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "script_policy": "data_only",
+  "dependencies": [
+    {
+      "mod_id": "base",
+      "version": "1.0.0"
+    }
+  ],
+  "content_roots": [
+    "content"
+  ]
+}

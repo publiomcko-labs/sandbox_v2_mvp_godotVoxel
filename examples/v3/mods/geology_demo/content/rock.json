@@ -1,0 +1,8 @@
+{
+  "id": "geology_demo:rock",
+  "type": "procedural_rock",
+  "data": {
+    "material": "geology_demo:granite",
+    "radius_m": 1.5
+  }
+}

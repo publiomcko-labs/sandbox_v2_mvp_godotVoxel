@@ -1,0 +1,8 @@
+{
+  "id": "geology_demo:granite",
+  "type": "material",
+  "data": {
+    "density": 2750,
+    "hardness": 7
+  }
+}

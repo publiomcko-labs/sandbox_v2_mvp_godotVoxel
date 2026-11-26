@@ -1,6 +1,6 @@
 # V3.1 — World Core e mod-first
 
-Status: **IN_PROGRESS — fundação de manifests**. Checkpoint V3.0: 78d540e6da554082bb83e2949d11c5116e8a40c8. Não modificar o streamer nem a autoridade SDF/material do Voxel Tools. Runtime A5 permanece inalterado neste incremento.
+Status: **IN_PROGRESS — loader e registry portáveis**. Checkpoint V3.0: 78d540e6da554082bb83e2949d11c5116e8a40c8. Não modificar o streamer nem a autoridade SDF/material do Voxel Tools. Runtime A5 permanece inalterado neste incremento.
 
 ## Primeiro incremento
 
@@ -13,3 +13,7 @@ Testes portáveis C++20 via Actions, sem Godot. Não há ainda leitura JSON do d
 1. Loader data-only limitado e seguro, JSON estrito, leitura de first-party e externos pela mesma pipeline, verificação canônica e de symlinks/reparse points, hashes e pins.
 2. Registry extensível de handlers e snapshots imutáveis com referências tipadas/índices estáveis; dois pacotes externos de demonstração.
 3. World Core: comandos/revisões/eventos, adaptador VoxelTool preservando API A5, scheduler de ticks fixos/tiering, persistência versionada em diretório V3 separado. Testes unitários, integração, determinismo, reopen e fixture A5 conforme V3_PROJETO.md.
+
+## Incremento 2 — loader/registry
+
+JSON nlohmann 3.12.0 (commit 55f93686c01528224f448c19128836e7df245f72), SHA-256 via BCrypt Windows e OpenSSL EVP no Linux; sem parser/criptografia próprios. Contrato canonical_v1: JSON com chaves ordenadas, roots/deps ordenados e caminhos relativos lexicais; arrays de dados preservados; fingerprint inclui manifesto e documentos. Snapshot const, IDs lexicais, referências tipadas e dependência explícita. Dois pacotes externos em examples/v3/mods e first-party base passam pela mesma API; quatro handlers iniciais de demonstração (material, procedural_rock, liquid, entity_archetype), demais tipos rejeitados até implementação de schema específico. Não alteram geração/simulação atual. Limites de arquivos, bytes, profundidade e registros. Rejeita links simbólicos, hard links, reparse points, componentes reservados Windows e formatos não JSON. Contrato exige árvore de instalação estável durante leitura; não é sandbox contra escritor concorrente/TOCTOU. Somente diretórios instalados, não ZIP nem scripts. Pins verificados quando fornecidos; persistência em disco e integração GDExtension ainda pendentes. Testes Linux/Windows, sem GPU. Dependência JSON pinada por commit no workflow; integração de build nativo futura precisa consumir a mesma versão. IDs de índices runtime não devem ser serializados como identidade persistente.

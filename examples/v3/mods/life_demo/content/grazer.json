@@ -1,0 +1,8 @@
+{
+  "id": "life_demo:grazer",
+  "type": "entity_archetype",
+  "data": {
+    "energy_capacity": 100,
+    "speed_mps": 2
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "base:stone",
+  "type": "material",
+  "data": {
+    "density": 2700,
+    "hardness": 5
+  }
+}

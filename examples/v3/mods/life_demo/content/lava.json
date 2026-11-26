@@ -1,0 +1,8 @@
+{
+  "id": "life_demo:lava",
+  "type": "liquid",
+  "data": {
+    "density": 2800,
+    "viscosity": 100
+  }
+}
