@@ -11,6 +11,7 @@ const MOUSE_SENSITIVITY := 0.0025
 var pitch := deg_to_rad(-22.0)
 var body_mode := false
 var _was_in_water := false
+var liquid_provider: Node
 
 func _ready() -> void:
     collision_layer = 2
@@ -64,6 +65,8 @@ func _physics_process(delta: float) -> void:
     var local := _movement()
     var horizontal := global_basis * Vector3(local.x, 0.0, local.z)
     var immersed := clampf((WATER_LEVEL_Y + CHARACTER_HEIGHT_M * 0.5 - global_position.y) / CHARACTER_HEIGHT_M, 0.0, 1.0)
+    if is_instance_valid(liquid_provider):
+        immersed = float(liquid_provider.call("immersion_at",global_position,CHARACTER_HEIGHT_M))
     var in_water := immersed > 0.0
     if in_water != _was_in_water:
         print("A5_PLAYER_WATER_EVENT=", "ENTER" if in_water else "EXIT", " y=", global_position.y)

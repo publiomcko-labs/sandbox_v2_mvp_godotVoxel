@@ -12,7 +12,7 @@
 #include "content_registry/caves.hpp"
 #include "content_registry/fluid_profile.hpp"
 #include "persistence/fluid_store.hpp"
-#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/voxel_buffer.hpp>
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/classes/voxel_format.hpp>
@@ -366,6 +366,7 @@ Dictionary V3WorldSession::get_state() const {
         d["fluid_cells"]=static_cast<int64_t>(state_->fluids->cells().size());
         d["fluid_backlog"]=static_cast<int64_t>(state_->fluids->backlog());
         d["fluid_blocked"]=static_cast<int64_t>(state_->fluid_report.blocked);
+        d["fluid_transferred"]=static_cast<int64_t>(state_->fluid_report.transferred);
     }
     d["open"]=state_->store.is_open();
     return d;

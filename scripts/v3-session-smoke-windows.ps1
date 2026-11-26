@@ -130,3 +130,40 @@ foreach ($case in @(
     }
 }
 Write-Host 'V3_CAVES_E2E_PASS (headless topology and persistence; graphical route pending)'
+
+$env:V3_WORLD_ROOT=Join-Path $results 'fluid-worlds'
+$env:V3_WORLD_ID='fluid_fixture'
+$env:V3_WORLD_SEED='20261119'
+$env:V3_CAVE_PROFILE='karst:natural'
+$env:V3_GEOLOGY_PROFILE='earth:temperate'
+New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+$mass=$null
+foreach ($phase in @('write','reopen')) {
+    $stdout=Join-Path $results "fluids-$phase.stdout.log"
+    $stderr=Join-Path $results "fluids-$phase.stderr.log"
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_fluids_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "V3 fluids $phase timed out" }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|Shader compilation failed|SCRIPT ERROR:|V3_FLUID_RUNTIME_FAIL:|V3_RESERVOIR_REJECTED:') {
+        throw "V3 fluids $phase contains errors"
+    }
+    $marker=Select-String -LiteralPath $stdout -Pattern "V3_FLUID_RUNTIME_FIXTURE_PASS phase=$phase mass=(\d+)"
+    if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or !$marker -or
+        -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {
+        throw "V3 fluids $phase failed exit=$($p.ExitCode)"
+    }
+    $observed=[int64]$marker.Matches[0].Groups[1].Value
+    if ($phase -eq 'write') { $mass=$observed }
+    elseif ($observed -ne $mass) { throw 'Fluid mass changed across reopen' }
+}
+$fluidWorld=Join-Path $env:V3_WORLD_ROOT 'fluid_fixture'
+$checkpoint=Get-Content (Join-Path $fluidWorld 'checkpoint.json') -Raw | ConvertFrom-Json
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 1 -or
+    $checkpoint.generator_version -ne 'v3_4_fluids_v1:v3_3_caves_v3:earth:temperate:karst:natural' -or
+    $checkpoint.pins.Count -ne 6 -or (Test-Path (Join-Path $fluidWorld 'session_pending'))) {
+    throw 'V3 fluid checkpoint contract failed'
+}
+Write-Host "V3_FLUID_RUNTIME_E2E_PASS mass_litres=$mass (headless)"

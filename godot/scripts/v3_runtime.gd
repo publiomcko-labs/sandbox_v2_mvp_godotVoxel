@@ -7,6 +7,8 @@ const EDITOR := preload("res://scripts/v3_edit_controller.gd")
 const TICK_BUDGET := 4
 @export var geology_enabled := false
 @export var caves_enabled := false
+@export var fluids_enabled := false
+const LOCAL_FLUIDS := preload("res://scripts/v3_local_fluids.gd")
 var cave_config: Dictionary = {}
 var geology_config: Dictionary = {}
 var selected_material := 0
@@ -33,7 +35,7 @@ func _ready() -> void:
     if mods.is_empty():
         mods = ProjectSettings.globalize_path("user://mods_v3")
     if worlds.is_empty():
-        worlds = ProjectSettings.globalize_path("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3"))
+        worlds = ProjectSettings.globalize_path("user://worlds_v34" if fluids_enabled else ("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3")))
     if world_id.is_empty():
         world_id = "world"
     if seed_text.is_empty():
@@ -57,9 +59,15 @@ func _ready() -> void:
             var cave_profile := OS.get_environment("V3_CAVE_PROFILE")
             if cave_profile.is_empty():
                 cave_profile = "karst:natural"
-            opened = session.open_caves(first, mods, worlds, world_id, seed_text.to_int(),
-                ProjectSettings.globalize_path("res://mods/geology"),profile,
-                ProjectSettings.globalize_path("res://mods/caves"),cave_profile)
+            if fluids_enabled:
+                opened = session.open_fluids(first, mods, worlds, world_id, seed_text.to_int(),
+                    ProjectSettings.globalize_path("res://mods/geology"),profile,
+                    ProjectSettings.globalize_path("res://mods/caves"),cave_profile,
+                    ProjectSettings.globalize_path("res://mods/fluids"))
+            else:
+                opened = session.open_caves(first, mods, worlds, world_id, seed_text.to_int(),
+                    ProjectSettings.globalize_path("res://mods/geology"),profile,
+                    ProjectSettings.globalize_path("res://mods/caves"),cave_profile)
             if opened:
                 var cave_parsed: Variant = JSON.parse_string(session.get_cave_json())
                 if not cave_parsed is Dictionary:
@@ -97,6 +105,13 @@ func _ready() -> void:
             if pos.is_finite() and pos.length()<1000000.0:
                 player.position=pos
     rocks = world.get_node("RockManager") as Node3D
+    if fluids_enabled:
+        var water := world.get_node("Water")
+        water.set_script(LOCAL_FLUIDS)
+        water.set("session",session)
+        water.set("world",world)
+        water.set("world_seed",seed_text.to_int())
+        player.set("liquid_provider",water)
     status = world.get_node("HUD/Status") as Label
     var editor := world.get_node("EditController")
     editor.set_script(EDITOR)
@@ -125,7 +140,7 @@ func _set_status(message: String) -> void:
     print(message)
 
 func _process(_delta: float) -> void:
-    if not running or closing:
+    if not running or closing or saving:
         return
     var now := Time.get_ticks_usec()
     var elapsed := maxi(0, now - _last_usec)
@@ -200,6 +215,9 @@ func request_close() -> void:
     player.set_process_unhandled_input(false)
     rocks.set_process(false)
     rocks.set_process_unhandled_input(false)
+    if fluids_enabled:
+        world.get_node("Water").set_process(false)
+        world.get_node("Water").set_physics_process(false)
     world.get_node("EditController").set_process(false)
     world.get_node("EditController").set_process_unhandled_input(false)
     for child in rocks.get_children():
@@ -232,6 +250,9 @@ func _save_async() -> void:
         _save_failure("terrain save aborted")
         return
     terrain.stream.flush()
+    if fluids_enabled and not session.flush_fluids():
+        _save_failure("fluid save failed: " + session.get_last_error())
+        return
     if not rocks.call("save_states"):
         _save_failure("rock save failed")
         return
