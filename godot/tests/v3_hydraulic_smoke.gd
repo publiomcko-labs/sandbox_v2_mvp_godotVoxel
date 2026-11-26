@@ -38,10 +38,13 @@ func _test() -> void:
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("global water mask")
         return
-    for i in range(6):
+    # Each refresh can build at most two new meshes. Drain the initial
+    # publication queue before testing stability at unchanged geometry.
+    var expected: int=runtime.session.hydraulic_surfaces().size()
+    for i in range(expected+1):
         water.call("refresh")
     var presentation: Dictionary=water.call("get_report")
-    if int(presentation["meshes"])<1:
+    if int(presentation["meshes"])!=expected or expected<1:
         _fail("surface missing")
         return
     var builds:=int(presentation["mesh_builds"])
