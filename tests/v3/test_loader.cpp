@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
     auto caves=load({repo/"godot/mods/first-party",repo/"godot/mods/geology",repo/"godot/mods/caves"},reg);
     auto natural=compile_caves(*caves,"karst:natural",20261119);
     auto wide=compile_caves(*caves,"karst:wide",20261119);
-    assert(natural.at("noise_seeds").size()==6 && natural.at("noise_seeds")!=wide.at("noise_seeds"));
+    assert(natural.at("noise_seeds").size()==7 && natural.at("noise_seeds")!=wide.at("noise_seeds"));
     assert(natural==compile_caves(*caves,"karst:natural",20261119));
     assert(natural.at("noise_seeds")!=compile_caves(*caves,"karst:natural",20261120).at("noise_seeds"));
     auto bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["pocket_radius_m"]=16;
@@ -147,6 +147,10 @@ int main(int argc, char **argv) {
     bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["entrance_period_m"]=16;
     rejected([&]{reg.validate("cave_profile",bad);});
     bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["entrance_cover_m"]=2;
+    rejected([&]{reg.validate("cave_profile",bad);});
+    bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["entrance_elongation"]=1.0;
+    rejected([&]{reg.validate("cave_profile",bad);});
+    bad=natural; bad.erase("id"); bad.erase("noise_seeds"); bad["entrance_wall_relief_m"]=3;
     rejected([&]{reg.validate("cave_profile",bad);});
     rejected([&]{compile_caves(*caves,"earth:temperate",0);});
     std::cout << "V3_CAVE_PROFILE_PASS seeds=" << natural.at("noise_seeds").dump() << "\n";

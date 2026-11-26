@@ -7,7 +7,7 @@ inline Json compile_caves(const Snapshot &s,const std::string &id,std::uint64_t 
     const auto found=s.indices.find(id);
     require(found!=s.indices.end(),"cave profile absent");
     const auto &p=s.records.at(found->second);
-    require(p.type=="cave_profile" && p.data.contains("entrance_period_m"),"profile not V3.3 surface-preserving format");
+    require(p.type=="cave_profile" && p.data.contains("entrance_elongation"),"profile not V3.3 organic entrance format");
     Json config=p.data;
     config["id"]=id;
     config["noise_seeds"]=Json::array();
@@ -18,6 +18,8 @@ inline Json compile_caves(const Snapshot &s,const std::string &id,std::uint64_t 
     // The new independent entrance warp is versioned separately.
     config["noise_seeds"].push_back(composed_seed(world_seed,id,0,0,0,
         "v3_3_caves_v2:entrance_z")&0x7fffffffULL);
+    config["noise_seeds"].push_back(composed_seed(world_seed,id,0,0,0,
+        "v3_3_caves_v3:entrance_wall")&0x7fffffffULL);
     return config;
 }
 }

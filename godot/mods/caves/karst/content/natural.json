@@ -14,6 +14,10 @@
     "entrance_period_m": 80,
     "entrance_radius_m": 3,
     "entrance_depth_m": 40,
-    "entrance_jitter_m": 9
+    "entrance_jitter_m": 9,
+    "entrance_elongation": 1.48,
+    "entrance_bend_m": 5,
+    "entrance_wall_relief_m": 1.15,
+    "entrance_wall_period_m": 8
   }
 }

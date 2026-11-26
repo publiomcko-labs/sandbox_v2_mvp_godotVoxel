@@ -124,7 +124,7 @@ foreach ($case in @(
     $worldPath=Join-Path $env:V3_WORLD_ROOT $case.id
     $checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json
     if ($checkpoint.generation -ne $case.phases.Count -or $checkpoint.core.terrain_revision -ne 1 -or
-        $checkpoint.generator_version -ne "v3_3_caves_v2:earth:temperate:$($case.profile)" -or
+        $checkpoint.generator_version -ne "v3_3_caves_v3:earth:temperate:$($case.profile)" -or
         $checkpoint.pins.Count -ne 5 -or (Test-Path (Join-Path $worldPath 'session_pending'))) {
         throw 'V3 caves checkpoint contract failed'
     }

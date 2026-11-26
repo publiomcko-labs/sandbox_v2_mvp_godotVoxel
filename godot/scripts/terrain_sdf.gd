@@ -227,8 +227,10 @@ static func _add_caves(g: VoxelGraphFunction, cfg: Dictionary, x: int, y: int, z
     var period := float(cfg["period_m"])
     var radius := float(cfg["radius_m"])
     var max_depth := float(cfg["max_depth_m"])
-    var a := _abs_scaled(g,_noise_3d(g,x,y,z,int(seeds[0]),period,2),period*0.45)
-    var b := _abs_scaled(g,_noise_3d(g,x,y,z,int(seeds[1]),period*0.87,2),period*0.45)
+    var field_a := _noise_3d(g,x,y,z,int(seeds[0]),period,2)
+    var field_b := _noise_3d(g,x,y,z,int(seeds[1]),period*0.87,2)
+    var a := _abs_scaled(g,field_a,period*0.45)
+    var b := _abs_scaled(g,field_b,period*0.45)
     var c := _abs_scaled(g,_noise_3d(g,x,y,z,int(seeds[2]),period*1.13,2),period*0.45)
     # Intersections of three warped scalar sheets produce three families of
     # winding passages; shared intersections create connected junctions.
@@ -247,26 +249,44 @@ static func _add_caves(g: VoxelGraphFunction, cfg: Dictionary, x: int, y: int, z
     network = _binary(g,VoxelGraphFunction.NODE_MIN,network,roof,Vector2.ZERO)
     network = _binary(g,VoxelGraphFunction.NODE_MIN,network,deep_gate,Vector2.ZERO)
 
-    # Sparse, tilted entrances with globally continuous lateral jitter.
-    # Cell boundaries remain solid; their wrapped coordinates are never
-    # discontinuous in the region where the entrance SDF is positive.
+    # Sparse entrances: an oblique, sinuous eroded fissure instead of a
+    # circular cylinder. The original roof restriction remains untouched.
     var spacing := float(cfg["entrance_period_m"])
     var jitter := float(cfg["entrance_jitter_m"])
     var jitter_x := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_noise_2d(g,x,z,int(seeds[3]),spacing*1.3,2,Vector2.ZERO),jitter,Vector2.ZERO)
     var jitter_z := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_noise_2d(g,x,z,int(seeds[5]),spacing*1.3,2,Vector2.ZERO),jitter,Vector2.ZERO)
     var descent := _offset(g,VoxelGraphFunction.NODE_MAX,depth,0.0,Vector2.ZERO)
+    # More oblique near the mouth; gentler below, with continuous 3D bends.
+    var shallow := _offset(g,VoxelGraphFunction.NODE_MIN,descent,12.0,Vector2.ZERO)
     var lean_x := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,descent,0.28,Vector2.ZERO)
     var lean_z := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,descent,-0.17,Vector2.ZERO)
+    lean_x = _binary(g,VoxelGraphFunction.NODE_ADD,lean_x,_offset(g,VoxelGraphFunction.NODE_MULTIPLY,shallow,0.42,Vector2.ZERO),Vector2.ZERO)
+    lean_z = _binary(g,VoxelGraphFunction.NODE_ADD,lean_z,_offset(g,VoxelGraphFunction.NODE_MULTIPLY,shallow,-0.24,Vector2.ZERO),Vector2.ZERO)
+    var bend := float(cfg["entrance_bend_m"])
+    lean_x = _binary(g,VoxelGraphFunction.NODE_ADD,lean_x,_offset(g,VoxelGraphFunction.NODE_MULTIPLY,field_a,bend,Vector2.ZERO),Vector2.ZERO)
+    lean_z = _binary(g,VoxelGraphFunction.NODE_ADD,lean_z,_offset(g,VoxelGraphFunction.NODE_MULTIPLY,field_b,bend,Vector2.ZERO),Vector2.ZERO)
     var shifted_x := _binary(g,VoxelGraphFunction.NODE_ADD,_binary(g,VoxelGraphFunction.NODE_ADD,x,jitter_x,Vector2.ZERO),lean_x,Vector2.ZERO)
     var shifted_z := _binary(g,VoxelGraphFunction.NODE_ADD,_binary(g,VoxelGraphFunction.NODE_ADD,z,jitter_z,Vector2.ZERO),lean_z,Vector2.ZERO)
     var ex := _pocket_axis(g,shifted_x,spacing)
     var ez := _pocket_axis(g,shifted_z,spacing)
-    var radial_sq := _binary(g,VoxelGraphFunction.NODE_ADD,_square(g,ex,Vector2.ZERO),_square(g,ez,Vector2.ZERO),Vector2.ZERO)
+    # Area-preserving elongated diagonal cross-section. The shear changes
+    # continuously with the existing 3D field, avoiding identical silhouettes.
+    var u := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_binary(g,VoxelGraphFunction.NODE_ADD,ex,ez,Vector2.ZERO),0.70710678,Vector2.ZERO)
+    var v := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,_binary(g,VoxelGraphFunction.NODE_SUBTRACT,ez,ex,Vector2.ZERO),0.70710678,Vector2.ZERO)
+    var shear := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,field_b,0.6,Vector2.ZERO)
+    v = _binary(g,VoxelGraphFunction.NODE_ADD,v,_binary(g,VoxelGraphFunction.NODE_MULTIPLY,u,shear,Vector2.ZERO),Vector2.ZERO)
+    var aspect := float(cfg["entrance_elongation"])
+    u = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,u,1.0/aspect,Vector2.ZERO)
+    v = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,v,aspect,Vector2.ZERO)
+    var radial_sq := _binary(g,VoxelGraphFunction.NODE_ADD,_square(g,u,Vector2.ZERO),_square(g,v,Vector2.ZERO),Vector2.ZERO)
     var radial := _unary(g,VoxelGraphFunction.NODE_SQRT,radial_sq,Vector2.ZERO)
-    # Tight mouths widen gradually in the first 12 m of descent.
-    var widen := _offset(g,VoxelGraphFunction.NODE_MIN,descent,12.0,Vector2.ZERO)
-    widen = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,widen,0.15,Vector2.ZERO)
+    # Erosion varies the wall and the passage width at every depth, with
+    # bounded relief and no independent surface holes.
+    var wall := _noise_3d(g,x,y,z,int(seeds[6]),float(cfg["entrance_wall_period_m"]),2)
+    wall = _offset(g,VoxelGraphFunction.NODE_MULTIPLY,wall,float(cfg["entrance_wall_relief_m"]),Vector2.ZERO)
+    var widen := _offset(g,VoxelGraphFunction.NODE_MULTIPLY,shallow,0.12,Vector2.ZERO)
     var entrance_radius := _offset(g,VoxelGraphFunction.NODE_ADD,widen,float(cfg["entrance_radius_m"]),Vector2.ZERO)
+    entrance_radius = _binary(g,VoxelGraphFunction.NODE_ADD,entrance_radius,wall,Vector2.ZERO)
     var shaft := _binary(g,VoxelGraphFunction.NODE_SUBTRACT,entrance_radius,radial,Vector2.ZERO)
     shaft = _binary(g,VoxelGraphFunction.NODE_MIN,shaft,_constant_minus(g,float(cfg["entrance_depth_m"]),depth,Vector2.ZERO),Vector2.ZERO)
     network = _binary(g,VoxelGraphFunction.NODE_MAX,network,shaft,Vector2.ZERO)

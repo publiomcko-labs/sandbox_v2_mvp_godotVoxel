@@ -201,7 +201,21 @@ inline Registry initial_registry() {
             if(j.size()==9) {
                 fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m"});
             } else {
-                fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m","entrance_period_m","entrance_radius_m","entrance_depth_m","entrance_jitter_m"});
+                if(j.size()==13) {
+                    fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m","entrance_period_m","entrance_radius_m","entrance_depth_m","entrance_jitter_m"});
+                } else {
+                    fields(j, {"period_m","radius_m","max_depth_m","threshold","chamber_radius_m","pocket_radius_m","pocket_period_m","entrance_cover_m","pocket_warp_m","entrance_period_m","entrance_radius_m","entrance_depth_m","entrance_jitter_m","entrance_elongation","entrance_bend_m","entrance_wall_relief_m","entrance_wall_period_m"});
+                    const auto aspect=positive(j.at("entrance_elongation"),1.8);
+                    const auto bend=positive(j.at("entrance_bend_m"),8);
+                    const auto relief=positive(j.at("entrance_wall_relief_m"),2);
+                    const auto wall_period=positive(j.at("entrance_wall_period_m"),20);
+                    const auto radius=positive(j.at("entrance_radius_m"),6);
+                    const auto spacing=positive(j.at("entrance_period_m"),256);
+                    require(aspect>=1.25 && wall_period>=5 && relief<radius*0.5,
+                            "organic entrance shape");
+                    require((radius+1.8+relief)*aspect+bend<spacing*0.25,
+                            "organic entrance envelope");
+                }
                 const auto spacing=positive(j.at("entrance_period_m"),256);
                 const auto mouth=positive(j.at("entrance_radius_m"),6);
                 const auto jitter=positive(j.at("entrance_jitter_m"),20);
