@@ -1,6 +1,7 @@
 param(
     [string]$RuntimeSource = 'C:\Dev\sandbox-a7-etw',
-    [string]$PresentMonExe = ''
+    [string]$PresentMonExe = '',
+    [string]$ResumeControlPath = ''
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -46,7 +47,18 @@ $stage=Join-Path $out 'evidence'
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 $runner=Join-Path $root 'scripts\comparison-v1-windows.ps1'
 try {
-    & $runner -Profile cold -OutputRoot (Join-Path $out 'control')
+    if ($ResumeControlPath) {
+        $source=(Resolve-Path -LiteralPath $ResumeControlPath).Path
+        $controlDest=Join-Path (Join-Path $out 'control') 'recovered-control'
+        New-Item -ItemType Directory -Force -Path $controlDest | Out-Null
+        foreach ($name in @('frames.csv','native.json','godot-stdout.txt','godot-stderr.txt')) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination $controlDest
+        }
+        & python.exe (Join-Path $root 'scripts\v3_0_recover_control.py') $controlDest --contract (Join-Path $root 'benchmarks\comparison-v1.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Original control evidence invalid; no additional survey started' }
+    } else {
+        & $runner -Profile cold -OutputRoot (Join-Path $out 'control')
+    }
     & $runner -Profile cold -OutputRoot (Join-Path $out 'traced') -V3Trace -PresentMonExe $PresentMonExe
     $control=@(Get-ChildItem (Join-Path $out 'control') -Directory)
     $traced=@(Get-ChildItem (Join-Path $out 'traced') -Directory)

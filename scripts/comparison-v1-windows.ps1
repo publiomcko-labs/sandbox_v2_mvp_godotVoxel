@@ -63,17 +63,25 @@ $pmErr = Join-Path $run 'presentmon-stderr.txt'
 $pmCsv = Join-Path $run 'presentmon.csv'
 try {
     $proc = Start-Process -FilePath $exe -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'godot-stdout.txt') -RedirectStandardError (Join-Path $run 'godot-stderr.txt')
+    # Windows PowerShell Start-Process -PassThru may return a Process
+    # without a retained native handle. Open it before the process exits.
+    $null = $proc.Handle
     if ($PresentMonExe) {
         $session = 'A7_' + $proc.Id + '_' + [guid]::NewGuid().ToString('N')
         $pmArgs = '--session_name ' + $session + ' --process_id ' + $proc.Id + ' --v2_metrics --date_time --output_file "' + $pmCsv + '" --no_console_stats --terminate_on_proc_exit --terminate_after_timed --timed 85'
         $pm = Start-Process -FilePath $PresentMonExe -ArgumentList $pmArgs -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'presentmon-stdout.txt') -RedirectStandardError $pmErr
+        $null = $pm.Handle
     }
     if (!$proc.WaitForExit(150000)) { throw 'Survey process timed out' }
-    if ($proc.ExitCode -ne 0) { throw "Comparison failed exit=$($proc.ExitCode)" }
+    $proc.WaitForExit()
+    $gameExit = $proc.ExitCode
+    if ($null -eq $gameExit) { throw 'Comparison exit code unavailable (not a verified process failure); inspect preserved raw output' }
+    if ($gameExit -ne 0) { throw "Comparison failed exit=$gameExit" }
 } finally {
     if ($null -ne $proc -and !$proc.HasExited) { $proc.Kill(); $proc.WaitForExit() }
     if ($null -ne $pm) {
         if (!$pm.WaitForExit(25000)) { $pmTimedOut = $true; $pm.Kill(); $pm.WaitForExit() }
+        $pm.WaitForExit()
         $pmExit = $pm.ExitCode
     }
     if ($PresentMonExe) {

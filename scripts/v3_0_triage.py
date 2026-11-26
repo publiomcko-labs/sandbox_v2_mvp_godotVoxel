@@ -23,8 +23,14 @@ def analyze(control, traced):
         e = result["environment"]
         require(e["render_mode"] == "interactive" and e["profile"] == "cold", "not interactive cold")
         require(e["functional_proxies"]["edits_requested"] == 6, "incomplete edits")
-    for key in ("git_sha", "hostname", "cpu", "gpu", "resolution", "backend", "godot_sha256", "native_sha256"):
-        require(c["environment"][key] == t["environment"][key], "mismatch " + key)
+    recovered = c["environment"].get("recovered_control", False)
+    if recovered:
+        require(c["environment"]["observed_gpu_name"] in " ".join(t["environment"]["gpu"]), "GPU mismatch")
+        # WMI and OpenGL can use different driver version formats; preserve both.
+        # Do not assert driver equivalence from differently formatted labels.
+    else:
+        for key in ("git_sha", "hostname", "cpu", "gpu", "resolution", "backend", "godot_sha256", "native_sha256"):
+            require(c["environment"][key] == t["environment"][key], "mismatch " + key)
     require(c["contract_sha256"] == t["contract_sha256"], "contract mismatch")
     require(not c["environment"]["v3_trace"] and t["environment"]["v3_trace"], "invalid trace arms")
     meta = load_json(traced / "v3-trace.csv.json")
@@ -97,7 +103,8 @@ def analyze(control, traced):
             "traced_33ms_events":spikes,"clock_drift_ms":drift_ms,"etw":etw,
             "control_frames":cf,"traced_frames":tf,
             "combined_instrumentation_p99_delta_ms":tf["interval_p99_ms"]-cf["interval_p99_ms"],
-            "overhead_note":"Two cold runs measure combined observed difference, not isolated instrumentation overhead; variance is not controlled.",
+            "recovered_control": recovered,
+            "overhead_note":("Recovered control lacks contemporaneous hardware/commit/binary hashes; comparison is provisional, not a qualified overhead check." if recovered else "Two cold runs measure combined observed difference, not isolated instrumentation overhead; variance is not controlled."),
             "strict_gates":"NOT_QUALIFIED","cause":"UNATTRIBUTED",
             "limitations":["A7 worker/terrain statistics are sampled, not per-job events.","ETW proximity is not exact frame identity or scheduler attribution.","No native per-job or OS scheduling trace; unaccounted time must remain unattributed.","Candidate threshold >=100 ms is not proof of same historical cause."]}
 
