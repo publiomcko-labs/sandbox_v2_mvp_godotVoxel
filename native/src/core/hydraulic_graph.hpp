@@ -76,11 +76,11 @@ class Graph {
     static double level_after(const Volume &v,Litres delta){return v.ocean?v.ocean_level:v.curve.level(v.litres+delta);}
     // Cap movement at the equilibrium head and at the sill. No teleporting
     // across two portals in one tick: all proposals use pre-tick volumes.
-    static Litres equilibrium(const Volume &a,const Volume &b,const Portal &p,Litres max) {
+    static Litres equilibrium(const Volume &a,const Volume &b,const Portal &p,Litres max,Litres a_delta,Litres b_delta) {
         Litres lo=0,hi=max;
         while(lo<hi) {
             const auto mid=lo+(hi-lo+1)/2;
-            if(level_after(a,-mid)>=std::max(p.sill_m,level_after(b,mid)))lo=mid;
+            if(level_after(a,a_delta-mid)>=std::max(p.sill_m,level_after(b,b_delta+mid)))lo=mid;
             else hi=mid-1;
         }
         return lo;
@@ -170,7 +170,7 @@ public:
                 std::max<Litres>(0,a->litres-a->curve.at_level(p.sill_m)-outgoing[a->id]);
             auto room=b->ocean?std::min(volume_limit,ledger_limit-drained_-drain):
                 b->curve.capacity()-b->litres-incoming[b->id];
-            auto n=equilibrium(*a,*b,p,std::min({rate,free,room}));
+            auto n=equilibrium(*a,*b,p,std::min({rate,free,room}),incoming[a->id]-outgoing[a->id],incoming[b->id]-outgoing[b->id]);
             if(n<=0)continue;
             if(a->ocean)inject+=n;else outgoing[a->id]+=n;
             if(b->ocean)drain+=n;else incoming[b->id]+=n;
