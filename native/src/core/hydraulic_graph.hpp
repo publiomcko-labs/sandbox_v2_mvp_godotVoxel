@@ -197,7 +197,19 @@ public:
             if(head<=0.00001){discharge_credit_.erase(id);continue;}
             // Torricelli-type simplified discharge; not a Navier-Stokes solver.
             const double area=p.opening_height_m>0?p.area_m2*std::clamp((a->level()-p.sill_m)/p.opening_height_m,0.0,1.0):p.area_m2;
-            const auto q=p.coefficient*area*std::sqrt(2.0*9.81*head)*1000*tick_s/types_[a->type].viscosity;
+            // Broad, mutually submerged openings represent different
+            // numerical partitions of one free body. Accelerate small
+            // head corrections without accelerating a dry breach or fall.
+            // Width is the actual summed face width for this aperture.
+            double conductance=1.0;
+            if(!a->ocean&&!b->ocean&&b->litres&&a->type==b->type&&p.opening_height_m>0) {
+                const double width=p.area_m2/p.opening_height_m;
+                const double depth=std::min(a->level(),b->level())-p.sill_m;
+                const double wet=std::clamp((depth-0.15)/0.35,0.0,1.0);
+                const double near_equal=std::clamp((1.0-head)/0.75,0.0,1.0);
+                conductance+=std::clamp((width-1.0)*2.0,0.0,7.0)*wet*near_equal;
+            }
+            const auto q=conductance*p.coefficient*area*std::sqrt(2.0*9.81*head)*1000*tick_s/types_[a->type].viscosity;
             const auto credit=discharge_credit_.find(id);
             const double prior=credit!=discharge_credit_.end()&&credit->second.first==a->id?credit->second.second:0.0;
             const double discharge=std::min(q+prior,double(volume_limit));

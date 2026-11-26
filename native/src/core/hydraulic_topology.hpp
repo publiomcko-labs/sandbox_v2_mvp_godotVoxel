@@ -12,6 +12,9 @@ struct Snapshot {
     int nx{},ny{},nz{},step=1;
     std::uint64_t revision{};
     std::vector<std::uint8_t> air;
+    // Optional presentation-only SDF zero crossings at shared XZ vertices.
+    // No liquid state, capacity or topology depends on these heights.
+    std::vector<float> surface_floor{};
     bool open(int x,int y,int z)const{
         return air.at(static_cast<std::size_t>((z*nx+x)*ny+y))==1;
     }
@@ -28,6 +31,7 @@ struct Result {
     std::vector<Opening> openings;
     std::vector<Boundary> boundaries;
     std::vector<std::vector<Span>> column_runs;
+    std::vector<float> surface_floor{};
 };
 inline Result extract(const Snapshot &s) {
     if(s.nx<1||s.nx>32||s.nz<1||s.nz>32||s.ny<1||s.ny>128||
@@ -35,7 +39,11 @@ inline Result extract(const Snapshot &s) {
         s.air.size()!=static_cast<std::size_t>(s.nx*s.ny*s.nz))
         throw std::invalid_argument("hydraulic snapshot bounds");
     for(auto v:s.air)if(v>1)throw std::invalid_argument("invalid air classification");
-    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{}};
+    if(!s.surface_floor.empty()&&s.surface_floor.size()!=static_cast<std::size_t>((s.nx+1)*(s.nz+1)))
+        throw std::invalid_argument("hydraulic visual floor size");
+    for(auto h:s.surface_floor)if(!std::isfinite(h)||h<s.origin.y||h>s.origin.y+s.ny*s.step)
+        throw std::invalid_argument("hydraulic visual floor range");
+    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor};
     std::vector<Span> spans;
     std::vector<std::vector<std::size_t>> columns(static_cast<std::size_t>(s.nx*s.nz));
     auto column=[&](int x,int z)->auto&{return columns[static_cast<std::size_t>(z*s.nx+x)];};

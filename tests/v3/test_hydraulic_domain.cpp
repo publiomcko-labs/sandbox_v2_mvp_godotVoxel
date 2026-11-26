@@ -145,6 +145,20 @@ int main(){
         for(auto p:{a0,b0,c0})assert(p.x>=0&&p.x<=1&&p.z>=0&&p.z<=1&&p.floor<=1);
     }
     assert(primary_area==1);
+    bool corner_apron=false;
+    for(const auto &patch:full)for(auto p:patch.vertices)if(p.x>1&&p.z>1)corner_apron=true;
+    assert(corner_apron);
+    // The same SDF zero crossing produces exactly the same UV floor
+    // on both independently extracted sides of a tile boundary.
+    auto sa=a,sb=b;
+    sa.surface_floor.assign(25,0.25f);sb.surface_floor.assign(25,0.25f);
+    auto ra=tp::extract(sa),rb=tp::extract(sb);
+    for(const auto &patch:surface::build(ra,ra.compartments.front(),8))
+        for(auto p:patch.vertices)if(p.x==4)assert(p.floor==0.25);
+    for(const auto &patch:surface::build(rb,rb.compartments.front(),8))
+        for(auto p:patch.vertices)if(p.x==0)assert(p.floor==0.25);
+    assert(ra.compartments.front().curve.capacity()==ga.compartments.front().curve.capacity());
+    std::cout<<"V3_HYDRAULIC_SDF_SHORE_PASS shared_vertex_floor corner_apron unchanged_capacity\n";
     const auto full_slope=surface::build(sloped,sloped.compartments.front(),8);
     assert(full_slope.size()==1&&full_slope.front().vertices.size()==4*4*6);
     const auto full_low=surface::build(divided,*std::find_if(divided.compartments.begin(),divided.compartments.end(),[&](const auto &c){return c.id==low;}),8);

@@ -14,6 +14,10 @@ var _initial_cohort: Dictionary={}
 var _meshes: Dictionary={}
 var _mesh_tiles: Dictionary={}
 var _deferred_swaps:=0
+var _swap_group: Dictionary={}
+var _last_edit_group_revision:=0
+var _group_swaps:=0
+var _group_holds:=0
 var _next_update:=0
 var _mesh_builds:=0
 var _level_updates:=0
@@ -44,6 +48,12 @@ func refresh() -> void:
     var wanted: Dictionary={}
     var flow_rows: Dictionary={}
     var builds:=0
+    var state: Dictionary=session.hydraulic_report()
+    var group_revision:=int(state.get("edit_group_revision",0))
+    if group_revision!=_last_edit_group_revision:
+        _last_edit_group_revision=group_revision
+        for tile: Vector3i in state.get("edit_group_tiles",[]):
+            _swap_group[tile]=true
     for row: Array in session.hydraulic_surfaces():
         var id:=int(row[0])
         live[id]=true
@@ -106,9 +116,24 @@ func refresh() -> void:
         if live.has(id):
             var tile: Vector3i=_mesh_tiles[id]
             ready[tile]=int(ready.get(tile,0))+1
+    # All tiles touched by one (or overlapping) edit publish together.
+    # A dry replacement is intentional only after the whole topology
+    # group has published; while incomplete retain the previously visible
+    # meshes and never expose partial new geometry.
+    var group_ready:=int(state["pending_edit_tiles"])==0
+    for tile: Vector3i in _swap_group:
+        if int(ready.get(tile,0))!=int(wanted.get(tile,0)):
+            group_ready=false
+    if not _swap_group.is_empty():
+        if group_ready:
+            _group_swaps+=1
+        else:
+            _group_holds+=1
     for id: int in _meshes.keys():
         var tile: Vector3i=_mesh_tiles[id]
         var complete:=int(ready.get(tile,0))==int(wanted.get(tile,0))
+        if _swap_group.has(tile):
+            complete=complete and group_ready
         var node: MeshInstance3D=_meshes[id]
         if live.has(id):
             if complete and _initial_presented:
@@ -120,6 +145,8 @@ func refresh() -> void:
             _mesh_tiles.erase(id)
         else:
             _deferred_swaps+=1
+    if group_ready:
+        _swap_group.clear()
     _refresh_flow(flow_rows)
     _max_update_usec=maxi(_max_update_usec,Time.get_ticks_usec()-start)
 
@@ -204,4 +231,4 @@ func get_report() -> Dictionary:
     for node: MeshInstance3D in _meshes.values():
         if node.visible:
             visible_meshes+=1
-    return {"visible_meshes":visible_meshes,"deferred_swaps":_deferred_swaps,"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec,"flow_quads":_flow_quads}
+    return {"visible_meshes":visible_meshes,"deferred_swaps":_deferred_swaps,"meshes":_meshes.size(),"mesh_builds":_mesh_builds,"level_updates":_level_updates,"max_update_usec":_max_update_usec,"flow_quads":_flow_quads,"group_swaps":_group_swaps,"group_holds":_group_holds}

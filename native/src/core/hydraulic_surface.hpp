@@ -76,25 +76,32 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
             int h=floor;
             for(int oz=dz-1;oz<=dz;++oz)for(int ox=dx-1;ox<=dx;++ox)
                 h=floor_at(x+ox,z+oz,h);
-            return Point{double(x+dx),double(z+dz),double(h)};
+            // Adjacent tiles sample the identical world-space SDF corner.
+            // Use its sub-metre zero crossing for continuous UV clipping;
+            // old saves/synthetic snapshots keep the conservative fallback.
+            double visual=h;
+            if(!g.surface_floor.empty())
+                visual=g.surface_floor.at(static_cast<std::size_t>((z+dz)*(g.nx+1)+x+dx));
+            return Point{double(x+dx),double(z+dz),visual};
         };
         quad(sheet,corner(0,0),corner(1,0),corner(1,1),corner(0,1));
         // Extend only into known classified solid. The first higher air
         // interval sets the cap; no extension above that opening or into
         // unknown tiles. Full edges (rather than diagonal slivers) share
         // precisely the same boundary as the primary sheet.
-        for(const auto d:{core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
-            const int nx=x+d.x,nz=z+d.z;
-            if(!inside(nx,nz))continue;
-            int cap=ceiling;bool open=false;
+        const auto bank_cap=[&](int nx,int nz) {
+            if(!inside(nx,nz))return floor;
+            int cap=ceiling;
             for(const auto &n:column(nx,nz)) {
-                // The same exposed basin already owns the entire next
-                // column. Never overlay its primary sheet with an apron.
-                if(n.top==top&&n.compartment==c.id){open=true;break;}
-                if(n.bottom<=v.bottom&&v.bottom<n.top){open=true;break;}
+                if(n.top==top&&n.compartment==c.id)return floor;
+                if(n.bottom<=v.bottom&&v.bottom<n.top)return floor;
                 if(n.bottom>v.bottom)cap=std::min(cap,g.origin.y+n.bottom*g.step);
             }
-            if(open||cap<=floor)continue;
+            return cap;
+        };
+        for(const auto d:{core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
+            const int cap=bank_cap(x+d.x,z+d.z);
+            if(cap<=floor)continue;
             auto &p=aprons.try_emplace(cap,Patch{cap,{}}).first->second;
             Point a,b;
             if(d.x){a=corner(d.x>0?1:0,0);b=corner(d.x>0?1:0,1);}
@@ -104,6 +111,17 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
             q.x+=d.x*0.5;q.z+=d.z*0.5;
             // Match primary edge's UV exactly to avoid a shader-cut seam.
             if(d.x<0||d.z>0)quad(p,b,a,e,q);else quad(p,a,b,q,e);
+        }
+        // Fill the missing quarter-corner between two eligible strips.
+        // Only when all three neighbouring columns certify solid at this
+        // floor; cap against every higher interval, not just the diagonal.
+        for(int dx:{-1,1})for(int dz:{-1,1}) {
+            const int cap=std::min({bank_cap(x+dx,z),bank_cap(x,z+dz),bank_cap(x+dx,z+dz)});
+            if(cap<=floor)continue;
+            auto &p=aprons.try_emplace(cap,Patch{cap,{}}).first->second;
+            Point a=corner(dx>0?1:0,dz>0?1:0),b=a,e=a,q=a;
+            b.x+=dx*0.5;e.z+=dz*0.5;q.x+=dx*0.5;q.z+=dz*0.5;
+            if(dx==dz)quad(p,a,b,q,e);else quad(p,a,e,q,b);
         }
     }
     if(!sheet.vertices.empty())out.push_back(std::move(sheet));

@@ -55,6 +55,26 @@ int main(){
     for(int i=0;i<20;++i)trickle.tick();
     assert(trickle.volumes().at(2).litres==retained);
     std::cout<<"V3_HYDRAULIC_TRICKLE_PASS sub_litre_credit closed_portal exact_mass\n";
+    // Wide submerged connections equalize small head differences faster
+    // than the ordinary Torricelli law, without changing narrow/dry flow.
+    const auto make_pair=[](double width,bool geometric,bool wet) {
+        Graph pair({{"water",1,1000}});
+        pair.add_volume({1,0,tank(0,10000,1000000),400000});
+        pair.add_volume({2,0,tank(0,10000,1000000),wet?380000:0});
+        pair.add_portal({1,1,2,0,width*(geometric?10.0:4.0),0.62,true,1,geometric?10.0:0.0});
+        return pair;
+    };
+    auto broad=make_pair(8,true,true),baseline=make_pair(8,false,true);
+    const auto broad_moved=broad.tick().moved,base_moved=baseline.tick().moved;
+    assert(broad_moved>base_moved&&broad.finite()==780000);
+    assert(broad.volumes().at(1).level()>=broad.volumes().at(2).level());
+    auto narrow=make_pair(1,true,true),narrow_base=make_pair(1,false,true);
+    assert(narrow.tick().moved==narrow_base.tick().moved);
+    auto dry_broad=make_pair(8,true,false),dry_base=make_pair(8,false,false);
+    assert(dry_broad.tick().moved==dry_base.tick().moved);
+    broad.invalidate_portal(1,2);
+    assert(broad.tick().moved==0&&broad.finite()==780000);
+    std::cout<<"V3_HYDRAULIC_WIDE_CONTACT_PASS accelerated_wet narrow_and_dry_unchanged exact_mass\n";
     // Volume count does not determine the tick work: 4096 dormant bodies,
     // one opening, one portal visit. A billion litres is still one node.
     Graph scale({{"water",1,1000}});

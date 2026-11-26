@@ -15,7 +15,8 @@ class Runtime {
     Domain domain_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
-    std::set<core::Region> edited_tiles_;
+    std::set<core::Region> edited_tiles_,edit_group_;
+    std::uint64_t edit_group_revision_=0;
     std::map<Id,std::pair<Transfer,std::uint64_t>> recent_flows_;
     std::uint64_t debt_=0,ticks_=0,visited_=0,moved_=0,publications_=0,max_tick_us_=0,max_snapshot_us_=0;
     static constexpr int side=16,base=-32,height=64;
@@ -159,10 +160,12 @@ public:
         return true;
     }
     void edited(core::Vec3 center,double radius,std::uint64_t revision) {
+        if(edited_tiles_.empty())edit_group_.clear();
+        edit_group_revision_=revision;
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});
         for(int x=lo.x;x<=hi.x;x+=side)for(int z=lo.z;z<=hi.z;z+=side) {
             const core::Region k{x,base,z};
-            if(domain_.tiles().contains(k))edited_tiles_.insert(k);
+            if(domain_.tiles().contains(k)){edited_tiles_.insert(k);edit_group_.insert(k);}
             domain_.invalidate(k,revision);worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
         }
     }
@@ -279,6 +282,10 @@ public:
         d["portals"]=static_cast<int64_t>(domain_.graph().portals().size());d["sources"]=static_cast<int64_t>(domain_.seeded().size());
         d["ticks"]=static_cast<int64_t>(ticks_);d["visited"]=static_cast<int64_t>(visited_);d["moved"]=static_cast<int64_t>(moved_);
         d["pending_edit_tiles"]=static_cast<int64_t>(edited_tiles_.size());
+        d["edit_group_revision"]=static_cast<int64_t>(edit_group_revision_);
+        godot::Array group;
+        for(const auto &k:edit_group_)group.push_back(godot::Vector3i(k.x,k.y,k.z));
+        d["edit_group_tiles"]=group;
         d["publications"]=static_cast<int64_t>(publications_);d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
         return d;
