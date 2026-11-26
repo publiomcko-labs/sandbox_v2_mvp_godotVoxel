@@ -7,10 +7,10 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='afc300f0303f652bd87fb9368f1cd83e661f1aec'
-$run='45888496737'
+$candidate='df53e32b03f3e5257e7e5a6b4428a390b14792b5'
+$run='45890496597'
 $artifact='v3-native-integration-evidence'
-$zipSha='f3f2d6611861349b4268a5de4df1e4ca9998272823920047faaaf8282ff38613'
+$zipSha='675a1245d6072696f0ab8c7d6ca9dd1c72d963a5ab5a60533ab88646fb6ff13f'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- godot native third_party.lock
@@ -39,7 +39,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45888496737/artifacts/15150348035 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45890496597/artifacts/15151292358 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -70,7 +70,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 hydraulic H2: move away while pond remains in view, inspect interpolated margins, excavate under the water and inspect drainage; close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
+Write-Host 'V3 hydraulic H3: inspect continuous basin levels and shoreline, excavate under the water, check drainage and close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
