@@ -18,6 +18,11 @@ int main(){
         if(std::abs(v.position.x-8.5)<1e-8)left.insert({std::llround(v.position.y*1e6),std::llround(v.position.z*1e6),std::llround(v.normal.x*1e6),std::llround(v.normal.y*1e6),std::llround(v.normal.z*1e6)});
     }
     for(const auto &v:b.vertices)if(std::abs(v.position.x-0.5)<1e-8)right.insert({std::llround(v.position.y*1e6),std::llround(v.position.z*1e6),std::llround(v.normal.x*1e6),std::llround(v.normal.y*1e6),std::llround(v.normal.z*1e6)});
+    if(left!=right) {
+        std::cerr<<"shared plane mismatch left="<<left.size()<<" right="<<right.size()<<"\n";
+        for(const auto &p:left)if(!right.contains(p)) {std::cerr<<"left only "<<p[0]<<","<<p[1]<<"\n";break;}
+        for(const auto &p:right)if(!left.contains(p)) {std::cerr<<"right only "<<p[0]<<","<<p[1]<<"\n";break;}
+    }
     assert(!left.empty()&&left==right);
     auto patch=[](Cell p)->Amount {
         if(p.y!=1||p.z<1||p.z>5||p.x<1||p.x>5)return {};

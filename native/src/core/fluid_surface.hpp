@@ -43,7 +43,9 @@ inline Vertex edge(const Sample &a,const Sample &b) {
 }
 inline void tri(Mesh &m,Vertex a,Vertex b,Vertex c) {
     auto n=cross(sub(b.position,a.position),sub(c.position,a.position));
-    if(dot(n,n)<1e-14)return;
+    // Keep tiny but non-degenerate triangles at nearly lattice-aligned
+    // surfaces. Culling them independently creates unmatched tile edges.
+    if(dot(n,n)<1e-26)return;
     const auto outward=add(a.normal,add(b.normal,c.normal));
     // Godot front faces are clockwise.
     if(dot(n,outward)>0){std::swap(b,c);n=mul(n,-1);}
