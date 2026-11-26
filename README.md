@@ -4,6 +4,10 @@
 
 MVP independente de sandbox volumétrico 3D com Godot 4.7.2 + Voxel Tools 1.7 integrado e lógica nativa em C++20. Meta final: 60 FPS/16,7 ms por frame completo, movimento contínuo de 18 m/s sem lacunas, raio visual efetivo de 130 m em 360°, edição visível <=100 ms, rochas físicas, água básica e persistência.
 
+## Próxima etapa — Sandbox V3
+
+Planejamento aprovado pelo proprietário em 26/11/2026. **Estado: PLANNED — implementação ainda não iniciada.** A V3 amplia o A5/CPU16 para sandbox explorável, mod-first e simulação escalável, incluindo investigação de desempenho, geologia, cavernas, líquidos localizados e dinâmicos, árvores/rochas procedurais, exploração física e benchmarks de escala. Consulte o [projeto V3](docs/V3_PROJETO.md), o [plano de benchmarks de escala](docs/V3_BENCHMARKS_ESCALA.md) e o [contrato de campanhas (JSON)](docs/V3_BENCHMARK_CONTRACT.json). A referência A5 permanece congelada; o plano não modifica código nem saves.
+
 ## Documentos
 - [Checkpoint, resultados e limitações finais](docs/MVP_A_ENCERRAMENTO_FINAL.md)
 - [Backlog pós-MVP](docs/POS_MVP.md)

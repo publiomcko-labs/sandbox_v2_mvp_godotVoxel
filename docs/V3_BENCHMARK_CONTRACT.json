@@ -1,0 +1,152 @@
+{
+  "schema": "sandbox_v3_scale_benchmarks_plan_v1",
+  "status": "PLANNED",
+  "baseline": "A5/CPU16",
+  "phases": [
+    "V3.7",
+    "V3.8"
+  ],
+  "qualification": {
+    "headless_graphics": false,
+    "physical_present_required_for_strict_fps": true,
+    "first_correct_pixel_required_for_edit100": true,
+    "thresholds_status": "proposed_not_measured"
+  },
+  "edits": {
+    "unit": "confirmed_effective_runtime_brush",
+    "profiles": [
+      "LOCAL",
+      "DISTRIBUTED",
+      "REVISIT"
+    ],
+    "cumulative_confirmed_targets": [
+      10000,
+      100000,
+      1000000
+    ],
+    "optional_capacity_target": 1000000,
+    "brush_radius_m": 1.5,
+    "logical_test_region_size_m_proposed": 64,
+    "post_checkpoint_survey": {
+      "duration_s": 46,
+      "warmup_s": 12,
+      "requested_speed_mps": 18,
+      "scripted_edits": 6
+    },
+    "ci_fixture_confirmed_targets": [
+      100,
+      1000
+    ],
+    "required_checks": [
+      "actual_effective_edits",
+      "region_and_block_coverage",
+      "command_revisions",
+      "persistence_reopen",
+      "bounded_working_set",
+      "no_loss_or_duplication",
+      "interactive_revisit"
+    ],
+    "metrics": [
+      "attempts",
+      "accepted",
+      "applied",
+      "persisted",
+      "rejected",
+      "noops",
+      "operations_per_s",
+      "command_latency_ms",
+      "mesh_ready_latency_ms",
+      "collider_ready_latency_ms",
+      "durability_latency_ms",
+      "queue_depth",
+      "oldest_pending_age_ms",
+      "resident_regions",
+      "touched_blocks",
+      "ram_peak_bytes",
+      "ram_after_unload_bytes",
+      "vram_when_available",
+      "save_size_bytes",
+      "reopen_s",
+      "frame_intervals"
+    ]
+  },
+  "entities": {
+    "archetype_proposed": "base:test_grazer",
+    "simulation_tick_hz": 10,
+    "active_targets": [
+      1000,
+      5000,
+      10000
+    ],
+    "logical_population_targets": [
+      10000,
+      100000
+    ],
+    "tier_test_active_target": 1000,
+    "warmup_s": 12,
+    "measurement_s": 60,
+    "expected_ticks": 600,
+    "minimum_initial_active_target": 1000,
+    "p95_subsystem_tick_ms_target_proposed": 10,
+    "ci_fixture": {
+      "active_entities": 100,
+      "ticks": 100
+    },
+    "profiles": [
+      "ACTIVE_HEADLESS",
+      "ACTIVE_GRAPHICAL",
+      "TIER_RESIDENCY",
+      "COMBINED"
+    ],
+    "required_checks": [
+      "actual_state_updates",
+      "spatial_queries",
+      "determinism",
+      "energy_and_movement",
+      "tier_transition",
+      "persistence_reopen",
+      "no_duplicate_ids",
+      "no_silent_tick_skip"
+    ],
+    "metrics": [
+      "logical_population",
+      "active_population",
+      "aggregate_population",
+      "dormant_population",
+      "rendered_population",
+      "updated_per_tick",
+      "expected_ticks",
+      "completed_ticks",
+      "late_ticks",
+      "tick_latency_ms",
+      "backlog",
+      "entity_updates_per_s",
+      "tier_activation_latency_ms",
+      "ram_peak_bytes",
+      "vram_when_available",
+      "save_size_bytes",
+      "frame_intervals"
+    ]
+  },
+  "execution": {
+    "default_ci": "small_fixtures_only",
+    "capacity_runs": "opt_in",
+    "first_scale_gate": "10000_effective_edits_and_1000_actives",
+    "repeat_key_comparisons": 3,
+    "graphical_session": "same Windows hardware and interactive desktop",
+    "artifact_requirements": [
+      "manifest.json",
+      "raw_measurements",
+      "summary.json",
+      "checkpoint_hashes",
+      "logs"
+    ],
+    "statuses": [
+      "NOT_RUN",
+      "PASS",
+      "FAIL",
+      "INCONCLUSIVE",
+      "NOT_QUALIFIED"
+    ]
+  }
+}
