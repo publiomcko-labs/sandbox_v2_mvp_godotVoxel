@@ -1,0 +1,53 @@
+{
+  "schema": "sandbox_v3_0_closure_v1",
+  "status": "V3_0_COMPLETE_NOT_REPRODUCED_WITH_LIMITATIONS",
+  "historical": {
+    "max_ms": 143.75,
+    "t_s_approx": 24.6,
+    "cause": "UNATTRIBUTED"
+  },
+  "surveys_consumed": 2,
+  "third_run": false,
+  "control": {
+    "samples": 2039,
+    "fps": 59.968,
+    "p95_ms": 17.472,
+    "p99_ms": 17.944,
+    "max_ms": 22.957001,
+    "over20": 2,
+    "over33": 0,
+    "accepted": 6,
+    "save": "completed",
+    "metadata": "RECOVERED_INCOMPLETE"
+  },
+  "instrumented": {
+    "samples": 2038,
+    "fps": 59.96817620359832,
+    "p95_ms": 17.497,
+    "p99_ms": 17.974001,
+    "max_ms": 20.665001,
+    "max_t_s": 24.243319,
+    "over20": 1,
+    "over33": 0,
+    "accepted": 6,
+    "save": "completed",
+    "trace": {
+      "overflow": 0,
+      "discontinuities": 0,
+      "context_samples": 34,
+      "anchor_drift_ms": 0.663
+    },
+    "etw": "NOT_MEASURED",
+    "metadata": "INCOMPLETE"
+  },
+  "overhead": "NOT_ISOLATED",
+  "optimization": false,
+  "strict_gates": {
+    "PERF_60": "NOT_QUALIFIED",
+    "STREAM_18": "NOT_QUALIFIED",
+    "VIEW_130": "NOT_QUALIFIED",
+    "EDIT_100": "NOT_QUALIFIED"
+  },
+  "evidence_sha256": "19695939f41eb5a4e897d285786452b8a32e72b7cb60d055763b4cee1263e9ff",
+  "next": "V3.1"
+}

@@ -1,6 +1,6 @@
 # V3.0 — investigação direcionada do pico (2026-11-26)
 
-Status: **DIAGNOSTIC_IMPLEMENTED_PENDING_REAL_GPU**. Base V3: 4977fb5fcce723712586db567d8c618d2d945d41. Main c60e9fb33e7ce229d666496e2583d7c9f9ceaaba e checkpoint A5 0c3fee959576d0a1faec9ceecffb4b132a65558b preservados. Nenhuma alteração de gameplay, SDF, mesher, LOD, threads, colisores, física ou código nativo.
+Status final: **V3_0_COMPLETE_NOT_REPRODUCED_WITH_LIMITATIONS**. Ver [encerramento](V3_0_ENCERRAMENTO.md). Base V3: 4977fb5fcce723712586db567d8c618d2d945d41. Main c60e9fb33e7ce229d666496e2583d7c9f9ceaaba e checkpoint A5 0c3fee959576d0a1faec9ceecffb4b132a65558b preservados. Nenhuma alteração de gameplay, SDF, mesher, LOD, threads, colisores, física ou código nativo.
 
 ## Auditoria e hipótese
 
@@ -32,3 +32,6 @@ Run [45824145413](https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/a
 
 ### Recuperação do controle local — 26/11/2026
 ZIP v3_0_evidence.zip: 2039 intervalos, 59,968 FPS, p95 17,472 ms, p99 17,944 ms, máximo 22,957001 ms em t=36,040855 s, 2 acima de 20 ms, zero acima de 33 ms, 6/6 edições, save completed, stderr vazio e COMPARISON_V1_DONE presente. Controle executado integralmente; PowerShell retornou ExitCode vazio após WaitForExit(timeout), sem prova de falha do Godot. Consumida uma rodada. Corrigido retenção de handle de ambos processos e tratamento de código ausente. Retomar via -ResumeControlPath para copiar somente os quatro arquivos originais, reconstruir metadados estritamente observáveis e executar apenas o braço instrumentado. Não inventar hashes/CPU/commit do controle ausente; comparação de overhead é provisória. Não repetir controle automaticamente. Nenhuma mudança funcional ou otimização.
+
+### Encerramento
+Duas rodadas completas, sem reprodução; ver [V3_0_ENCERRAMENTO.md](V3_0_ENCERRAMENTO.md) e [V3_0_RESULTADOS.json](V3_0_RESULTADOS.json). Não repetir automaticamente.
