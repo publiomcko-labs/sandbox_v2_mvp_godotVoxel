@@ -1,6 +1,6 @@
 # V3.3 — cavernas naturais
 
-Status FUNCTIONAL_HEADLESS_PASS — GRAPHICAL_ROUTE_PENDING. Base checkpoint/v3-2-20261126, d02cae1dd6a0a07e278fb599927e6fe37213fd60. V3.2 autorizada a avançar com limitação visual registrada.
+Status V3.3b_FUNCTIONAL_HEADLESS_PASS — RETEST_VISUAL_PENDING. Base checkpoint/v3-2-20261126, d02cae1dd6a0a07e278fb599927e6fe37213fd60. V3.2 autorizada a avançar com limitação visual registrada.
 
 Mod data-only karst, perfis karst:natural e karst:wide. Seeds de cinco campos derivados por SHA-256 de seed, ID do perfil, versão e papel, compilados no registry antes de abrir stores. Compatibilidade de save fixa perfil geológico e de cavernas, pins e gerador v3_3_caves_v1. Worlds V3.3 isolados em user://worlds_v33.
 
@@ -33,3 +33,21 @@ Determinismo/amostras LOD0/1 e material de construção reaberto via SQLite pass
 ## V3.3b — correção da superfície, 26/11/2026
 
 Teste visual do usuário rejeitou a V3.3 inicial: relevo esburacado e fragmentado. Causa de geração confirmada no graph: cobertura anterior era ruído 2D centrado aproximadamente em zero, permitindo interseções de campos e grandes câmaras interceptarem a superfície em regiões extensas. Não confundir automaticamente as aberturas com falhas de LOD. V3.3b impõe teto sólido de 12/14 m abaixo da superfície original para a rede principal, reduz os raios de túneis/câmaras, e separa entradas estreitas em células de 80/88 m com jitter contínuo e inclinação, alargando-as gradualmente em profundidade. Preserva os cinco campos de ruído prévios; sexto seed exclusivo para jitter Z. Mod karst 1.1.0, gerador v3_3_caves_v2 e saves isolados user://worlds_v33b. Não reabrir mundos V3.3v1. Gate adicional por colunas amostradas: superfície aberta <=2%, faixa até 8m <=4%, mantém conectividade subterrânea e bolsões. Frações e geometria são amostrais, não garantia visual ou de passagem contínua. Água legada segue pendente V3.4. Validação em andamento.
+
+### Evidência corretiva V3.3b
+
+Candidato 664cee1c6ffb54113684a21763e750d934940d68; Actions 45851519573 SUCCESS (1min53s), contratos GCC/MSVC 45851519657 SUCCESS. Regressões A5/V3.1/V3.2 e persistência V3.3 passaram.
+
+| Métrica amostral | Natural 20261119 | Wide 20261120 |
+|---|---:|---:|
+| Amostras de ar junto à superfície, antes → depois | 1361 → 32 | 1822 → 39 |
+| Colunas abertas junto à superfície, depois | 26/6400 (0,40625%) | 35/6400 (0,546875%) |
+| Colunas com ar até 8m de profundidade | 46/6400 (0,71875%) | 61/6400 (0,953125%) |
+| Fração ar subterrâneo, antes → depois | 14,61% → 8,72% | 19,37% → 11,67% |
+| Profundidade máxima conectada (m) | 69,18 | 89,02 |
+| Bolsões isolados | 22 | 16 |
+| Amostras clearance axial 4m | 1051 | 3515 |
+| Custo V3.3b (us/bloco, CI) | 2700,61 | 2642,90 |
+| Custo relativo V3.2 na mesma execução | 2,13x | 2,38x |
+
+Não comparar custo absoluto com run anterior como se fosse mesmo hardware/carga. Gate de superfície e faixa rasa aprovado nas duas seeds. Tais medidas referem-se à grade de 160m e passo 2m, não são estimativa global. Nenhum PASS gráfico atribuído: usuário deve verificar relevo e entradas. O mesmo lançador scripts/v3-caves-local-windows.ps1 foi atualizado para artefato 15132559441 (SHA256 2487ee23ad72250dbeb55ad5b24793cb8f8df36ae560d7601dea211d02357dac). Spawns de entrada natural (38,9,44), wide (-40,5,40), três metros acima das novas amostras de entrada. Spawn profundo mantido. Água legada permanece até V3.4. Main/A5 e checkpoint V3.2 preservados. Não iniciar V3.4 antes da nova observação visual.

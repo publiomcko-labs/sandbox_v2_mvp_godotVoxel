@@ -9,10 +9,10 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='b295af24b313f3cac505cfda36d4f9e1c778b8fd'
-$run='45849940174'
+$candidate='664cee1c6ffb54113684a21763e750d934940d68'
+$run='45851519573'
 $artifact='v3-native-integration-evidence'
-$zipSha='a3edefb5eb0b27a1c77dac5bdb920fcfda7b22729b89baa459d54426de7c6222'
+$zipSha='2487ee23ad72250dbeb55ad5b24793cb8f8df36ae560d7601dea211d02357dac'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- godot native third_party.lock
@@ -41,7 +41,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45849940174/artifacts/15133761312 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45851519573/artifacts/15132559441 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -64,11 +64,11 @@ $env:V3_GEOLOGY_PROFILE='earth:temperate'
 $env:V3_CAVE_PROFILE=$Profile
 if ($Profile -eq 'karst:natural') {
     $env:V3_WORLD_SEED='20261119'
-    $entrance='60,11,78'
+    $entrance='38,9,44'
     $deep='-26,-70,-34'
 } else {
     $env:V3_WORLD_SEED='20261120'
-    $entrance='-66,11,70'
+    $entrance='-40,5,40'
     $deep='-6,-86,26'
 }
 if ($Spawn -eq 'Entrance') { $env:V3_CAVE_SPAWN=$entrance }
@@ -78,7 +78,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3.3 visual check: free flight (G toggles physics); descend near sampled entrance, explore connected caves and chambers, inspect LOD transitions and geology; close window normally. Legacy A5 water can appear below y=0.'
+Write-Host 'V3.3b surface-preserving visual check: free flight (G toggles physics); descend near sampled entrance, explore connected caves and chambers, inspect LOD transitions and geology; close window normally. Legacy A5 water can appear below y=0.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_caves_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
