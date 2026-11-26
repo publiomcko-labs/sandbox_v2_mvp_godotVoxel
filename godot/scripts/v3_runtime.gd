@@ -7,6 +7,8 @@ const EDITOR := preload("res://scripts/v3_edit_controller.gd")
 const TICK_BUDGET := 4
 @export var geology_enabled := false
 @export var caves_enabled := false
+@export var hydraulic_enabled := false
+const HYDRAULIC_WATER := preload("res://scripts/v3_hydraulic_water.gd")
 var cave_config: Dictionary = {}
 var geology_config: Dictionary = {}
 var selected_material := 0
@@ -33,7 +35,7 @@ func _ready() -> void:
     if mods.is_empty():
         mods = ProjectSettings.globalize_path("user://mods_v3")
     if worlds.is_empty():
-        worlds = ProjectSettings.globalize_path("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3"))
+        worlds = ProjectSettings.globalize_path("user://worlds_v34hydraulic" if hydraulic_enabled else ("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3")))
     if world_id.is_empty():
         world_id = "world"
     if seed_text.is_empty():
@@ -57,9 +59,15 @@ func _ready() -> void:
             var cave_profile := OS.get_environment("V3_CAVE_PROFILE")
             if cave_profile.is_empty():
                 cave_profile = "karst:natural"
-            opened = session.open_caves(first, mods, worlds, world_id, seed_text.to_int(),
-                ProjectSettings.globalize_path("res://mods/geology"),profile,
-                ProjectSettings.globalize_path("res://mods/caves"),cave_profile)
+            if hydraulic_enabled:
+                opened = session.open_hydraulic(first, mods, worlds, world_id, seed_text.to_int(),
+                    ProjectSettings.globalize_path("res://mods/geology"),profile,
+                    ProjectSettings.globalize_path("res://mods/caves"),cave_profile,
+                    ProjectSettings.globalize_path("res://mods/hydraulic"))
+            else:
+                opened = session.open_caves(first, mods, worlds, world_id, seed_text.to_int(),
+                    ProjectSettings.globalize_path("res://mods/geology"),profile,
+                    ProjectSettings.globalize_path("res://mods/caves"),cave_profile)
             if opened:
                 var cave_parsed: Variant = JSON.parse_string(session.get_cave_json())
                 if not cave_parsed is Dictionary:
@@ -97,6 +105,12 @@ func _ready() -> void:
             if pos.is_finite() and pos.length()<1000000.0:
                 player.position=pos
     rocks = world.get_node("RockManager") as Node3D
+    if hydraulic_enabled:
+        var water := world.get_node("Water")
+        water.set_script(HYDRAULIC_WATER)
+        water.set("session",session)
+        water.set("world",world)
+        player.set("liquid_provider",water)
     status = world.get_node("HUD/Status") as Label
     var editor := world.get_node("EditController")
     editor.set_script(EDITOR)
@@ -125,13 +139,16 @@ func _set_status(message: String) -> void:
     print(message)
 
 func _process(_delta: float) -> void:
-    if not running or closing:
+    if not running or closing or saving:
         return
     var now := Time.get_ticks_usec()
     var elapsed := maxi(0, now - _last_usec)
     _last_usec = now
     if not session.update_interest(player.global_position) or session.advance_ticks(elapsed * 1000, TICK_BUDGET) < 0:
         _fatal("scheduler/interest: " + session.get_last_error())
+        return
+    if hydraulic_enabled and not session.hydraulic_frame(world,player.global_position,elapsed * 1000):
+        _fatal("hydraulic frame: " + session.get_last_error())
 
 func submit_brush(center: Vector3, add: bool, radius: float) -> String:
     if not running or saving or closing:
@@ -200,6 +217,9 @@ func request_close() -> void:
     player.set_process_unhandled_input(false)
     rocks.set_process(false)
     rocks.set_process_unhandled_input(false)
+    if hydraulic_enabled:
+        world.get_node("Water").set_process(false)
+        world.get_node("Water").set_physics_process(false)
     world.get_node("EditController").set_process(false)
     world.get_node("EditController").set_process_unhandled_input(false)
     for child in rocks.get_children():
@@ -232,6 +252,9 @@ func _save_async() -> void:
         _save_failure("terrain save aborted")
         return
     terrain.stream.flush()
+    if hydraulic_enabled and not session.flush_hydraulic():
+        _save_failure("hydraulic flush: "+session.get_last_error())
+        return
     if not rocks.call("save_states"):
         _save_failure("rock save failed")
         return
@@ -240,6 +263,8 @@ func _save_async() -> void:
         _set_status("V3_FLUSH_PASS: stores flushed; close window for clean checkpoint")
         return
     running = false
+    if hydraulic_enabled:
+        print("V3_HYDRAULIC_VISUAL_REPORT state=",session.hydraulic_report()," presentation=",world.get_node("Water").call("get_report"))
     world.queue_free()
     await get_tree().process_frame
     if not session.finish(true, true):

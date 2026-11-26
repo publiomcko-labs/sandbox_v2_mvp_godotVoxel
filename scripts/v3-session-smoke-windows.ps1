@@ -137,3 +137,31 @@ foreach ($case in @(
     }
 }
 Write-Host 'V3_CAVES_E2E_PASS (headless topology and persistence; graphical route pending)'
+
+$env:V3_WORLD_ROOT=Join-Path $results 'hydraulic-worlds'
+$env:V3_WORLD_ID='hydraulic_fixture'
+$env:V3_WORLD_SEED='20261119'
+$env:V3_CAVE_PROFILE='karst:natural'
+$env:V3_GEOLOGY_PROFILE='earth:temperate'
+New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+$mass=$null
+foreach ($phase in @('write','reopen')) {
+    $stdout=Join-Path $results "hydraulic-$phase.stdout.log"
+    $stderr=Join-Path $results "hydraulic-$phase.stderr.log"
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_smoke.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (-not $p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw "Hydraulic $phase timed out" }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|Shader compilation failed|SCRIPT ERROR:|V3_HYDRAULIC_RUNTIME_FAIL:') { throw "Hydraulic $phase errors" }
+    $marker=Select-String -LiteralPath $stdout -Pattern "V3_HYDRAULIC_RUNTIME_PASS phase=$phase mass=(\d+)"
+    if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw "Hydraulic $phase failed" }
+    $observed=[int64]$marker.Matches[0].Groups[1].Value
+    if ($phase -eq 'write') { $mass=$observed }
+    elseif ($mass -ne $observed) { throw 'Hydraulic mass changed on reopen' }
+}
+$worldPath=Join-Path $env:V3_WORLD_ROOT 'hydraulic_fixture'
+$checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json
+if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 1 -or $checkpoint.pins.Count -ne 6 -or !(Test-Path (Join-Path $worldPath 'hydraulic_domain.json')) -or (Test-Path (Join-Path $worldPath 'session_pending'))) { throw 'Hydraulic checkpoint contract failed' }
+Write-Host "V3_HYDRAULIC_E2E_PASS mass=$mass"
