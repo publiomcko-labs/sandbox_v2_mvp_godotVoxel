@@ -1,4 +1,5 @@
 #include "core/fluids.hpp"
+#include "core/fluid_probe_cache.hpp"
 #include <cassert>
 #include <iostream>
 using namespace sandbox::fluid;
@@ -58,6 +59,23 @@ int main(){
     assert(sliced.cells()==batched.cells()&&sliced.volume()==1000);
     auto tiles=sliced.take_dirty_tiles(4096);
     assert(!tiles.empty()&&std::set<Cell>(tiles.begin(),tiles.end()).size()==tiles.size());
+    ProbeCache cache;
+    bool resident=true,solid=false;
+    auto ready=[&](Cell){return resident;};
+    auto sample=[&](Cell p){return !solid||p!=Cell{-1,0,0};};
+    auto fallback=[](Cell){return Passage::unavailable;};
+    const Cell probe{-1,0,0};
+    cache.begin();
+    assert(cache.probe(probe,ready,sample,fallback)==Passage::open&&cache.reads()==8);
+    cache.begin();
+    assert(cache.probe(probe,ready,sample,fallback)==Passage::open&&cache.reads()==0&&cache.hits()==8&&cache.checks()==1);
+    resident=false;cache.begin();
+    assert(cache.probe(probe,ready,sample,fallback)==Passage::unavailable);
+    resident=true;solid=true;cache.invalidate(probe,probe);cache.begin();
+    assert(cache.probe(probe,ready,sample,fallback)==Passage::solid&&cache.reads()>0);
+    cache.begin(0,0);
+    assert(cache.probe({99,0,0},ready,sample,fallback)==Passage::unavailable&&cache.deferred()==1);
+    std::cout<<"V3_FLUID_PROBE_CACHE_PASS residency edit_invalidation bounded_new_reads\n";
     std::cout<<"V3_FLUID_SLICED_PASS equivalent_rounds coalesced_tiles\n";
     std::cout<<"V3_FLUID_5X_PASS five_water_substeps one_lava_substep same_mass\n";
     std::cout<<"V3_FLUID_CONSERVATION_PASS integer_litres progressive_flow blocked_boundary restore lava_rate no_mixing\n";

@@ -13,6 +13,7 @@
 #include "content_registry/fluid_profile.hpp"
 #include "persistence/fluid_store.hpp"
 #include "core/fluid_surface.hpp"
+#include "core/fluid_probe_cache.hpp"
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/voxel_buffer.hpp>
@@ -138,6 +139,8 @@ struct V3WorldSession::State {
     fl::TickReport fluid_report;
     uint64_t fluid_debt_ns=0,fluid_slices=0,fluid_clock_dropped_ns=0,fluid_slice_max_us=0,fluid_slice_sum_us=0;
     int fluid_round=0;
+    fl::ProbeCache fluid_probe;
+    uint64_t fluid_probe_reads=0,fluid_probe_checks=0,fluid_probe_hits=0,fluid_probe_deferred=0;
     std::unique_ptr<sc::WorldCore<>> core;
     uint64_t bound_world=0;
 };
@@ -435,6 +438,10 @@ Dictionary V3WorldSession::get_state() const {
         d["fluid_clock_dropped_ns"]=static_cast<int64_t>(state_->fluid_clock_dropped_ns);
         d["fluid_slice_max_us"]=static_cast<int64_t>(state_->fluid_slice_max_us);
         d["fluid_slice_mean_us"]=static_cast<int64_t>(state_->fluid_slices?state_->fluid_slice_sum_us/state_->fluid_slices:0);
+        d["fluid_probe_reads"]=static_cast<int64_t>(state_->fluid_probe_reads);
+        d["fluid_probe_checks"]=static_cast<int64_t>(state_->fluid_probe_checks);
+        d["fluid_probe_hits"]=static_cast<int64_t>(state_->fluid_probe_hits);
+        d["fluid_probe_deferred"]=static_cast<int64_t>(state_->fluid_probe_deferred);
     }
     d["open"]=state_->store.is_open();
     return d;
@@ -462,6 +469,7 @@ String V3WorldSession::submit_impl(WorldBootstrap *world,int64_t command,const V
     state_->adapter.world=nullptr;
     if(state_->fluids&&r==sc::CommandResult::accepted) {
         const Vector3 extent(radius+2,radius+2,radius+2);
+        state_->fluid_probe.invalidate(fluid_cell(center-extent),fluid_cell(center+extent));
         try {state_->fluids->invalidate(fluid_cell(center-extent),fluid_cell(center+extent));}
         catch(const std::exception &){/* outside bounded fluid domain */}
     }
@@ -511,10 +519,18 @@ int64_t V3WorldSession::advance_frame_ticks(int64_t elapsed_ns,int64_t budget) {
             const auto pos=state_->interest_position;
             // At most one round per rendered frame. Never execute a five-round
             // catch-up burst. Smaller fixed frontier limits main-thread work.
+            auto &cache=state_->fluid_probe;
+            cache.begin();
+            auto ready=[&](fl::Cell p) {
+                return tool.is_valid()&&tool->is_area_editable(AABB(Vector3(p.x,p.y,p.z),Vector3(5,5,5)));
+            };
+            auto sample=[&](fl::Cell p) {return tool->get_voxel_f(Vector3i(p.x,p.y,p.z))>0.1;};
             state_->fluid_report=state_->fluids->tick([&](fl::Cell p) {
-                if(Vector3(p.x,p.y,p.z).distance_squared_to(pos)>96.0*96.0)return fl::Passage::unavailable;
-                return probe_cell(tool,p);
+                if(tool.is_null()||Vector3(p.x,p.y,p.z).distance_squared_to(pos)>96.0*96.0)return fl::Passage::unavailable;
+                return cache.probe(p,ready,sample,[&](fl::Cell q){return probe_cell(tool,q);});
             },64,state_->fluid_round,1);
+            state_->fluid_probe_reads+=cache.reads();state_->fluid_probe_checks+=cache.checks();
+            state_->fluid_probe_hits+=cache.hits();state_->fluid_probe_deferred+=cache.deferred();
             state_->fluid_round=(state_->fluid_round+1)%5;
             state_->fluid_debt_ns-=period;
             ++state_->fluid_slices;
