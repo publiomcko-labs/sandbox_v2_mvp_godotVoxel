@@ -1,12 +1,12 @@
 shader_type spatial;
 // Voxel Tools v1.7 CUSTOM0 transition contract, CUSTOM1 Single S4 data.
 uniform int u_transition_mask;
-uniform vec4 mat0 : source_color = vec4(0.27,0.45,0.16,0.95);
-uniform vec4 mat1 : source_color = vec4(0.37,0.23,0.13,0.96);
-uniform vec4 mat2 : source_color = vec4(0.72,0.62,0.39,0.94);
-uniform vec4 mat3 : source_color = vec4(0.61,0.60,0.52,0.85);
-uniform vec4 mat4 : source_color = vec4(0.43,0.42,0.45,0.82);
-uniform vec4 mat5 : source_color = vec4(0.20,0.22,0.24,0.91);
+uniform vec4 u_geo_mat0 : source_color = vec4(0.27,0.45,0.16,0.95);
+uniform vec4 u_geo_mat1 : source_color = vec4(0.37,0.23,0.13,0.96);
+uniform vec4 u_geo_mat2 : source_color = vec4(0.72,0.62,0.39,0.94);
+uniform vec4 u_geo_mat3 : source_color = vec4(0.61,0.60,0.52,0.85);
+uniform vec4 u_geo_mat4 : source_color = vec4(0.43,0.42,0.45,0.82);
+uniform vec4 u_geo_mat5 : source_color = vec4(0.20,0.22,0.24,0.91);
 varying flat vec4 v_indices;
 varying vec4 v_weights;
 varying vec3 v_world_pos;
@@ -17,12 +17,12 @@ vec4 unpack_bytes(float f) {
     return vec4(float(b & 255u),float((b >> 8u) & 255u),float((b >> 16u) & 255u),float((b >> 24u) & 255u));
 }
 vec4 material_at(float slot) {
-    if (slot < 0.5) {return mat0;}
-    if (slot < 1.5) {return mat1;}
-    if (slot < 2.5) {return mat2;}
-    if (slot < 3.5) {return mat3;}
-    if (slot < 4.5) {return mat4;}
-    return mat5;
+    if (slot < 0.5) {return u_geo_mat0;}
+    if (slot < 1.5) {return u_geo_mat1;}
+    if (slot < 2.5) {return u_geo_mat2;}
+    if (slot < 3.5) {return u_geo_mat3;}
+    if (slot < 4.5) {return u_geo_mat4;}
+    return u_geo_mat5;
 }
 float planar_grain(vec2 p) {
     // Low-cost band-limited procedural detail, no external texture assets.

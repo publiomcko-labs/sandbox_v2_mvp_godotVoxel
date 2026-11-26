@@ -74,6 +74,9 @@ foreach ($phase in @('write','reopen')) {
     $p.WaitForExit()
     Get-Content $stdout
     Get-Content $stderr
+    if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|Shader compilation failed|SCRIPT ERROR:') {
+        throw "V3 geology $phase contains shader or script errors"
+    }
     if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0 -or
         -not (Select-String -LiteralPath $stdout -SimpleMatch "V3_GEOLOGY_FIXTURE_PASS phase=$phase") -or
         -not (Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) {

@@ -20,7 +20,7 @@ func _enter_tree() -> void:
         for i in range(materials.size()):
             var data: Dictionary = materials[i]["data"]
             var rgb: Array = data["albedo"]
-            surface.set_shader_parameter("mat%d" % i, Color(float(rgb[0]),float(rgb[1]),float(rgb[2]),float(data["roughness"])))
+            surface.set_shader_parameter("u_geo_mat%d" % i, Color(float(rgb[0]),float(rgb[1]),float(rgb[2]),float(data["roughness"])))
         material = surface
     var sdf_graph := build_generator(world_seed, geology_config)
     if sdf_graph == null:

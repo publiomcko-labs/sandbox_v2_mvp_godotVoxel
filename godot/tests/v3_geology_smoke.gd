@@ -57,7 +57,7 @@ func _test() -> void:
                                 if b.get_voxel_f(x/2,y/2,z/2,VoxelBuffer.CHANNEL_SDF) < -0.2 and b.get_voxel(x/2,y/2,z/2,VoxelBuffer.CHANNEL_INDICES) != slot:
                                     _fail("aligned LOD material mismatch")
                                     return
-        if found.size() < 4 or not found.has(5):
+        if found.size() != 6:
             _fail("insufficient material distribution: " + str(found))
             return
         print("V3_GEOLOGY_GENERATION_PASS observed_slots=", found.keys(), " aligned_lod=0/1")
