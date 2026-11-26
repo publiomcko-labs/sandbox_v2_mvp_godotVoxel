@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   native-headless:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: windows-latest
     timeout-minutes: 55
     defaults:
       run:
@@ -33,7 +33,17 @@ jobs:
         with:
           version: "0.13.9"
           enable-cache: false
-      - name: Isolated build tools and existing SCons cache
+      - name: Require installed MSVC x64 before fetching engine
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path -LiteralPath $vswhere)) { throw 'MSVC discovery tool unavailable' }
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs -or !(Test-Path "$vs\VC\Auxiliary\Build\vcvars64.bat")) { throw 'MSVC x64 toolchain unavailable' }
+          $cl = @(Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" -File)
+          if (!$cl.Count) { throw 'MSVC cl.exe unavailable' }
+          Write-Host "V3_MSVC_PREFLIGHT_PASS $vs"
+      - name: Isolated build tools and SCons cache
         run: |
           $ErrorActionPreference='Stop'
           uv python install 3.12

@@ -10,6 +10,8 @@ if env["platform"] != "windows":
     Exit("A0 supports only windows x86_64; add platforms with independent validation.")
 if not ARGUMENTS.get("custom_api_file"):
     Exit("custom_api_file is required: use the API exported by the locked custom Godot editor.")
+if not env.get("is_msvc", False):
+    Exit("V3 requires MSVC x64; no implicit MinGW fallback.")
 if env["disable_exceptions"]:
     Exit("V3 native contracts require C++ exception handling within the extension.")
 env.Append(CPPPATH=[Dir("src").srcnode().abspath,
