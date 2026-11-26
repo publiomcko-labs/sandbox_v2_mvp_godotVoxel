@@ -121,6 +121,29 @@ public:
             throw std::invalid_argument("portal endpoints");
         portals_.emplace(p.id,p);adjacency_[p.a].insert(p.id);adjacency_[p.b].insert(p.id);wake(p.id);
     }
+    const std::set<Id>& incident(Id id)const{return adjacency_.at(id);}
+    // Used only on a staging graph during a topology transaction. The
+    // caller restores the original ledger after remapped mass is installed.
+    void erase_region(const std::set<Id> &ids) {
+        std::set<Id> removed;
+        for(auto id:ids) {
+            const auto &v=volumes_.at(id);
+            if(v.ocean)throw std::invalid_argument("cannot erase ocean as region");
+            removed.insert(adjacency_.at(id).begin(),adjacency_.at(id).end());
+        }
+        for(auto id:removed) {
+            const auto p=portals_.at(id);
+            adjacency_.at(p.a).erase(id);adjacency_.at(p.b).erase(id);
+            portals_.erase(id);queued_.erase(id);
+        }
+        frontier_.erase(std::remove_if(frontier_.begin(),frontier_.end(),[&](Id id){return removed.contains(id);}),frontier_.end());
+        for(auto id:ids){finite_-=volumes_.at(id).litres;volumes_.erase(id);adjacency_.erase(id);}
+    }
+    bool initialize(Id id,std::size_t type,Litres litres) {
+        auto &v=volumes_.at(id);
+        if(v.ocean||v.litres||type>=types_.size()||litres<=0||litres>v.curve.capacity()||initial_>ledger_limit-litres)return false;
+        v.type=type;v.litres=litres;initial_+=litres;finite_+=litres;wake_volume(id);return true;
+    }
     // Geometry revision protects against stale asynchronous analysis. A
     // pending/unloaded opening is closed, never assumed to communicate.
     bool publish_portal(Id id,double sill,double area,bool available,std::uint64_t revision) {
