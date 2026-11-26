@@ -88,43 +88,7 @@ if ($null -ne $gitExe) {
 # V3 full native build only. RuntimeOnly retains the existing A5 path.
 $jsonDir = Join-Path $root 'third_party/nlohmann-json'
 $jsonCommit = [string]$lock.nlohmann_json.commit
-if ($jsonCommit -notmatch '^[0-9a-f]{40}
-$probe = Join-Path $toolsDir 'api-probe'
-New-Item -ItemType Directory -Force $probe | Out-Null
-Set-Content -LiteralPath (Join-Path $probe 'project.godot') -Value 'config_version=5' -Encoding UTF8
-Push-Location $probe
-try {
-    Write-Host "Godot API probe directory: $(Get-Location)"
-    # Windows GUI-subsystem executables may return to PowerShell before the process exits.
-    $dump = Start-Process -FilePath $editor -ArgumentList @('--headless', '--editor', '--path', ('"' + $probe + '"'), '--dump-extension-api') -Wait -PassThru -NoNewWindow
-    if ($dump.ExitCode -ne 0) { throw "Godot --dump-extension-api failed: exit=$($dump.ExitCode)" }
-} finally { Pop-Location }
-# Search only the generated probe and binary paths, never the godot-cpp bundled vanilla API.
-$candidates = @(
-    (Join-Path $probe 'extension_api.json'),
-    (Join-Path $toolsDir 'extension_api.json'),
-    (Join-Path $root 'extension_api.json'),
-    (Join-Path $root 'godot/extension_api.json')
-)
-Write-Host "API probe files:"
-Get-ChildItem -LiteralPath $probe -Force -File | ForEach-Object { Write-Host $_.FullName }
-$foundApi = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $foundApi) { throw "Custom Godot API missing: $($candidates -join '; ')" }
-$api = Join-Path $root 'extension_api.json'
-if ($foundApi -ne $api) { Copy-Item -LiteralPath $foundApi -Destination $api -Force }
-Write-Host "Found custom API: $foundApi"
-$apiData = Get-Content $api -Raw | ConvertFrom-Json
-if (-not ($apiData.classes | Where-Object { $_.name -eq 'VoxelLodTerrain' })) {
-    throw 'Custom Godot API contains no VoxelLodTerrain; wrong engine binary'
-}
-
-Write-Host "Building native GDExtension ($Target)..."
-& scons -C (Join-Path $root 'native') 'platform=windows' "target=$Target" "custom_api_file=$api" '-j4'
-if ($LASTEXITCODE -ne 0) { throw "SCons failed: exit $LASTEXITCODE" }
-$dll = Join-Path $root "godot/bin/sandbox_native.windows.$Target.x86_64.dll"
-if (-not (Test-Path $dll)) { throw "Expected GDExtension DLL missing: $dll" }
-Write-Host "A0_BUILD_PASS: $dll"
- -or $null -eq $gitExe) { throw 'V3 native build requires Git and pinned JSON commit' }
+if ($jsonCommit -notmatch '^[0-9a-f]{40}$' -or $null -eq $gitExe) { throw 'V3 native build requires Git and pinned JSON commit' }
 if (-not (Test-Path (Join-Path $jsonDir '.git'))) {
     if (Test-Path $jsonDir) { throw "Unmanaged JSON dependency directory: $jsonDir" }
     New-Item -ItemType Directory -Force $jsonDir | Out-Null
