@@ -1,6 +1,6 @@
 # Hybrid hydraulic continuation checkpoint — 2026-11-27
 
-Branch: `exp/v3-hydraulic-hybrid` only. Latest validated runtime `337c92f8cf9806c639104a1d758c57ca2ebb6d7b` (I15); status EXPERIMENTAL_INTEGRATED_PARTIAL. Preserve R1/R2/R3/H14 history. No merge/release qualification. See V3_4_HYBRID_RESULTS.md and V3_4_HYBRID_EXPERIMENT.json for full per-commit evidence.
+Branch: `exp/v3-hydraulic-hybrid` only. Latest validated runtime `19b0b403da188bdb08936273affe9db8e9adb7d5` (I18); status EXPERIMENTAL_INTEGRATED_PARTIAL. Preserve R1/R2/R3/H14 history. No merge/release qualification. See V3_4_HYBRID_RESULTS.md and V3_4_HYBRID_EXPERIMENT.json for full per-commit evidence.
 
 ## Completed and verified
 - I11b focal seam closure preserved; I12 fractional signed depth geometry and arbitrary segment overlap; I12b consistent normalization removed repeating serration; I13 promotes receiving local region before discharge and replaces long rectilinear tile boundary with more continuous physical progression (72–84L previously dry boundary columns). Rough stepped margins remain.
@@ -25,3 +25,5 @@ I16 verified core/native/GPU. Real terrain edit/revisit and reopen freed 71,472 
 I17 core passed; native late lava failed closed (original mass unchanged; no source added); GPU gate not qualified. I17b introduces explicit volume-defined finite source mode (64,000L lava at existing anchor) and diagnostics without changing pond/ocean absolute level rules. Experimental hydro mod bumped to 1.1.0; old saves require their original pinned mod data or explicit migration. Validation pending.
 
 I17b core/native/GPU passed: lava finite +64,000L once, all 3 source IDs persisted, ocean injection 9L then 18L after reopen. Ocean drain/large view coverage and source graphics remain unqualified; mod version 1.1.0 uses new pins. I18 adds exact quantized material-brush preflight and conservative displacement within wet connected descendants, candidate pending. Continue streaming next after actual barrier validation.
+
+I18 fully passed core/native/GPU for controlled within-tile construction and prior breach/lifecycle/sources regressions. Cross-tile displacement remains unqualified. I19 candidate reads authoritative flushed stream blocks only for provenance-certified revisions; test actual offline edited dirty publication. Do not claim unlimited visible-range/ocean coverage or asynchronous acquisition cost qualification.

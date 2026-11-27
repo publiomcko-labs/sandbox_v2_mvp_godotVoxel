@@ -490,8 +490,29 @@
           "gpu_frame_p95_us": 49487
         },
         "i18": {
+          "status": "CORE_NATIVE_GPU_PASS_WET_BARRIER_RUNTIME_CROSS_TILE_OPEN",
+          "focus": "exact VoxelTool brush preflight and conservative wet construction displacement",
+          "commit": "19b0b403da188bdb08936273affe9db8e9adb7d5",
+          "core_run": 46072343138,
+          "native_run": 46072343127,
+          "gpu_run": 46072343115,
+          "native_artifact": 15233990382,
+          "gpu_artifact": 15233386780,
+          "native_artifact_sha256": "183b150c0788ee916fa55ee8d322d20aa6f0d4bf6556a771c5f852075b0e845b",
+          "gpu_artifact_sha256": "8af9a2bfebae65b2eed5428e26f45f43a68c43a08f07d68608f32eff6d43fe17",
+          "litres": 11314442,
+          "barrier_ticks": 25,
+          "blocked_tiles": 0,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_tick_p95_us": 4367,
+          "gpu_combined_refresh_p95_us": 6433,
+          "gpu_combined_refresh_p99_us": 10257,
+          "gpu_frame_p95_us": 50118
+        },
+        "i19": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "exact VoxelTool brush preflight and conservative wet construction displacement"
+          "focus": "authoritative saved edited terrain stream snapshot and offline dirty publication"
         }
       }
     },

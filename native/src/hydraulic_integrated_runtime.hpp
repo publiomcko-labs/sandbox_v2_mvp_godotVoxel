@@ -22,8 +22,9 @@ class IntegratedRuntime {
     std::uint64_t wet_preflights_{},wet_preflight_rejections_{},construction_commits_{};
     hybrid::LayeredInputCache surface_cache_;
     EditProvenance provenance_;
-    std::set<core::Region> pending_survey_;
+    std::set<core::Region> pending_survey_,pending_stream_;
     std::uint64_t visual_survey_tiles_{},post_edit_survey_tiles_{},suspended_reclaims_{};
+    std::uint64_t stream_survey_tiles_{},stream_found_blocks_{},stream_generated_blocks_{},stream_read_failures_{};
     std::vector<std::uint64_t> tick_samples_;
     std::size_t pristine_survey_tiles_=0;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
@@ -174,10 +175,10 @@ public:
             visual_invalidated_.insert(k);
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
             else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
-            worker_.invalidate(k);pending_.erase(k);pending_survey_.erase(k);blocked_.erase(k);
+            worker_.invalidate(k);pending_.erase(k);pending_survey_.erase(k);pending_stream_.erase(k);blocked_.erase(k);
         }
     }
-    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules) {
+    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules,const StreamSnapshotSource& stream) {
         center_=key(p);
         if(provenance_.revision()!=rev)provenance_.invalidate(rev);
         discover_sources(rules,rev,tool);
@@ -188,9 +189,11 @@ public:
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
             const bool surveyed=pending_survey_.erase(k)>0;
+            const bool streamed=pending_stream_.erase(k)>0;
             const bool loaded=resident(tool,k);
-            const bool certified=surveyed&&!dirty_.contains(k)&&result->revision==0&&provenance_.pristine(k,rev);
-            if(interested(k)&&(loaded||certified)&&(!surveyed||certified)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
+            const bool certified=(surveyed&&!dirty_.contains(k)&&result->revision==0&&provenance_.pristine(k,rev))||
+                (streamed&&result->revision<=stream.durable_revision&&provenance_.certifies(k,result->revision,rev));
+            if(interested(k)&&(loaded||certified)&&(!(surveyed||streamed)||certified)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
                 auto geometry=std::make_shared<const tp::Result>(std::move(*result));
                 const bool exists=model_.tiles().contains(k);
                 if(!exists&&model_.tiles().size()>=model_.tile_limit()) {
@@ -199,10 +202,11 @@ public:
                     if(evict)model_.forget_dry(*evict);
                 }
                 if(exists?model_.replace_geometry(geometry,construction_pending_.contains(k)):model_.publish(geometry)) {
-                    if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
                     if(activate_pending_.contains(k)&&!activate(k)){
                         model_.set_resident(k,false);blocked_[k]=rev;
                     }else {
+                        if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
+                        if(streamed)++stream_survey_tiles_;
                         activate_pending_.erase(k);construction_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;
                     }
                 }else blocked_[k]=rev;
@@ -229,16 +233,22 @@ public:
             if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev))continue;
             const bool loaded=resident(tool,k);
             const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
-            if((pass==0&&!loaded)||(pass==1&&!survey))continue;
+            const bool archived=!loaded&&pass==1&&!survey&&stream.valid()&&
+                provenance_.certifies(k,stream.durable_revision,rev)&&
+                (it==model_.tiles().end()||dirty_.contains(k)||it->second.geometry->render_sdf.empty());
+            if((pass==0&&!loaded)||(pass==1&&!survey&&!archived))continue;
             if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
                 bool can_reclaim=false;for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){can_reclaim=true;break;}
                 if(!can_reclaim)continue;
             }
             const auto start=std::chrono::steady_clock::now();
-            const auto wanted_revision=survey?0:dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
-            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
+            const auto wanted_revision=survey?0:archived?stream.durable_revision:dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
+            StreamSnapshotStats stats;
+            auto s=archived?copy_stream_snapshot(stream,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,&stats):
+                copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
             max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
-            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);acquired=true;break;}
+            if(archived){stream_found_blocks_+=stats.found;stream_generated_blocks_+=stats.generated;if(!s){++stream_read_failures_;break;}}
+            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);if(archived)pending_stream_.insert(k);acquired=true;break;}
         }
         constexpr std::uint64_t period=50000000;
         debt_=std::min(debt_+std::min(elapsed,period*2),period*2);
@@ -333,6 +343,9 @@ public:
         Dictionary reasons;for(const auto &[id,reason]:source_diagnostics_)reasons[String::utf8(id.c_str())]=String::utf8(reason.c_str());d["source_diagnostics"]=reasons;
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
         d["visual_survey_tiles"]=static_cast<int64_t>(visual_survey_tiles_);d["post_edit_survey_tiles"]=static_cast<int64_t>(post_edit_survey_tiles_);
+        d["stream_survey_tiles"]=static_cast<int64_t>(stream_survey_tiles_);
+        d["stream_found_blocks"]=static_cast<int64_t>(stream_found_blocks_);d["stream_generated_blocks"]=static_cast<int64_t>(stream_generated_blocks_);
+        d["stream_read_failures"]=static_cast<int64_t>(stream_read_failures_);
         d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());
         d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);

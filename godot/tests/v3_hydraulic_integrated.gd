@@ -247,7 +247,7 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
     print("V3_HYBRID_SOURCES_PASS phase=",("reopen" if reopen else "write")," initial=",finite," state=",after)
     runtime.request_close()
 
-func _barrier(runtime,water: Node3D) -> void:
+func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
     var initial: Dictionary=runtime.session.hydraulic_report()
     var mass:=int(initial["litres"])
     var tool: VoxelTool=runtime.terrain.get_voxel_tool()
@@ -280,6 +280,40 @@ func _barrier(runtime,water: Node3D) -> void:
     if not accepted:
         _fail("no admissible wet construction "+str(runtime.session.hydraulic_report()))
         return
+    var spawn: Vector3=runtime.player.global_position
+    var origin:=_tile(center)
+    if streaming:
+        var live: Dictionary=runtime.session.inspect_hydraulic_tile(runtime.world,origin,Vector3i(16,64,16))
+        if live["status"]!="ready" or int(live["render_pad"])!=1:
+            _fail("stream live reference "+str(live))
+            return
+        runtime.player.global_position=spawn+Vector3(512,0,0)
+        var unload_deadline:=Time.get_ticks_msec()+30000
+        while tool.is_area_editable(AABB(Vector3(origin),Vector3(17,65,17))):
+            if Time.get_ticks_msec()>unload_deadline:
+                _fail("stream tile still resident")
+                return
+            await process_frame
+        var unsaved: Dictionary=runtime.session.inspect_hydraulic_tile(runtime.world,origin,Vector3i(16,64,16))
+        if unsaved["status"]!="deferred":
+            _fail("unsaved edited stream should defer "+str(unsaved))
+            return
+        runtime.request_flush()
+        var save_deadline:=Time.get_ticks_msec()+65000
+        while runtime.saving:
+            if Time.get_ticks_msec()>save_deadline:
+                _fail("stream save timeout")
+                return
+            await process_frame
+        var saved: Dictionary=runtime.session.get_state()
+        if int(saved["durable_terrain_revision"])!=int(saved["terrain_revision"]):
+            _fail("stream durability "+str(saved))
+            return
+        var stored: Dictionary=runtime.session.inspect_hydraulic_tile(runtime.world,origin,Vector3i(16,64,16))
+        if stored["status"]!="ready" or not bool(stored.get("streamed",false)) or int(stored["stream_found_blocks"])<1 or stored["sdf_digest"]!=live["sdf_digest"] or int(stored["capacity_litres"])!=int(live["capacity_litres"]):
+            _fail("stream SDF mismatch live="+str(live)+" stored="+str(stored))
+            return
+        print("V3_HYBRID_STREAM_SDF_PASS unsaved=deferred live=",live," stored=",stored)
     var deadline:=Time.get_ticks_msec()+30000
     while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
         if not _frame(runtime,water,0):
@@ -288,6 +322,21 @@ func _barrier(runtime,water: Node3D) -> void:
             _fail("barrier publication "+str(runtime.session.hydraulic_report()))
             return
         await process_frame
+    if streaming:
+        var offline: Dictionary=runtime.session.hydraulic_report()
+        if int(offline["stream_survey_tiles"])<1 or int(offline["stream_found_blocks"])<1 or int(offline["litres"])!=mass:
+            _fail("stream publication "+str(offline))
+            return
+        print("V3_HYBRID_STREAM_PUBLICATION_PASS ",offline)
+        runtime.player.global_position=spawn
+        deadline=Time.get_ticks_msec()+30000
+        while not tool.is_area_editable(AABB(Vector3(origin),Vector3(17,65,17))) or int(runtime.session.hydraulic_report()["near_active_tiles"])<9:
+            if not _frame(runtime,water,0):
+                return
+            if Time.get_ticks_msec()>deadline:
+                _fail("stream revisit timeout")
+                return
+            await process_frame
     var blocked: Dictionary=runtime.session.hydraulic_report()
     if int(blocked["litres"])!=mass or int(blocked["construction_commits"])!=1 or int(blocked["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty() or tool.get_voxel_f(Vector3i(center.floor()))>=0:
         _fail("barrier displacement "+str(blocked))
@@ -308,7 +357,7 @@ func _test() -> void:
     var reopen: bool="--phase=reopen" in args
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
-    var barrier: bool="--phase=barrier" in args
+    var barrier: bool="--phase=barrier" in args or "--phase=streaming" in args
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
     if not runtime.running:
@@ -344,7 +393,7 @@ func _test() -> void:
         _fail("isolated dry cavity")
         return
     if barrier:
-        await _barrier(runtime,water)
+        await _barrier(runtime,water,"--phase=streaming" in args)
         return
     if sources:
         await _sources(runtime,water,"--phase=sources-reopen" in args)

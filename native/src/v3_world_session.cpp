@@ -110,7 +110,8 @@ struct V3WorldSession::State {
     ct::Json caves;
     std::unique_ptr<sandbox::hydraulic::Runtime> hydraulic;
     std::unique_ptr<sc::WorldCore<>> core;
-    uint64_t bound_world=0;
+    uint64_t bound_world=0,durable_terrain_revision=0,saving_terrain_revision=0;
+    Ref<VoxelSaveCompletionTracker> terrain_tracker;
 };
 V3WorldSession::V3WorldSession()=default;
 V3WorldSession::~V3WorldSession()=default;
@@ -128,6 +129,8 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("hydraulic_report"), &V3WorldSession::hydraulic_report);
     ClassDB::bind_method(D_METHOD("hydraulic_hybrid"), &V3WorldSession::hydraulic_hybrid);
     ClassDB::bind_method(D_METHOD("flush_hydraulic"), &V3WorldSession::flush_hydraulic);
+    ClassDB::bind_method(D_METHOD("begin_terrain_save","world"), &V3WorldSession::begin_terrain_save);
+    ClassDB::bind_method(D_METHOD("complete_terrain_save","world"), &V3WorldSession::complete_terrain_save);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
     ClassDB::bind_method(D_METHOD("submit_material","world","command","center","add","radius","material_id"), &V3WorldSession::submit_material);
@@ -217,6 +220,7 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
                     c.pending_ns<=limit && next->store.header().generation<limit,
                     "checkpoint exceeds signed Godot API range");
         next->core=std::make_unique<sc::WorldCore<>>(next->adapter,c);
+        next->durable_terrain_revision=c.terrain_revision;
         state_=std::move(next);
         last_error_=String();
         return true;
@@ -254,7 +258,9 @@ bool V3WorldSession::hydraulic_frame(WorldBootstrap *world,const Vector3 &positi
         ct::require(state_&&state_->hydraulic&&state_->store.is_open()&&world&&state_->bound_world==world->get_instance_id()&&elapsed_ns>=0,"invalid hydraulic frame");
         auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
         ct::require(terrain!=nullptr,"missing terrain");
-        state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns));
+        const sandbox::hydraulic::StreamSnapshotSource source{terrain->get_stream(),terrain->get_generator(),terrain->get_format(),
+            static_cast<int>(terrain->get_data_block_size()),state_->durable_terrain_revision};
+        state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns),source);
         return true;
     }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }
@@ -276,6 +282,30 @@ Dictionary V3WorldSession::hydraulic_hybrid() {
 }
 Dictionary V3WorldSession::hydraulic_report() const {
     return state_&&state_->hydraulic?state_->hydraulic->report():Dictionary();
+}
+Ref<VoxelSaveCompletionTracker> V3WorldSession::begin_terrain_save(WorldBootstrap *world) {
+    try {
+        ct::require(state_&&state_->store.is_open()&&world&&state_->bound_world==world->get_instance_id(),"invalid terrain save");
+        auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+        ct::require(terrain!=nullptr,"terrain missing");
+        ct::require(state_->terrain_tracker.is_null()||state_->terrain_tracker->is_complete()||state_->terrain_tracker->is_aborted(),"terrain save already in flight");
+        state_->saving_terrain_revision=state_->core->revision();
+        state_->terrain_tracker=terrain->save_modified_blocks();
+        return state_->terrain_tracker;
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return {};}
+}
+bool V3WorldSession::complete_terrain_save(WorldBootstrap *world) {
+    try {
+        ct::require(state_&&state_->store.is_open()&&world&&state_->bound_world==world->get_instance_id()&&
+            state_->terrain_tracker.is_valid()&&state_->terrain_tracker->is_complete()&&!state_->terrain_tracker->is_aborted()&&
+            state_->saving_terrain_revision==state_->core->revision(),"uncertified terrain save");
+        auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+        ct::require(terrain&&terrain->get_stream().is_valid(),"terrain stream missing");
+        terrain->get_stream()->flush();
+        state_->durable_terrain_revision=state_->saving_terrain_revision;
+        state_->terrain_tracker.unref();
+        return true;
+    }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }
 bool V3WorldSession::flush_hydraulic() {
     try {
@@ -326,7 +356,15 @@ Dictionary V3WorldSession::inspect_hydraulic_tile(WorldBootstrap *world,const Ve
         auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
         ct::require(terrain!=nullptr,"terrain missing");
         const auto start=std::chrono::steady_clock::now();
-        auto snapshot=hy::copy_air_snapshot(terrain->get_voxel_tool(),origin,extent,state_->core->revision());
+        const bool hybrid=state_->hydraulic&&state_->hydraulic->integrated_mode();
+        auto snapshot=hy::copy_air_snapshot(terrain->get_voxel_tool(),origin,extent,state_->core->revision(),hybrid);
+        hy::StreamSnapshotStats stream_stats;
+        bool streamed=false;
+        if(!snapshot&&hybrid&&state_->durable_terrain_revision==state_->core->revision()){
+            const hy::StreamSnapshotSource source{terrain->get_stream(),terrain->get_generator(),terrain->get_format(),
+                static_cast<int>(terrain->get_data_block_size()),state_->durable_terrain_revision};
+            snapshot=hy::copy_stream_snapshot(source,origin,extent,state_->core->revision(),&stream_stats);streamed=bool(snapshot);
+        }
         if(!snapshot){out["status"]="deferred";return out;}
         const auto copied=std::chrono::steady_clock::now();
         const auto geometry=hy::topology::extract(*snapshot);
@@ -334,6 +372,12 @@ Dictionary V3WorldSession::inspect_hydraulic_tile(WorldBootstrap *world,const Ve
         hy::Litres capacity=0;
         for(const auto &c:geometry.compartments)capacity+=c.curve.capacity();
         out["status"]="ready";
+        out["streamed"]=streamed;out["stream_found_blocks"]=static_cast<int64_t>(stream_stats.found);
+        out["stream_generated_blocks"]=static_cast<int64_t>(stream_stats.generated);
+        out["render_pad"]=snapshot->render_pad;
+        std::uint64_t digest=1469598103934665603ULL;
+        for(auto v:snapshot->render_sdf){digest^=static_cast<std::uint16_t>(v);digest*=1099511628211ULL;}
+        out["sdf_digest"]=String::num_uint64(digest,16);
         out["revision"]=static_cast<int64_t>(geometry.revision);
         out["compartments"]=static_cast<int64_t>(geometry.compartments.size());
         out["portals"]=static_cast<int64_t>(geometry.openings.size());
@@ -349,6 +393,7 @@ Dictionary V3WorldSession::get_state() const {
     if(!state_) return d;
     const auto &core=*state_->core;
     d["terrain_revision"]=static_cast<int64_t>(core.revision());
+    d["durable_terrain_revision"]=static_cast<int64_t>(state_->durable_terrain_revision);
     d["last_command"]=static_cast<int64_t>(core.last_command());
     d["completed_tick"]=static_cast<int64_t>(core.scheduler().completed());
     d["backlog_ticks"]=static_cast<int64_t>(core.scheduler().backlog());

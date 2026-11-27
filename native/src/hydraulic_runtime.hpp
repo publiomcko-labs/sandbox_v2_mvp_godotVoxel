@@ -272,9 +272,9 @@ public:
             domain_.invalidate(k,revision);worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);capacity_blocked_.erase(k);
         }
     }
-    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed) {
+    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed,const StreamSnapshotSource& stream={}) {
         if(!core::valid_point(position))throw std::invalid_argument("hydraulic interest");
-        if(integrated_){integrated_->frame(tool,position,revision,elapsed,profile_.config.at("sources"));return;}
+        if(integrated_){integrated_->frame(tool,position,revision,elapsed,profile_.config.at("sources"),stream);return;}
         const auto center=key(position);
         last_center_=center;
         const bool pristine=integrated_mode_&&revision==0;

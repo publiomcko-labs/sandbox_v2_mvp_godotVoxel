@@ -1,5 +1,6 @@
 #pragma once
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/voxel_save_completion_tracker.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -43,6 +44,8 @@ public:
     Dictionary hydraulic_hybrid();
     Dictionary hydraulic_report() const;
     bool flush_hydraulic();
+    Ref<VoxelSaveCompletionTracker> begin_terrain_save(WorldBootstrap *world);
+    bool complete_terrain_save(WorldBootstrap *world);
     String get_geology_json() const;
     String get_cave_json() const;
     String submit_material(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,const String &material_id);

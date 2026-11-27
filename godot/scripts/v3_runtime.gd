@@ -238,7 +238,7 @@ func _save_failure(reason: String) -> void:
 func _save_async() -> void:
     saving = true
     _set_status("V3: flushing terrain and rock stores...")
-    var tracker: VoxelSaveCompletionTracker = terrain.save_modified_blocks()
+    var tracker: VoxelSaveCompletionTracker = session.begin_terrain_save(world)
     if tracker == null:
         _save_failure("tracker unavailable")
         return
@@ -251,7 +251,9 @@ func _save_async() -> void:
     if tracker.is_aborted():
         _save_failure("terrain save aborted")
         return
-    terrain.stream.flush()
+    if not session.complete_terrain_save(world):
+        _save_failure("terrain save certificate: "+session.get_last_error())
+        return
     if hydraulic_enabled and not session.flush_hydraulic():
         _save_failure("hydraulic flush: "+session.get_last_error())
         return
