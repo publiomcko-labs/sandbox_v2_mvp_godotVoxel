@@ -59,5 +59,25 @@ int main(){
     assert(sea.drained()>0&&sea.mass()==sea.injected()-sea.drained());
     auto sea_reopen=Coupler::decode(nlohmann::json::parse(sea.encode().dump()),types,{{ka,a}});
     assert(sea_reopen.encode()==sea.encode());
+    // I2 local carve changes an existing floor and opens a formerly
+    // solid horizontal column. Remap must not wet the remote cell.
+    tp::Snapshot old{{0,0,0},4,8,2,1,1,std::vector<std::uint8_t>(4*8*2,0)};
+    for(int z=0;z<2;++z)for(int x:{0,1,3})for(int y=1;y<8;++y)
+        old.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    auto cut=old;cut.revision=2;
+    for(int z=0;z<2;++z)for(int y=0;y<8;++y){
+        cut.air[static_cast<std::size_t>((z*4+1)*8+y)]=1;
+        cut.air[static_cast<std::size_t>((z*4+2)*8+y)]=1;
+    }
+    const auto before_geom=std::make_shared<const tp::Result>(tp::extract(old));
+    const auto after_geom=std::make_shared<const tp::Result>(tp::extract(cut));
+    Coupler carve(types,1,1);assert(carve.publish(before_geom));
+    const auto id=tp::compartment_at(*before_geom,{0.5,1.5,0.5});assert(id);
+    assert(carve.seed(old.origin,*id,0,4000)&&carve.activate(old.origin));
+    assert(carve.replace_geometry(after_geom)&&carve.mass()==4000);
+    assert(!carve.sample({2.5,0.1,0.5},old.origin)&&!carve.sample({3.5,1.1,0.5},old.origin));
+    for(int i=0;i<200;++i)carve.tick();
+    assert(carve.mass()==4000&&carve.sample({2.5,0.1,0.5},old.origin));
+    std::cout<<"V3_HYBRID_I2_REMAP_PASS changed_floor=1 zero_tick_dry=1 progressive_mass=4000\n";
     std::cout<<"V3_R3_COUPLER_PASS two_fronts=1 mass="<<mass<<" mid_flow_reopen=1 unload=1 activation_cycles=3 lava=1 source_l="<<sea.injected()<<" drain_l="<<sea.drained()<<" capacity_blocked=1 stale_revision_rejected=1\n";
 }

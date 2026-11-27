@@ -59,5 +59,26 @@ int main(){
     d.invalidate(s.origin,2);auto invalid=hybrid::snapshot(d,8);assert(invalid.empty());
     for(int i=0;i<100;++i){assert(renderer.poll(invalid).empty());std::this_thread::yield();}
     assert(d.graph().finite()==mass);
+    // I2: a variable head shared edge is identical even when built
+    // independently on each tile. A second layer stays independent,
+    // and a dry open column receives no rendered primary triangle.
+    tp::Snapshot left{{0,0,0},2,8,2,1,1,std::vector<std::uint8_t>(2*8*2,1)};
+    auto right=left;right.origin.x=2;
+    hybrid::Input il{left.origin,std::make_shared<const tp::Result>(tp::extract(left)),{},8,{}};
+    hybrid::Input ir{right.origin,std::make_shared<const tp::Result>(tp::extract(right)),{},8,{}};
+    hybrid::Cell u{1,0,0,8000,0,2.0,{2,2,2,2}},w{2,0,0,8000,0,2.5,{2.5,2.5,2.5,2.5}};
+    il.cells={u};il.neighbors={w};ir.cells={w};ir.neighbors={u};
+    const auto al=hybrid::build(il),ar=hybrid::build(ir);
+    std::set<std::pair<double,double>> le,re;
+    for(const auto &p:al.materials.at(0)){assert(p.x>=1&&p.x<=2);if(p.x==2)le.insert({p.z,p.y});}
+    for(const auto &p:ar.materials.at(0)){assert(p.x>=2&&p.x<=3);if(p.x==2)re.insert({p.z,p.y});}
+    assert(le==re&&le.size()==2&&le.begin()->second==2.25);
+    // Distinct covered layer, different free surface, no accidental join.
+    il.cells.push_back({1,0,0,1000,0,0.5,{0.5,0.5,0.5,0.5}});
+    const auto layers=hybrid::build(il);
+    bool has_lower=false;
+    for(const auto &p:layers.materials.at(0))if(p.ceiling==1){has_lower=true;assert(p.y==0.5);}
+    assert(has_lower);
+    std::cout<<"V3_HYBRID_I2_SURFACE_PASS shared_edge=1 dry_primary=1 independent_layer=1\n";
     std::cout<<"V3_HYBRID_R1_PASS layers=2 baseline_support_equivalent=1 dry_island_physics=1 mass="<<mass<<" triangles="<<v.size()/3<<" stale_rejected=1\n";
 }

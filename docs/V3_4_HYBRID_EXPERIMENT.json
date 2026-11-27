@@ -1,6 +1,6 @@
 {
   "schema": "v3_hydraulic_hybrid_experiment_v1",
-  "status": "EXPERIMENTAL_PARTIAL_MANUAL_VISUAL_REQUIRED",
+  "status": "EXPERIMENTAL_RUNTIME_INTEGRATION_IN_PROGRESS",
   "base_commit": "ab3500f6d61bca0e71eb1d90a5de48485fd7892f",
   "branch": "exp/v3-hydraulic-hybrid",
   "baseline": "H14",
@@ -117,13 +117,22 @@
       "mass_litres": 48000,
       "source_litres": 56769,
       "drain_litres": 33511,
-      "mid_flow_reopen": true
+      "mid_flow_reopen": true,
+      "runtime": {
+        "status": "I2_CANDIDATE_VALIDATION_PENDING",
+        "commit": "6092f8fc0a71d2b9955aecd24cd1bae9f62df487",
+        "native_run": 45993282425,
+        "gpu_run": 45993385896,
+        "active_limit": 8,
+        "tile_limit": 96,
+        "isolated_schema": "v3-hybrid-runtime-1"
+      }
     },
     "R4": {
-      "status": "BLOCKED_ORIGINAL_GEOMETRY_DEFECT_MANUAL_REVIEW"
+      "status": "BLOCKED_GEOMETRY"
     },
     "R5": {
-      "status": "PARTIAL_FROZEN_AB_ONLY_MANUAL_REQUIRED"
+      "status": "INTEGRATED_FIXTURE_PENDING"
     }
   }
 }
