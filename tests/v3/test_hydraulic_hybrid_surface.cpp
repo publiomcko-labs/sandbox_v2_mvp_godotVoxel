@@ -79,6 +79,29 @@ int main(){
     bool has_lower=false;
     for(const auto &p:layers.materials.at(0))if(p.ceiling==1){has_lower=true;assert(p.y==0.5);}
     assert(has_lower);
+    // I7: a changed dry-bank input with no visible output must become
+    // current without requesting another empty Godot mesh publication.
+    hybrid::Input empty{left.origin,il.geometry,{},8,{}};
+    empty.layered=true;
+    hybrid::Renderer cached_renderer;
+    std::map<core::Region,hybrid::Input> desired{{empty.tile,empty}};
+    auto await_current=[&](std::size_t expected_updates){
+        std::size_t updates=0;
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while(!cached_renderer.current(desired.begin()->second)&&std::chrono::steady_clock::now()<deadline){
+            updates+=cached_renderer.poll(desired).size();
+            std::this_thread::yield();
+        }
+        assert(cached_renderer.current(desired.begin()->second));
+        assert(updates==expected_updates);
+    };
+    await_current(1);
+    desired.begin()->second.adjacent_geometry.insert(right.origin);
+    await_current(0);
+    desired.clear();cached_renderer.poll(desired);
+    desired.emplace(empty.tile,empty);
+    await_current(1);
+    std::cout<<"V3_HYBRID_I7_IDENTICAL_OUTPUT_PASS\n";
     std::cout<<"V3_HYBRID_I2_SURFACE_PASS shared_edge=1 dry_primary=1 independent_layer=1\n";
     std::cout<<"V3_HYBRID_R1_PASS layers=2 baseline_support_equivalent=1 dry_island_physics=1 mass="<<mass<<" triangles="<<v.size()/3<<" stale_rejected=1\n";
 }

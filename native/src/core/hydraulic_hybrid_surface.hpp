@@ -32,7 +32,7 @@ struct Input {
     std::set<core::Region> adjacent_geometry{};
     bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors&&layered==o.layered&&adjacent_geometry==o.adjacent_geometry;}
 };
-struct Vertex {double x{},y{},z{},floor{},ceiling{};};
+struct Vertex {double x{},y{},z{},floor{},ceiling{}; bool operator==(const Vertex&) const=default;};
 struct Batch {
     Input input;
     std::map<std::size_t,std::vector<Vertex>> materials;
@@ -258,6 +258,8 @@ inline std::map<core::Region,Input> snapshot(const Domain& domain,int exposed_to
 // geometry is never published, even if it finished after an edit.
 class Renderer {
     std::map<core::Region,Input> presented_;
+    // Exact accepted output cache; never cache a rejected revision as published.
+    std::map<core::Region,std::map<std::size_t,std::vector<Vertex>>> published_meshes_;
     std::optional<core::Region> cursor_;
     std::optional<std::future<std::vector<Batch>>> running_;
     // The async task is sole writer; shared lifetime survives destruction.
@@ -289,10 +291,19 @@ public:
                 if(!same_members){rejected=true;continue;}
                 accepted.push_back(std::move(result));
             }
-            if(!coherent||!rejected)for(auto &result:accepted){presented_.insert_or_assign(result.input.tile,result.input);done.push_back(std::move(result));}
+            if(!coherent||!rejected)for(auto &result:accepted){
+                const auto k=result.input.tile;
+                presented_.insert_or_assign(k,result.input);
+                // Empty bank tiles and quantized inputs may produce identical
+                // geometry. Advance the accepted input but avoid Godot churn.
+                auto old=published_meshes_.find(k);
+                if(coherent&&old!=published_meshes_.end()&&old->second==result.materials)continue;
+                if(coherent)published_meshes_.insert_or_assign(k,result.materials);
+                done.push_back(std::move(result));
+            }
         }
         for(auto it=presented_.begin();it!=presented_.end();) {
-            if(!wanted.contains(it->first))it=presented_.erase(it);else ++it;
+            if(!wanted.contains(it->first)){published_meshes_.erase(it->first);it=presented_.erase(it);}else ++it;
         }
         if(!running_) {
             std::vector<Input> jobs;
