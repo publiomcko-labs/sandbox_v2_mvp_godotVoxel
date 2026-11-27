@@ -542,25 +542,29 @@ public:
         cold_mass_+=amount;++cold_count_;
         tiles_.erase(k);surface_changes_.insert(k);rebuild();verify();return true;
     }
-    bool restore_cold(std::shared_ptr<const tp::Result> geometry,const nlohmann::json& row) {
-        if(!geometry||!cold_count_||tiles_.size()>=tile_limit_||tiles_.contains(geometry->origin))return false;
-        if(row.at("resident").get<bool>()||(row.at("local").get<bool>()&&active()>=active_limit_))return false;
+    std::optional<std::pair<CoupledTile,Litres>> inspect_cold(std::shared_ptr<const tp::Result> geometry,const nlohmann::json& row)const {
+        if(!geometry||!cold_count_||tiles_.contains(geometry->origin)||row.at("resident").get<bool>())return std::nullopt;
         const auto k=geometry->origin;
         const auto &a=row.at("tile");
-        if(a.at(0).get<int>()!=k.x||a.at(1).get<int>()!=k.y||a.at(2).get<int>()!=k.z)return false;
-        if(!tiles_.empty()&&(geometry->nx!=tiles_.begin()->second.geometry->nx||geometry->nz!=tiles_.begin()->second.geometry->nz||k.y!=tiles_.begin()->first.y))return false;
+        if(a.at(0).get<int>()!=k.x||a.at(1).get<int>()!=k.y||a.at(2).get<int>()!=k.z)return std::nullopt;
+        if(!tiles_.empty()&&(geometry->nx!=tiles_.begin()->second.geometry->nx||geometry->nz!=tiles_.begin()->second.geometry->nz||k.y!=tiles_.begin()->first.y))return std::nullopt;
         Litres amount=0;
         for(const auto &v:row.at("content")){
-            const auto n=v.at(2).get<Litres>();if(n<=0||n>cold_mass_-amount)return false;amount+=n;
+            const auto n=v.at(2).get<Litres>();if(n<=0||n>cold_mass_-amount)return std::nullopt;amount+=n;
         }
-        // Decode into an isolated owner; no change to the live ledger or
-        // graph if the revision, pipe state or content is invalid.
         using J=nlohmann::json;
         auto staged=decode(J{{"schema","hybrid-coupler-1"},{"initial",amount},{"injected",0},{"drained",0},{"epoch",epoch_},
             {"active_limit",1},{"tile_limit",1},{"tiles",J::array({row})},{"oceans",J::array()}},types_,{{k,geometry}});
         if(staged.mass()!=amount||staged.tiles_.at(k).epoch>epoch_||
-            (cold_count_==1&&amount!=cold_mass_))return false;
-        tiles_.insert(staged.tiles_.extract(k));cold_mass_-=amount;--cold_count_;
+            (cold_count_==1&&amount!=cold_mass_))return std::nullopt;
+        return std::pair{std::move(staged.tiles_.at(k)),amount};
+    }
+    bool restore_cold(std::shared_ptr<const tp::Result> geometry,const nlohmann::json& row) {
+        if(!geometry||tiles_.size()>=tile_limit_||
+            (row.at("local").get<bool>()&&active()>=active_limit_))return false;
+        const auto k=geometry->origin;
+        auto decoded=inspect_cold(std::move(geometry),row);if(!decoded)return false;
+        tiles_.emplace(k,std::move(decoded->first));cold_mass_-=decoded->second;--cold_count_;
         surface_changes_.insert(k);rebuild();verify();return true;
     }
     nlohmann::json encode()const {

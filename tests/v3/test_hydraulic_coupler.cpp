@@ -92,6 +92,10 @@ int main(){
     const auto global_mass=streamed.mass();
     assert(streamed.detach_cold(ka)&&streamed.active()==0&&streamed.cold_count()==1&&streamed.cold_mass()==owner_mass);
     assert(streamed.mass()==global_mass&&streamed.publish(c));
+    const auto before_view=streamed.encode();
+    auto viewed=streamed.inspect_cold(a,owner);
+    assert(viewed&&viewed->first.local&&viewed->second==owner_mass);
+    assert(streamed.encode()==before_view&&streamed.active()==0);
     assert(!streamed.restore_cold(a,owner));
     streamed.set_resident(kc,false);assert(streamed.forget_dry(kc));
     auto hot_reopen=Coupler::decode(streamed.encode(),types,{{kb,b}});

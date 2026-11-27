@@ -11,7 +11,11 @@ namespace sandbox::hydraulic {
 class IntegratedRuntime {
     experiment::Coupler model_;
     std::unique_ptr<persistence::HydraulicRegionStore> cold_store_;
-    std::uint64_t cold_evictions_{},cold_restores_{};
+    std::uint64_t cold_evictions_{},cold_restores_{},cold_visual_reads_{};
+    std::map<core::Region,hybrid::Input> cold_visible_;
+    std::optional<core::Region> cold_scan_center_;
+    std::size_t cold_scan_cursor_{};
+    int cold_scan_radius_{};
     std::set<std::string> sources_;
     std::map<std::string,std::set<core::Region>> source_windows_;
     std::set<core::Region> source_interest_;
@@ -46,6 +50,12 @@ class IntegratedRuntime {
         std::set<core::Region> out;auto a=key({p.x-r-2,0,p.z-r-2}),b=key({p.x+r+2,0,p.z+r+2});
         for(int x=a.x;x<=b.x;x+=side)for(int z=a.z;z<=b.z;z+=side)out.insert({x,base,z});
         return out;
+    }
+    bool near_player(core::Region k)const {
+        return std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side;
+    }
+    bool visible(core::Region k)const {
+        return std::abs(k.x-center_.x)<=view_distance_+side&&std::abs(k.z-center_.z)<=view_distance_+side;
     }
     bool interested(core::Region k)const {
         if(dirty_.contains(k)||source_interest_.contains(k))return true;
@@ -174,21 +184,77 @@ class IntegratedRuntime {
         }
         return std::make_shared<const tp::Result>(tp::extract(s));
     }
+    static std::optional<hybrid::Input> owner_input(core::Region k,const experiment::CoupledTile& t) {
+            hybrid::Input in{k,t.geometry,{},height,{}};in.layered=true;
+            auto add=[&](int x,int z,int floor,int ceiling,std::size_t type,double head) {
+                if(head<=floor*0.001||head>=ceiling*0.001-0.001)return;
+                // Quantize only render heads, retain nonzero shallow
+                // occupancy and the exact interval bounds.
+                const double visual=std::clamp(std::round(head*100.0)/100.0,floor*0.001+0.0001,ceiling*0.001-0.001);
+                in.cells.push_back({k.x+x,k.z+z,floor,ceiling,type,visual,{visual,visual,visual,visual}});
+            };
+            if(t.local)for(const auto &c:t.local->columns()) {
+                if(c.litres)add(c.x,c.z,c.floor_mm,c.ceiling_mm,c.type,c.head());
+            }else for(const auto &c:t.geometry->compartments) {
+                auto v=t.aggregate.find(c.id);if(v==t.aggregate.end()||!v->second.litres)continue;
+                const auto h=c.curve.level(v->second.litres);
+                for(const auto &s:c.spans)add(s.x,s.z,tp::span_floor_mm(*t.geometry,s),(k.y+s.top)*1000,v->second.type,h);
+            }
+            if(in.cells.empty())return std::nullopt;
+            return in;
+    }
+    void clear_cold_visual(core::Region k) {
+        if(cold_visible_.erase(k))visual_invalidated_.insert(k);
+    }
+    // Bounded spatial scan: no global directory enumeration or cold owner index.
+    // At most 16 probes and one record decode per frame; near physics is separate.
+    void acquire_cold_visual(std::uint64_t rev) {
+        for(auto it=cold_visible_.begin();it!=cold_visible_.end();){
+            if(!visible(it->first)||!provenance_.certifies(it->first,it->second.geometry->revision,rev)){
+                visual_invalidated_.insert(it->first);it=cold_visible_.erase(it);
+            }else ++it;
+        }
+        if(!cold_store_||!model_.cold_count())return;
+        const int radius=static_cast<int>(std::ceil(view_distance_/side))+1;
+        if(!cold_scan_center_||*cold_scan_center_!=center_||cold_scan_radius_!=radius){
+            cold_scan_center_=center_;cold_scan_radius_=radius;cold_scan_cursor_=0;
+        }
+        const auto width=static_cast<std::size_t>(radius*2+1);
+        for(int probe=0;probe<16&&cold_scan_cursor_<width*width;++probe){
+            const auto cursor=cold_scan_cursor_++;
+            const core::Region k{center_.x+(static_cast<int>(cursor%width)-radius)*side,base,
+                center_.z+(static_cast<int>(cursor/width)-radius)*side};
+            if(!visible(k)||near_player(k)||model_.tiles().contains(k)||cold_visible_.contains(k)||
+                !core::valid_point({double(k.x),double(k.y),double(k.z)})||!cold_contains(k))continue;
+            const auto row=cold_store_->get(k);
+            auto geometry=decode_geometry(row.at("geometry"));
+            if(!provenance_.certifies(k,geometry->revision,rev))continue;
+            auto decoded=model_.inspect_cold(std::move(geometry),row.at("owner"));
+            if(!decoded||decoded->second!=row.at("mass").get<Litres>())throw std::logic_error("cold visual owner");
+            if(auto input=owner_input(k,decoded->first)){
+                cold_visible_.emplace(k,std::move(*input));visual_invalidated_.insert(k);
+            }
+            ++cold_visual_reads_;break;
+        }
+    }
     bool cold_contains(core::Region k)const {
         return cold_store_&&model_.cold_count()&&cold_store_->contains(k);
     }
-    bool reclaimable(core::Region k)const {
-        return model_.can_archive(k)&&!dirty_.contains(k)&&!pending_.contains(k)&&!interested(k)&&
+    bool reclaimable(core::Region k,bool pressure=false)const {
+        return model_.can_archive(k)&&!dirty_.contains(k)&&!pending_.contains(k)&&
+            !near_player(k)&&!source_interest_.contains(k)&&(!interested(k)||pressure)&&
             ((!model_.tile_mass(k)&&!model_.tiles().at(k).local)||cold_store_);
     }
-    bool archive_owner(core::Region k) {
-        if(!cold_store_||!reclaimable(k))return false;
+    bool archive_owner(core::Region k,bool pressure=false) {
+        if(!cold_store_||!reclaimable(k,pressure))return false;
         const auto amount=model_.tile_mass(k);
         try{
             const auto &t=model_.tiles().at(k);
+            auto visual=visible(k)?owner_input(k,t):std::nullopt;
             cold_store_->put(k,encode_geometry(k,t,true),model_.encode_tile(k),amount);
             if(!model_.detach_cold(k)||!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))
                 throw std::logic_error("cold detach ledger");
+            if(visual){cold_visible_.insert_or_assign(k,std::move(*visual));visual_invalidated_.insert(k);}
             ++cold_evictions_;return true;
         }catch(...){cold_store_->poison();throw;}
     }
@@ -196,6 +262,9 @@ class IntegratedRuntime {
         for(const auto &[k,t]:model_.tiles())if(reclaimable(k)&&!t.local&&!model_.tile_mass(k))
             return model_.forget_dry(k);
         for(const auto &[k,t]:model_.tiles()){(void)t;if(reclaimable(k))return archive_owner(k);}
+        for(const auto &[k,t]:model_.tiles())if(reclaimable(k,true)&&!t.local&&!model_.tile_mass(k))
+            return model_.forget_dry(k);
+        for(const auto &[k,t]:model_.tiles()){(void)t;if(reclaimable(k,true))return archive_owner(k,true);}
         return false;
     }
     bool restore_owner(core::Region k,std::uint64_t rev) {
@@ -212,6 +281,7 @@ class IntegratedRuntime {
             if(!model_.restore_cold(std::move(geometry),owner))throw std::logic_error("cold restore owner");
             cold_store_->erase(k,row.at("mass").get<Litres>());
             if(!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))throw std::logic_error("cold restore ledger");
+            clear_cold_visual(k);
             ++cold_restores_;++publications_;return true;
         }catch(...){cold_store_->poison();throw;}
     }
@@ -340,10 +410,11 @@ public:
         // geometry. Near-player, wet-front and source-window candidates
         // share the same bounded priority queue.
         if(model_.cold_count())for(auto k:ordered){
-            if(!model_.tiles().contains(k)&&cold_contains(k)){
+            if(!model_.tiles().contains(k)&&(near_player(k)||source_interest_.contains(k)||resident(tool,k))&&cold_contains(k)){
                 if(restore_owner(k,rev))break;
             }
         }
+        acquire_cold_visual(rev);
         // Drop a partial snapshot when its certificate or interest changes.
         if(stream_job_&&(!stream.valid()||stream_job_->durable_revision()!=stream.durable_revision||
             !interested(stream_job_->key())||!provenance_.certifies(stream_job_->key(),stream_job_->revision(),rev)||
@@ -377,7 +448,7 @@ public:
                 (it==model_.tiles().end()||dirty_.contains(k)||it->second.geometry->render_sdf.empty());
             if((pass==0&&!loaded)||(pass==1&&!survey&&!archived))continue;
             if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
-                bool can_reclaim=false;for(const auto &[q,t]:model_.tiles()){(void)t;if(reclaimable(q)){can_reclaim=true;break;}}
+                bool can_reclaim=false;for(const auto &[q,t]:model_.tiles()){(void)t;if(reclaimable(q,true)){can_reclaim=true;break;}}
                 if(!can_reclaim)continue;
             }
             const auto start=std::chrono::steady_clock::now();
@@ -431,28 +502,16 @@ public:
         visual_invalidated_.clear();
         auto geometry=[&](core::Region k)->std::shared_ptr<const tp::Result>{
             auto it=model_.tiles().find(k);
-            return it==model_.tiles().end()||dirty_.contains(k)?nullptr:it->second.geometry;
+            if(dirty_.contains(k))return nullptr;
+            if(it!=model_.tiles().end())return it->second.geometry;
+            const auto cold=cold_visible_.find(k);
+            return cold==cold_visible_.end()?nullptr:cold->second.geometry;
         };
         auto primary=[&](core::Region k)->std::optional<hybrid::Input>{
+            if(auto cold=cold_visible_.find(k);cold!=cold_visible_.end())return cold->second;
             if(!geometry(k)||!model_.tile_mass(k))return std::nullopt;
             const auto &t=model_.tiles().at(k);
-            hybrid::Input in{k,t.geometry,{},height,{}};in.layered=true;
-            auto add=[&](int x,int z,int floor,int ceiling,std::size_t type,double head) {
-                if(head<=floor*0.001||head>=ceiling*0.001-0.001)return;
-                // Quantize only render heads, retain nonzero shallow
-                // occupancy and the exact interval bounds.
-                const double visual=std::clamp(std::round(head*100.0)/100.0,floor*0.001+0.0001,ceiling*0.001-0.001);
-                in.cells.push_back({k.x+x,k.z+z,floor,ceiling,type,visual,{visual,visual,visual,visual}});
-            };
-            if(t.local)for(const auto &c:t.local->columns()) {
-                if(c.litres)add(c.x,c.z,c.floor_mm,c.ceiling_mm,c.type,c.head());
-            }else for(const auto &c:t.geometry->compartments) {
-                auto v=t.aggregate.find(c.id);if(v==t.aggregate.end()||!v->second.litres)continue;
-                const auto h=c.curve.level(v->second.litres);
-                for(const auto &s:c.spans)add(s.x,s.z,tp::span_floor_mm(*t.geometry,s),(k.y+s.top)*1000,v->second.type,h);
-            }
-            if(in.cells.empty())return std::nullopt;
-            return in;
+            return owner_input(k,t);
         };
         return surface_cache_.update(changed,side,height,primary,geometry);
     }
@@ -461,6 +520,9 @@ public:
         godot::Array rows;int64_t id=1;
         for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)) {
             (void)t;godot::Array row;row.push_back(id++);row.push_back(0);row.push_back(0.0);row.push_back(godot::Vector3i(k.x,k.y,k.z));rows.push_back(row);
+        }
+        for(const auto &[k,input]:cold_visible_){
+            (void)input;godot::Array row;row.push_back(id++);row.push_back(0);row.push_back(0.0);row.push_back(godot::Vector3i(k.x,k.y,k.z));rows.push_back(row);
         }
         return rows;
     }
@@ -496,6 +558,7 @@ public:
         d["suspended_reclaims"]=static_cast<int64_t>(suspended_reclaims_);
         d["cold_tiles"]=static_cast<int64_t>(model_.cold_count());d["cold_litres"]=model_.cold_mass();
         d["cold_evictions"]=static_cast<int64_t>(cold_evictions_);d["cold_restores"]=static_cast<int64_t>(cold_restores_);
+        d["cold_visual_tiles"]=static_cast<int64_t>(cold_visible_.size());d["cold_visual_reads"]=static_cast<int64_t>(cold_visual_reads_);
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
@@ -509,7 +572,7 @@ public:
             if(model_.tile_mass(k))++wet;
             if(t.local){intervals+=static_cast<int64_t>(t.local->columns().size());local_bytes+=static_cast<int64_t>(t.local->bytes()+t.owners.capacity()*sizeof(Id));}
         }
-        d["active_tiles"]=active;d["near_active_tiles"]=near_count;d["visible_wet_tiles"]=wet;d["local_intervals"]=intervals;d["local_bytes"]=local_bytes;
+        d["active_tiles"]=active;d["near_active_tiles"]=near_count;d["visible_wet_tiles"]=wet+static_cast<int64_t>(cold_visible_.size());d["local_intervals"]=intervals;d["local_bytes"]=local_bytes;
         return d;
     }
     nlohmann::json encode()const {

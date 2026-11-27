@@ -101,6 +101,9 @@ func _find_breach(runtime,tool: VoxelTool,camera: Camera3D) -> Dictionary:
     return {}
 
 func _frame(runtime,water: Node3D,elapsed: int) -> bool:
+    if not runtime.session.update_interest(runtime.player.global_position):
+        _fail("interest "+runtime.session.get_last_error())
+        return false
     if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,elapsed):
         _fail("hydraulic frame "+runtime.session.get_last_error())
         return false
@@ -184,6 +187,28 @@ func _lifecycle(runtime,water: Node3D,reopen: bool) -> void:
         _fail("lifecycle revisit changed mass")
         return
     print("V3_HYBRID_LIFECYCLE_PASS phase=",("reopen" if reopen else "write")," mass=",mass," freed_bytes=",hot["local_bytes"]," reclaimed=",cold["suspended_reclaims"]," column=",column)
+    if not reopen:
+        runtime.player.global_position=spawn+Vector3(512,0,512)
+        deadline=Time.get_ticks_msec()+30000
+        while true:
+            if not _frame(runtime,water,0):
+                return
+            var state: Dictionary=runtime.session.hydraulic_report()
+            if int(state["litres"])!=mass or int(state["ticks"])!=int(hot["ticks"]) or int(state["tiles"])>96:
+                _fail("cold persistence ledger "+str(state))
+                return
+            if int(state["cold_tiles"])>=10 and int(state["cold_litres"])>0 and runtime.session.hydraulic_column_mass(probe)<0:
+                print("V3_HYBRID_COLD_RUNTIME_PASS phase=write state=",state," probe=",probe," column=",column)
+                break
+            if Time.get_ticks_msec()>deadline:
+                _fail("cold persistence eviction "+str(state))
+                return
+            await process_frame
+    else:
+        if int(initial["cold_restores"])<=0 or int(initial["cold_evictions"])<10:
+            _fail("cold reopen did not recover persisted owners "+str(initial))
+            return
+        print("V3_HYBRID_COLD_RUNTIME_PASS phase=reopen state=",initial," probe=",probe," column=",column)
     runtime.request_close()
 
 func _wait_source(runtime,water: Node3D,id: String) -> bool:
