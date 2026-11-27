@@ -176,3 +176,10 @@ I20 native/GPU SUCCESS (46073698461 / 46073698467). Exact edited SDF digest aed0
 ## I21 candidate — Visible-range mod source discovery
 
 Actual configured terrain view distance drives anchor discovery independently of LOD0; finite source basin window stays bounded and seed ownership unchanged. No ocean area expansion, wet eviction or global coverage claim. Validation pending.
+
+
+## I21 — Visible-range mod source discovery validated
+
+I21 native/GPU SUCCESS (46074463346 / 46074463340). Native visible-source fixture at 192m: all three IDs at tick zero, 2 nonresident source discoveries, finite initial 11,378,442L (pond + 64,000L lava), no conflicts/pending. Reopen preserves IDs and initial exactly; sea injection 9L then 18L total after reopen. GPU 3 IDs, 1 nonresident discovery (actual residency varies), near/far 16/34 ticks, exact 11,378,442L, 85 tracked tiles, 42 wet, 44 visible meshes, tick p95 4.782ms, refresh p95/p99 6.259/9.088ms, frame p95 48.390ms, snapshot max 39.293ms, 0 resident settles. Stream fixture 45 steps, max 4.554ms. Seven viewport images inspected; transient disconnected-looking patch/stepped margins remain; no geometry pass. Native artifact 15234357938 SHA256 8231d180893dd8bfa7b2b68470272cafa5a3e52865005a6de7a555c50d5a51f7; GPU artifact 15234208315 SHA256 4ae878391d157aa85109994d26a2150b78bbdb137594cb31721da824ccf72556; exact native DLL SHA256 ded62424630ce755a5d0075481c704fc6d25517bfbd466b9733919dd8910cfcc. Both artifacts downloaded and checked.
+
+Scope remains bounded source discovery, not full ocean geometry, distant wet-owner streaming, cross-tile construction or resident settle qualification.

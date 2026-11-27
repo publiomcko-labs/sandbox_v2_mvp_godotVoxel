@@ -553,8 +553,33 @@
           "far_tick": 34
         },
         "i21": {
-          "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "visible range mod anchor discovery, independent of LOD0"
+          "status": "NATIVE_GPU_PASS_VISIBLE_SOURCE_DISCOVERY_ONLY",
+          "commit": "75b342b3019fc128c4c553613334f31a20cf1513",
+          "native_run": 46074463346,
+          "gpu_run": 46074463340,
+          "native_artifact": 15234357938,
+          "gpu_artifact": 15234208315,
+          "native_artifact_sha256": "8231d180893dd8bfa7b2b68470272cafa5a3e52865005a6de7a555c50d5a51f7",
+          "gpu_artifact_sha256": "4ae878391d157aa85109994d26a2150b78bbdb137594cb31721da824ccf72556",
+          "dll_sha256": "ded62424630ce755a5d0075481c704fc6d25517bfbd466b9733919dd8910cfcc",
+          "source_view_distance_m": 192,
+          "source_ids": 3,
+          "native_nonresident_discoveries": 2,
+          "gpu_nonresident_discoveries": 1,
+          "finite_initial_litres": 11378442,
+          "lava_litres": 64000,
+          "sea_injected_write": 9,
+          "sea_injected_reopen_total": 18,
+          "gpu_near_tick": 16,
+          "gpu_far_tick": 34,
+          "gpu_tick_p95_us": 4782,
+          "gpu_refresh_p95_us": 6259,
+          "gpu_refresh_p99_us": 9088,
+          "gpu_frame_p95_us": 48390,
+          "gpu_snapshot_max_us": 39293,
+          "gpu_resident_settles": 0,
+          "offline_stream_steps": 45,
+          "offline_stream_max_step_us": 4554
         }
       }
     },
