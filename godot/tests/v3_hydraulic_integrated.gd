@@ -396,19 +396,8 @@ func _test() -> void:
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
     var barrier: bool="--phase=barrier" in args or "--phase=streaming" in args
-    # Keep both sea and lava anchors in the 192m view but outside
-    # LOD0, before the terrain streaming lifecycle begins. At the
-    # breach spawn the lava anchor can be resident depending on timing.
-    var previous_spawn:=OS.get_environment("V3_CAVE_SPAWN")
-    if sources:
-        OS.set_environment("V3_CAVE_SPAWN","16,12,112")
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
-    if sources:
-        if previous_spawn.is_empty():
-            OS.unset_environment("V3_CAVE_SPAWN")
-        else:
-            OS.set_environment("V3_CAVE_SPAWN",previous_spawn)
     if not runtime.running:
         _fail("startup")
         return
@@ -418,16 +407,33 @@ func _test() -> void:
     var water: Node3D=runtime.world.get_node("Water")
     water.set_process(false)
     water.set_physics_process(false)
-    runtime.player.global_position=Vector3(16,12,112) if sources else Vector3(-4,12,28)
+    runtime.player.global_position=Vector3(-4,12,28)
     var camera: Camera3D=runtime.player.get_node("Camera3D")
     camera.global_position=Vector3(-4,48,48)
     camera.look_at(Vector3(-4,0,23),Vector3.UP)
     var deadline:=Time.get_ticks_msec()+90000
+    var source_positioned:=not sources or "--phase=sources-reopen" in args
     while true:
         if not _frame(runtime,water,0):
             return
         var state: Dictionary=runtime.session.hydraulic_report()
-        if str(state.get("solver",""))=="hybrid" and int(state["near_active_tiles"])>=9 and int(state.get("visible_sources_pending",1))==0 and bool(water.get("_hybrid_ready")) and int(water.call("get_report")["meshes"])>0:
+        # Isolate late source discovery from the separate finite-basin
+        # remote bootstrap limitation. The initial pond must be present
+        # before moving, and neither late source may be pre-initialized.
+        if not source_positioned and str(state.get("solver",""))=="hybrid":
+            if state.get("source_ids",[])!=["hydro:pond"] or int(state["initial"])!=11314442:
+                _fail("source fixture bootstrap "+str(state))
+                return
+            runtime.player.global_position=Vector3(16,12,112)
+            var source_tool: VoxelTool=runtime.terrain.get_voxel_tool()
+            while source_tool.is_area_editable(AABB(Vector3(48,-32,-32),Vector3(17,65,17))) or source_tool.is_area_editable(AABB(Vector3(-128,-32,128),Vector3(17,65,17))):
+                if Time.get_ticks_msec()>deadline:
+                    _fail("source fixture anchor unload timeout")
+                    return
+                await process_frame
+            source_positioned=true
+            continue
+        if source_positioned and str(state.get("solver",""))=="hybrid" and int(state["near_active_tiles"])>=9 and int(state.get("visible_sources_pending",1))==0 and bool(water.get("_hybrid_ready")) and int(water.call("get_report")["meshes"])>0:
             break
         if Time.get_ticks_msec()>deadline:
             _fail("readiness "+str(state))
