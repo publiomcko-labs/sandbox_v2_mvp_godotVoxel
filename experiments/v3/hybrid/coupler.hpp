@@ -325,7 +325,7 @@ public:
     }
     bool seed(core::Region key,Id id,std::size_t type,Litres amount) {
         auto &t=tiles_.at(key);
-        if(t.local||t.aggregate.contains(id)||type>=types_.size()||amount<=0||amount>compartment(t,id).curve.capacity())return false;
+        if(t.local||t.aggregate.contains(id)||type>=types_.size()||amount<=0||amount>compartment(t,id).curve.capacity()||amount>ledger_limit-initial_)return false;
         t.aggregate.emplace(id,tp::Content{type,amount});initial_+=amount;surface_changes_.insert(key);verify();return true;
     }
     // Atomic finite-source initialization on certified dry exposed

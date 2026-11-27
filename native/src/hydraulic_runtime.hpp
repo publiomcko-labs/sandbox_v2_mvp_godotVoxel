@@ -175,14 +175,17 @@ class Runtime {
             auto found=domain_.tiles().find(k);
             if(found==domain_.tiles().end()||!found->second.available)continue;
             const auto &tile=found->second;
-            const double level=rule.at("level_m").get<double>();
+            const bool volume=rule.contains("volume_litres");
+            const double level=volume?std::numeric_limits<double>::infinity():rule.at("level_m").get<double>();
+            const auto amount=volume?rule.at("volume_litres").get<Litres>():0;
             // Explicit source tile only. Pick closest column whose air run
             // reaches the top of the bounded surface band and lies below head.
             // An isolated subterranean span is never a candidate.
             std::optional<core::Vec3> chosen;double best=std::numeric_limits<double>::infinity();
             for(const auto &col:tile.geometry->column_runs)for(const auto &s:col) {
                 if(s.top!=height||base+s.bottom+0.1>=level)continue;
-                core::Vec3 p{k.x+s.x+0.5,base+s.bottom+0.05,k.z+s.z+0.5};
+                if(volume&&domain_.graph().volumes().at(tile.ids.at(s.compartment)).curve.capacity()<amount)continue;
+                core::Vec3 p{k.x+s.x+0.5,volume?tp::span_floor_mm(*tile.geometry,s)*0.001+0.05:base+s.bottom+0.05,k.z+s.z+0.5};
                 const double distance=(p.x-anchor.x)*(p.x-anchor.x)+(p.z-anchor.z)*(p.z-anchor.z);
                 if(distance<best){best=distance;chosen=p;}
             }
@@ -190,6 +193,7 @@ class Runtime {
             const auto slot=rule.at("slot").get<std::size_t>();
             if(rule.at("source_kind")=="fixed_head_ocean")
                 domain_.add_ocean(id,*chosen,slot,level,4,true);
+            else if(volume)domain_.seed_volume(id,*chosen,slot,amount,true);
             else {
                 // Start with the near field, then follow only below-head
                 // exposed boundary spans of the reached component.

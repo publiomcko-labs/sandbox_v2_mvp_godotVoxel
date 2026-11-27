@@ -192,6 +192,11 @@ public:
         if(!graph_.initialize(*id,type,amount))return false;
         seeded_.insert(source);return true;
     }
+    bool seed_volume(const std::string &source,core::Vec3 anchor,std::size_t type,Litres amount,bool exposure_certified) {
+        if(source.empty()||!exposure_certified||seeded_.contains(source)||amount<=0)return false;
+        const auto id=volume_at(anchor);if(!id||!graph_.initialize(*id,type,amount))return false;
+        seeded_.insert(source);return true;
+    }
     // Initial finite lake only: seed the declared head across the known
     // exposed, hydraulically reachable component. Never traverse a closed
     // or above-head sill, a covered interval, or an already seeded body.

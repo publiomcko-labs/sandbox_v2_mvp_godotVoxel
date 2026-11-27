@@ -256,13 +256,19 @@ inline Registry initial_registry() {
     });
     r.add("liquid_source_rule", [](const Json &j) {
         if(j.contains("anchor_m")) {
-            fields(j, {"liquid","source_kind","level_m","anchor_m"});
+            const bool finite_volume=j.contains("volume_litres");
+            if(finite_volume)fields(j, {"liquid","source_kind","volume_litres","anchor_m"});
+            else fields(j, {"liquid","source_kind","level_m","anchor_m"});
             const auto kind=str(j.at("source_kind"));
             require(kind=="finite_reservoir"||kind=="fixed_head_ocean","hydraulic source kind");
             const auto &a=j.at("anchor_m");
             require(a.is_array()&&a.size()==3,"hydraulic anchor");
             for(const auto &v:a)require(v.is_number_integer()&&std::abs(v.get<double>())<=100000,"hydraulic anchor bounds");
-            require(j.at("level_m").is_number()&&std::abs(j.at("level_m").get<double>())<=4096&&
+            if(finite_volume){
+                require(kind=="finite_reservoir"&&j.at("volume_litres").is_number_integer()&&
+                    j.at("volume_litres").get<double>()>=1&&j.at("volume_litres").get<double>()<=100000000,
+                    "hydraulic finite source volume");
+            }else require(j.at("level_m").is_number()&&std::abs(j.at("level_m").get<double>())<=4096&&
                 j.at("level_m").get<double>()>a[1].get<double>(),"hydraulic source level");
             return std::vector<Reference>{{str(j.at("liquid")),"liquid"}};
         }

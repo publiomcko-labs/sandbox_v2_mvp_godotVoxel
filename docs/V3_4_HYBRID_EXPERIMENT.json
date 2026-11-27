@@ -455,8 +455,20 @@
           "gpu_settles": 0
         },
         "i17": {
+          "status": "CORE_PASS_NATIVE_LAVA_SOURCE_CONFLICT",
+          "focus": "mod registry late finite basin and fixed head source discovery",
+          "commit": "71daa9af65dbfb15217699a4b346eb4594d9a3bf",
+          "core_run": 46071058445,
+          "native_run": 46071058420,
+          "gpu_run": 46071058542,
+          "native_artifact": 15232868575,
+          "conflict": "hydro:lava_pool initial mass unchanged; root exposed floor eligibility or ownership conflict; no source injection"
+        },
+        "i17b": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "mod registry late finite basin and fixed head source discovery"
+          "focus": "explicit finite-volume source profile and source diagnostics",
+          "lava_volume_litres": 64000,
+          "hydro_mod_version": "1.1.0"
         }
       }
     },

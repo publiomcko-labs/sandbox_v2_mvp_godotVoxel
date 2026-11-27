@@ -207,13 +207,13 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
     if not await _wait_source(runtime,water,"hydro:lava_pool"):
         return
     var lava: Dictionary=runtime.session.hydraulic_report()
-    if (not reopen and int(lava["initial"])<=initial) or (reopen and int(lava["initial"])!=initial):
+    if (not reopen and int(lava["initial"])!=initial+64000) or (reopen and int(lava["initial"])!=initial):
         _fail("late finite initialization "+str(lava))
         return
     var found_lava:=false
     for z in range(-44,-12):
         for x in range(32,64):
-            for y in range(-12,3):
+            for y in range(-12,32):
                 var sample: Dictionary=runtime.session.hydraulic_at(Vector3(x+0.5,y+0.5,z+0.5))
                 if not sample.is_empty() and float(sample["density"])==2800.0:
                     found_lava=true

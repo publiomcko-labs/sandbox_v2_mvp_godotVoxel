@@ -14,6 +14,7 @@ class IntegratedRuntime {
     std::map<std::string,std::set<core::Region>> source_windows_;
     std::set<core::Region> source_interest_;
     std::set<std::string> source_conflicts_;
+    std::map<std::string,std::string> source_diagnostics_;
     std::map<std::string,std::tuple<std::uint64_t,std::uint64_t,std::uint64_t>> source_attempts_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
@@ -63,9 +64,10 @@ class IntegratedRuntime {
             // Full view-range acquisition is a separate streaming gate.
             if(std::abs(k.x-center_.x)>side||std::abs(k.z-center_.z)>side){source_windows_.erase(id);source_attempts_.erase(id);continue;}
             const bool ocean=rule.at("source_kind")=="fixed_head_ocean";
+            const bool volume=rule.contains("volume_litres");
             auto &window=source_windows_[id];
             if(window.empty()){
-                if(ocean)window.insert(k);
+                if(ocean||volume)window.insert(k);
                 else for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)window.insert({k.x+x*side,base,k.z+z*side});
             }
             source_interest_.insert(window.begin(),window.end());
@@ -76,20 +78,28 @@ class IntegratedRuntime {
             if(source_attempts_.contains(id)&&source_attempts_.at(id)==stamp)continue;
             source_attempts_[id]=stamp;
             const auto &g=*model_.tiles().at(k).geometry;
-            const double level=rule.at("level_m").get<double>();
+            const double level=volume?std::numeric_limits<double>::infinity():rule.at("level_m").get<double>();
+            const auto amount=volume?rule.at("volume_litres").get<Litres>():0;
             std::optional<core::Vec3> chosen;Id compartment_id{};
-            double best=std::numeric_limits<double>::infinity();
+            double best=std::numeric_limits<double>::infinity(),min_floor=std::numeric_limits<double>::infinity();
             for(const auto &col:g.column_runs)for(const auto &s:col){
                 const double floor=tp::span_floor_mm(g,s)*0.001;
-                if(s.top!=height||floor+0.1>=level)continue;
+                if(s.top!=height)continue;
+                min_floor=std::min(min_floor,floor);
+                if(floor+0.1>=level)continue;
+                if(volume){
+                    auto c=std::find_if(g.compartments.begin(),g.compartments.end(),[&](const auto &v){return v.id==s.compartment;});
+                    if(c==g.compartments.end()||c->curve.capacity()<amount)continue;
+                }
                 core::Vec3 q{k.x+s.x+0.5,floor+0.05,k.z+s.z+0.5};
                 const double distance=(q.x-anchor.x)*(q.x-anchor.x)+(q.z-anchor.z)*(q.z-anchor.z);
                 if(distance<best){best=distance;chosen=q;compartment_id=s.compartment;}
             }
-            if(!chosen){source_conflicts_.insert(id);continue;}
+            if(!chosen){source_conflicts_.insert(id);source_diagnostics_[id]="no eligible exposed anchor; min_floor="+std::to_string(min_floor);continue;}
             const auto type=rule.at("slot").get<std::size_t>();
             bool accepted=false;
             if(ocean)accepted=model_.ocean({id,k,*chosen,type,level,chosen->y,4});
+            else if(volume)accepted=model_.seed(k,compartment_id,type,amount);
             else{
                 std::set<core::Region> frontier;
                 const auto result=model_.seed_surface_basin(k,compartment_id,type,level,base+height,window,frontier);
@@ -99,12 +109,12 @@ class IntegratedRuntime {
                     for(auto q:frontier)if(window.size()<64&&std::abs(q.x-k.x)<=5*side&&std::abs(q.z-k.z)<=5*side)
                         expanded=window.insert(q).second||expanded;
                     source_interest_.insert(window.begin(),window.end());
-                    if(!expanded)source_conflicts_.insert(id);
+                    if(!expanded){source_conflicts_.insert(id);source_diagnostics_[id]="finite basin exceeds certified search budget";}
                     continue;
                 }
             }
-            if(accepted){sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);}
-            else source_conflicts_.insert(id);
+            if(accepted){sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
+            else {source_conflicts_.insert(id);source_diagnostics_[id]="wet/local owner or invalid capacity at certified anchor";}
         }
     }
     bool activate(core::Region k) {
@@ -301,6 +311,7 @@ public:
         Array source_ids,source_conflicts;for(const auto &id:sources_)source_ids.push_back(String::utf8(id.c_str()));
         for(const auto &id:source_conflicts_)source_conflicts.push_back(String::utf8(id.c_str()));
         d["source_ids"]=source_ids;d["source_conflicts"]=source_conflicts;d["source_interest_tiles"]=static_cast<int64_t>(source_interest_.size());
+        Dictionary reasons;for(const auto &[id,reason]:source_diagnostics_)reasons[String::utf8(id.c_str())]=String::utf8(reason.c_str());d["source_diagnostics"]=reasons;
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
         d["visual_survey_tiles"]=static_cast<int64_t>(visual_survey_tiles_);d["post_edit_survey_tiles"]=static_cast<int64_t>(post_edit_survey_tiles_);
         d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());
