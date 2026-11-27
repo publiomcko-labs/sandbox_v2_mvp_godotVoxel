@@ -1,4 +1,4 @@
-name: V3 H8 graphical shoreline evidence
+name: V3 H9 graphical shoreline evidence
 on:
   push:
     branches: [v3/hydraulic]
@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 55); do
-            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45919697028")
-            test "$(jq -r .head_sha <<< "$result")" = "66233cf9e275a300cbdc1b42dc5411549819ce30"
+            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45920161641")
+            test "$(jq -r .head_sha <<< "$result")" = "1a6dfe9e920a9faf9608e3ee17c196a336e5978f"
             if [ "$(jq -r .status <<< "$result")" = completed ]; then
               test "$(jq -r .conclusion <<< "$result")" = success
               exit 0
@@ -48,28 +48,28 @@ jobs:
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Existing Godot instance detected; refusing to interfere' }
       - uses: actions/checkout@v4
         with:
-          path: h8-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: h9-visual-${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: v3-native-integration-evidence
-          run-id: 45919697028
+          run-id: 45920161641
           github-token: ${{ github.token }}
-          path: h8-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: h9-visual-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Run isolated rendered Godot fixture and capture only game viewport
-        working-directory: h8-visual-${{ github.run_id }}-${{ github.run_attempt }}
+        working-directory: h9-visual-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
-          git diff --quiet 66233cf9e275a300cbdc1b42dc5411549819ce30 HEAD -- native godot/scripts godot/shaders godot/scenes godot/mods third_party.lock
+          git diff --quiet 1a6dfe9e920a9faf9608e3ee17c196a336e5978f HEAD -- native godot/scripts godot/shaders godot/scenes godot/mods third_party.lock
           if ($LASTEXITCODE -ne 0) { throw 'Runtime differs from validated native candidate' }
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Godot already running' }
           ./scripts/bootstrap-windows.ps1 -RuntimeOnly
           $root=(Get-Location).Path
           $project=Join-Path $root 'godot'
           $editor=Join-Path $root '.tools/godot.exe'
-          $capture=Join-Path $root 'reports/generated/h8-visual'
+          $capture=Join-Path $root 'reports/generated/h9-visual'
           New-Item -ItemType Directory -Force $capture,(Join-Path $project '.godot') | Out-Null
           [IO.File]::WriteAllText((Join-Path $project '.godot/extension_list.cfg'),("res://sandbox_native.gdextension"+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
           $env:V3_GPU_CAPTURE_ROOT=$capture
@@ -95,9 +95,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v3-h8-game-viewport
+          name: v3-h9-game-viewport
           retention-days: 14
           if-no-files-found: warn
           path: |
-            h8-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h8-visual/*.png
-            h8-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h8-visual/*.log
+            h9-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h9-visual/*.png
+            h9-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h9-visual/*.log
