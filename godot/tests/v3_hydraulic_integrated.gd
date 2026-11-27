@@ -228,6 +228,15 @@ func _wait_source(runtime,water: Node3D,id: String) -> bool:
 func _sources(runtime,water: Node3D,reopen: bool) -> void:
     var before: Dictionary=runtime.session.hydraulic_report()
     var initial:=int(before["initial"])
+    # Both late-source anchors must actually be outside LOD0 in this
+    # fixture. Do not infer nonresidency merely from distance or timing.
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    if not reopen:
+        for anchor in [Vector3(48,-32,-32),Vector3(-128,-32,128)]:
+            if tool.is_area_editable(AABB(anchor,Vector3(17,65,17))):
+                _fail("source fixture anchor unexpectedly resident "+str(anchor))
+                return
+        print("V3_HYBRID_SOURCE_FIXTURE_NONRESIDENT_PASS anchors=2")
     if int(before["sources"])!=3 or (not reopen and int(before["nonresident_source_discoveries"])<2):
         _fail("source view discovery "+str(before))
         return
@@ -387,8 +396,19 @@ func _test() -> void:
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
     var barrier: bool="--phase=barrier" in args or "--phase=streaming" in args
+    # Keep both sea and lava anchors in the 192m view but outside
+    # LOD0, before the terrain streaming lifecycle begins. At the
+    # breach spawn the lava anchor can be resident depending on timing.
+    var previous_spawn:=OS.get_environment("V3_CAVE_SPAWN")
+    if sources:
+        OS.set_environment("V3_CAVE_SPAWN","16,12,112")
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
+    if sources:
+        if previous_spawn.is_empty():
+            OS.unset_environment("V3_CAVE_SPAWN")
+        else:
+            OS.set_environment("V3_CAVE_SPAWN",previous_spawn)
     if not runtime.running:
         _fail("startup")
         return
@@ -398,7 +418,7 @@ func _test() -> void:
     var water: Node3D=runtime.world.get_node("Water")
     water.set_process(false)
     water.set_physics_process(false)
-    runtime.player.global_position=Vector3(-4,12,28)
+    runtime.player.global_position=Vector3(16,12,112) if sources else Vector3(-4,12,28)
     var camera: Camera3D=runtime.player.get_node("Camera3D")
     camera.global_position=Vector3(-4,48,48)
     camera.look_at(Vector3(-4,0,23),Vector3.UP)
