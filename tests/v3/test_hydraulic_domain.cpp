@@ -192,9 +192,9 @@ int main(){
     bool halo_bank=false;
     for(const auto &patch:surface::build(hg,hg.compartments.front(),8))
         for(std::size_t i=0;i<patch.vertices.size();i+=3) {
-            const auto a=patch.vertices[i],b=patch.vertices[i+1],d=patch.vertices[i+2];
-            for(auto p:{a,b,d})if(p.x==-1&&p.z==1&&patch.ceiling==4&&p.floor==0.5&&p.offset==-0.003)halo_bank=true;
-            const double x=(a.x+b.x+d.x)/3,z=(a.z+b.z+d.z)/3;
+            const auto va=patch.vertices[i],vb=patch.vertices[i+1],vc=patch.vertices[i+2];
+            for(auto p:{va,vb,vc})if(p.x==-1&&p.z==1&&patch.ceiling==4&&p.floor==0.5&&p.offset==-0.003)halo_bank=true;
+            const double x=(va.x+vb.x+vc.x)/3,z=(va.z+vb.z+vc.z)/3;
             assert(!(x>0&&x<1&&z<0)); // no extension through open halo column
         }
     assert(halo_bank);
