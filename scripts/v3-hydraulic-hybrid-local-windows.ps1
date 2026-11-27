@@ -11,11 +11,11 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='38744f13e4e04208f823424f2c8cfe7fcdad05c5'
-$visualCandidate='38744f13e4e04208f823424f2c8cfe7fcdad05c5'
-$run='46062811824'
+$candidate='130882eee10a5f99a6edebcb9c5b1558fae23504'
+$visualCandidate='130882eee10a5f99a6edebcb9c5b1558fae23504'
+$run='46063914148'
 $artifact='v3-native-integration-evidence'
-$zipSha='42066f6f2c1cff932ea840e54b1cda6c8e85f4cdea7ebee2da6e15dd7c1f7f9b'
+$zipSha='f34658d5637faf48b73953bb3f1cb12cc278c25ef37b019ea5344f6e6cd40cdb'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- native experiments/v3/hybrid third_party.lock
@@ -46,10 +46,10 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/46062811824/artifacts/15229282637 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/46063914148/artifacts/15230361440 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
-$dllSha='1be5ef8ebbf1f59b011cf5e8b45fafbe01f85f8d7fab3787b46858021e3e6a86'
+$dllSha='87eeeddcddd0c38ef0ec177615580a23997182ca2e2c8d11f076ec5a1240e0bb'
 if (!(Test-Path -LiteralPath (Join-Path $stage $dll) -PathType Leaf) -or (Get-FileHash -LiteralPath (Join-Path $stage $dll) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dllSha) { throw 'Native DLL SHA256 mismatch' }
 foreach ($file in @($dll,'extension_api.json')) {
     $src=Join-Path $stage $file
@@ -86,7 +86,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host "V3 R3 I10b experimental solver=$Solver renderer=$Renderer. Inspect progressive shoreline flow, caves, movement and edits; close normally. Lava/Sea are exploratory."
+Write-Host "V3 R3 I11b experimental solver=$Solver renderer=$Renderer. Inspect progressive shoreline flow, caves, movement and edits; close normally. Lava/Sea are exploratory."
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()

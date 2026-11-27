@@ -303,14 +303,27 @@
           "gpu_frame_p95_us": 47186
         },
         "i11b": {
-          "status": "CORE_NATIVE_PASS_GPU_PENDING",
+          "status": "CORE_NATIVE_GPU_PASS_FOCAL_SEAM_FIXED_GEOMETRY_PARTIAL",
           "focus": "canonical vertical closure of accepted shared tile edges",
           "commit": "130882eee10a5f99a6edebcb9c5b1558fae23504",
           "core_run": 46063914187,
           "native_run": 46063914148,
           "gpu_run": 46063914111,
           "native_artifact": 15230361440,
-          "native_artifact_sha256": "f34658d5637faf48b73953bb3f1cb12cc278c25ef37b019ea5344f6e6cd40cdb"
+          "native_artifact_sha256": "f34658d5637faf48b73953bb3f1cb12cc278c25ef37b019ea5344f6e6cd40cdb",
+          "gpu_artifact": 15230091475,
+          "gpu_artifact_sha256": "73ceb302c989ad6a2538b1b0515e28ad50bceb44fb84396d138c08aaaa509f3d",
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "settles": 0,
+          "gpu_worker_p95_us": 1409,
+          "gpu_combined_refresh_p95_us": 5687,
+          "gpu_combined_refresh_p99_us": 10122,
+          "gpu_frame_p95_us": 47308,
+          "gpu_triangles": 12646,
+          "filled_blue_pixels_added": 94,
+          "filled_blue_pixels_removed": 0
         }
       }
     },
