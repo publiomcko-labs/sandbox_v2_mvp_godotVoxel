@@ -21,29 +21,32 @@ func _tile(p: Vector3) -> Vector3i:
     return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
 
 func _find_breach(runtime,tool: VoxelTool) -> Dictionary:
-    # Identify a genuinely dry, solid horizontal neighbour of a wet
-    # column. Both probes belong to the carve, not the old liquid.
-    for z in range(-48,64):
-        for x in range(-72,32):
+    # Search the whole certified shoreline. A radius-six carve may cross
+    # a tile boundary, but both destination columns must have zero mass.
+    # Do not select a point under an already wet vertical interval.
+    for z in range(-64,80):
+        for x in range(-96,48):
+            var donor:=Vector3(x+0.5,0,z+0.5)
+            if runtime.session.hydraulic_column_mass(donor)<=500:
+                continue
             for y in range(-8,4):
-                var donor:=Vector3(x+0.5,y+0.5,z+0.5)
+                donor.y=y+0.5
                 var wet: Dictionary=runtime.session.hydraulic_at(donor)
                 if wet.is_empty() or float(wet["level"])-donor.y<0.5:
                     continue
                 for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
-                    var near:=donor+direction-Vector3(0,1,0)
-                    var far:=near+direction*2
-                    var center:=(near+far)*0.5
-                    if _tile(donor)!=_tile(near) or _tile(near)!=_tile(far):
-                        continue
-                    if not tool.is_area_editable(AABB(center-Vector3(6,6,6),Vector3(12,12,12))):
-                        continue
-                    if runtime.session.hydraulic_column_mass(near)!=0 or runtime.session.hydraulic_column_mass(far)!=0:
-                        continue
-                    if tool.get_voxel_f(Vector3i(near.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(far.floor()))>=-0.1:
-                        continue
-                    if runtime.submit_brush(center,false,3.0)=="accepted":
-                        return {"center":center,"near":near,"far":far,"donor":donor,"pre_edit_column_litres":[0,0]}
+                    for distance in range(1,4):
+                        var near_probe:=donor+direction*distance-Vector3(0,0.5,0)
+                        var far_probe:=near_probe+direction*2
+                        var center:=(near_probe+far_probe)*0.5
+                        if runtime.session.hydraulic_column_mass(near_probe)!=0 or runtime.session.hydraulic_column_mass(far_probe)!=0:
+                            continue
+                        if not tool.is_area_editable(AABB(center-Vector3(8,8,8),Vector3(16,16,16))):
+                            continue
+                        if tool.get_voxel_f(Vector3i(near_probe.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(far_probe.floor()))>=-0.1:
+                            continue
+                        if runtime.submit_brush(center,false,6.0)=="accepted":
+                            return {"center":center,"near":near_probe,"far":far_probe,"donor":donor,"pre_edit_column_litres":[0,0]}
     return {}
 
 func _frame(runtime,water: Node3D,elapsed: int) -> bool:
@@ -109,7 +112,15 @@ func _test() -> void:
         return
     var tool: VoxelTool=runtime.terrain.get_voxel_tool()
     tool.channel=VoxelBuffer.CHANNEL_SDF
-    var breach:=_find_breach(runtime,tool)
+    var breach: Dictionary={}
+    for attempt in range(4):
+        breach=_find_breach(runtime,tool)
+        if not breach.is_empty():
+            break
+        for step in range(32):
+            if not _frame(runtime,water,0):
+                return
+            await process_frame
     if breach.is_empty():
         _fail("no admissible shore breach "+str(initial))
         return
@@ -148,9 +159,9 @@ func _test() -> void:
         if int(state["litres"])!=mass or int(state["blocked_tiles"])>0:
             _fail("flow ledger or remap blocked "+str(state))
             return
-        if first_near<0 and runtime.session.hydraulic_column_mass(near)>0:
+        if first_near<0 and runtime.session.hydraulic_column_mass(near)>=20:
             first_near=i+1
-        if first_far<0 and runtime.session.hydraulic_column_mass(far)>0:
+        if first_far<0 and runtime.session.hydraulic_column_mass(far)>=20:
             first_far=i+1
         await process_frame
         var now:=Time.get_ticks_usec()
@@ -163,7 +174,7 @@ func _test() -> void:
     if first_near<=0 or first_far<=first_near:
         _fail("front did not progress near="+str(first_near)+" far="+str(first_far)+" "+str(runtime.session.hydraulic_report()))
         return
-    print("V3_HYBRID_PROGRESSIVE_PASS near_tick=",first_near," far_tick=",first_far," mass=",mass)
+    print("V3_HYBRID_PROGRESSIVE_PASS threshold_l=20 near_tick=",first_near," far_tick=",first_far," mass=",mass)
     if not await _capture("04-filled"):
         return
     var retained:=int(water.call("get_report")["meshes"])

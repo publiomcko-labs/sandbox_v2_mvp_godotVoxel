@@ -12,7 +12,7 @@ class IntegratedRuntime {
     std::set<std::string> sources_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
-    std::set<core::Region> group_;
+    std::set<core::Region> group_,activate_pending_;
     std::vector<std::uint64_t> tick_samples_;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
     core::Region center_{};
@@ -47,18 +47,18 @@ public:
     const auto& model()const{return model_;}
     bool allows_edit(core::Vec3 p,double radius,bool add) {
         if(!core::valid_point(p)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
-        std::size_t needed=0;
+        std::size_t needed=0,new_tiles=0;
         const auto keys=affected(p,radius);
         bool near_wet=false;
         for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
         for(auto k:keys) {
             auto it=model_.tiles().find(k);
-            if(it==model_.tiles().end()) {if(near_wet)return false;continue;}
+            if(it==model_.tiles().end()) {if(near_wet){++needed;++new_tiles;}continue;}
             if(!it->second.resident||dirty_.contains(k))return false;
             if(add&&model_.tile_mass(k))return false;
             if(!add&&near_wet&&!it->second.local)++needed;
         }
-        if(needed+model_.active()>model_.active_limit())return false;
+        if(needed+model_.active()>model_.active_limit()||new_tiles+model_.tiles().size()>model_.tile_limit())return false;
         // Activate BEFORE terrain mutation so the old column occupation is
         // preserved when a newly carved interval joins the same basin.
         if(!add&&near_wet)for(auto k:keys)if(model_.tiles().contains(k)&&!activate(k))return false;
@@ -67,8 +67,11 @@ public:
     void edited(core::Vec3 p,double radius,std::uint64_t rev) {
         if(dirty_.empty())group_.clear();
         revision_=rev;
-        for(auto k:affected(p,radius)) {
+        const auto keys=affected(p,radius);
+        bool near_wet=false;for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
+        for(auto k:keys) {
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
+            else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
             worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
         }
     }
@@ -86,7 +89,11 @@ public:
                     if(evict)model_.forget_dry(*evict);
                 }
                 if(exists?model_.replace_geometry(geometry):model_.publish(geometry)) {
-                    dirty_.erase(k);blocked_.erase(k);++publications_;
+                    if(activate_pending_.contains(k)&&!activate(k)){
+                        model_.set_resident(k,false);blocked_[k]=rev;
+                    }else {
+                        activate_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;
+                    }
                 }else blocked_[k]=rev;
             }
         }
@@ -203,14 +210,15 @@ public:
         return d;
     }
     nlohmann::json encode()const {
-        using J=nlohmann::json;J geometry=J::array(),dirty=J::array();
+        using J=nlohmann::json;J geometry=J::array(),dirty=J::array(),activate_pending=J::array();
         for(const auto &[k,t]:model_.tiles()){
             const auto &g=*t.geometry;J runs=J::array();
             for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
             geometry.push_back({{"key",{k.x,k.y,k.z}},{"revision",g.revision},{"runs",runs},{"floor",g.surface_floor},{"refined",g.refine_exposed}});
         }
         for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
-        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"dirty",dirty},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_}};
+        for(const auto &k:activate_pending_)activate_pending.push_back({k.x,k.y,k.z});
+        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"dirty",dirty},{"activate_pending",activate_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_}};
     }
     static std::unique_ptr<IntegratedRuntime> decode(const nlohmann::json& j,const std::vector<Liquid>& types) {
         if(j.at("schema")!="v3-hybrid-runtime-1"||!j.at("geometry").is_array()||j.at("geometry").size()>128)throw std::invalid_argument("hybrid runtime archive");
@@ -229,7 +237,12 @@ public:
         }
         auto model=experiment::Coupler::decode(j.at("coupler"),types,geometry);model.suspend_all();
         auto out=std::make_unique<IntegratedRuntime>(std::move(model),j.at("sources").get<std::set<std::string>>());
-        for(const auto &v:j.at("dirty")){core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};if(!geometry.contains(k))throw std::invalid_argument("hybrid dirty tile");out->dirty_[k]=v[3].get<std::uint64_t>();out->group_.insert(k);}
+        for(const auto &v:j.at("dirty")){core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};if(k.y!=base||k.x%16||k.z%16)throw std::invalid_argument("hybrid dirty tile");out->dirty_[k]=v[3].get<std::uint64_t>();out->group_.insert(k);}
+        if(j.contains("activate_pending"))for(const auto &v:j.at("activate_pending")){
+            core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};
+            if(!out->dirty_.contains(k))throw std::invalid_argument("hybrid pending owner");
+            out->activate_pending_.insert(k);
+        }
         out->revision_=j.at("revision").get<std::uint64_t>();out->ticks_=j.at("ticks").get<std::uint64_t>();
         out->debt_=j.at("debt").get<std::uint64_t>();out->moved_=j.at("moved").get<std::uint64_t>();
         if(out->debt_>100000000)throw std::invalid_argument("hybrid archive tick debt");
