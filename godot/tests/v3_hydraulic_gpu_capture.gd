@@ -271,6 +271,22 @@ func _test() -> void:
         if int(after["litres"])!=mass or int(after["ticks"])!=before_ticks+20 or int(after["moved"])<=0:
             _fail("transfer "+str(after))
             return
+        # Distinguish a transient remap head from a persistent geometric gap.
+        for i in range(100):
+            if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
+                _fail("equilibration frame")
+                return
+            water.call("refresh")
+            await process_frame
+        for i in range(runtime.session.hydraulic_surfaces().size()+1):
+            water.call("refresh")
+        if int(runtime.session.hydraulic_report()["litres"])!=mass:
+            _fail("equilibration mass")
+            return
+        if not await _capture("05-equilibrated-edit"):
+            return
+        _diagnose_seams(water,camera,"equilibrated")
+        print("V3_GPU_EQUILIBRATED_REPORT ",runtime.session.hydraulic_report()," ",water.call("get_report"))
         # Dry excavation isolated from the surface source must not create mass.
         var dry:=Vector3(-4,-20,28)
         if runtime.submit_brush(dry,false,3.0)!="accepted":
