@@ -119,7 +119,7 @@
       "drain_litres": 33511,
       "mid_flow_reopen": true,
       "runtime": {
-        "status": "I4_PASS_I5_CANDIDATE",
+        "status": "I7B_CORE_NATIVE_GPU_PASS_GEOMETRY_PARTIAL_PERFORMANCE_OPEN",
         "commit": "6c1bf9d3394ebb623da5bb9553fead6d0effa7d4",
         "native_run": 45994149578,
         "gpu_run": 45994225680,
@@ -174,7 +174,39 @@
           "mask_i6_only": 71,
           "mask_interior_missing": 138
         },
-        "launcher": "scripts/v3-hydraulic-hybrid-local-windows.ps1"
+        "launcher": "scripts/v3-hydraulic-hybrid-local-windows.ps1",
+        "i7a": {
+          "status": "CORE_NATIVE_GPU_PASS_DEDUP_INSUFFICIENT",
+          "commit": "634f544a83b5453ddf33fdfcebcda86560586d09",
+          "test_fix": "b8bf510e6a51c2969727083c33ed0ff4a1686cef",
+          "core_run": 46056307267,
+          "native_run": 46055598326,
+          "gpu_run": 46056324492,
+          "gpu_artifact": 15226418228,
+          "gpu_builds": 1451,
+          "gpu_combined_refresh_p95_us": 5808,
+          "gpu_snapshot_max_us": 35888
+        },
+        "i7b": {
+          "status": "CORE_NATIVE_GPU_PASS_GEOMETRY_PARTIAL",
+          "commit": "5d91882bb3079694fac8c1e4608f7faacd767cdb",
+          "core_run": 46056629993,
+          "native_run": 46056630047,
+          "gpu_run": 46056684071,
+          "gpu_artifact": 15227146432,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "wanted": 39,
+          "meshes": 39,
+          "gpu_builds": 1414,
+          "gpu_tick_p95_us": 3054,
+          "gpu_combined_refresh_p95_us": 5851,
+          "gpu_snapshot_max_us": 29428
+        },
+        "i8": {
+          "status": "CANDIDATE_VALIDATION_PENDING"
+        }
       }
     },
     "R4": {

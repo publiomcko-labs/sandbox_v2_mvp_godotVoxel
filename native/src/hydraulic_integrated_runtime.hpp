@@ -180,14 +180,17 @@ public:
             if(!out.contains(q)&&!dirty_.contains(q)&&model_.tiles().contains(q)&&hybrid::bank_has_donor(in,q))banks.insert(q);
         }}
         for(auto k:banks){hybrid::Input in{k,model_.tiles().at(k).geometry,{},height,{}};in.layered=true;out.emplace(k,std::move(in));}
-        // Only the one-column wet halo is copied between neighboring
-        // render tiles. No solver ownership or LOD0 residency is involved.
+        // Primary corners need one wet halo column; exposed bank
+        // corners need two. No solver ownership or LOD0 residency is involved.
         for(auto &[k,in]:out)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
             if(!dx&&!dz)continue;
             auto n=out.find({k.x+dx*side,base,k.z+dz*side});if(n==out.end())continue;
             in.adjacent_geometry.insert(n->first);
-            for(const auto &cell:n->second.cells)if(cell.x>=k.x-1&&cell.x<=k.x+side&&cell.z>=k.z-1&&cell.z<=k.z+side)
-                in.neighbors.push_back(cell);
+            for(const auto &cell:n->second.cells){
+                const int pad=cell.ceiling_mm==(k.y+height)*1000?2:1;
+                if(cell.x>=k.x-pad&&cell.x<k.x+side+pad&&cell.z>=k.z-pad&&cell.z<k.z+side+pad)
+                    in.neighbors.push_back(cell);
+            }
         }
         return out;
     }

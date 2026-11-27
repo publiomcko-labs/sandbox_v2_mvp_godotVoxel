@@ -115,6 +115,26 @@ int main(){
     auto prev=a;prev.adjacent_geometry.insert(b.tile);
     const auto groups=hybrid::dirty_groups({a,b,c},{{a.tile,prev}});
     assert(groups.at(a.tile)==groups.at(b.tile)&&groups.at(a.tile)!=groups.at(c.tile));
+    // I8: a solid bank beside two connected, unequal wet heads must
+    // share exact edge elevations with both primary and adjacent bank
+    // triangles, not a per-donor plane offset by 3mm.
+    tp::Snapshot bank{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    for(int z=0;z<2;++z)for(int y=0;y<8;++y)bank.air[static_cast<std::size_t>(z*4*8+y)]=1;
+    bank.surface_floor.assign(25,0.0f);
+    hybrid::Input bi{bank.origin,std::make_shared<const tp::Result>(tp::extract(bank)),{},8,{}};
+    bi.layered=true;
+    bi.cells={{0,0,0,8000,0,2.0,{2,2,2,2}},{0,1,0,8000,0,2.5,{2.5,2.5,2.5,2.5}}};
+    const auto bm=hybrid::build(bi);
+    const auto &bv=bm.materials.at(0);
+    assert(bv.size()>12);
+    std::set<double> shared_heights,outer_heights;
+    for(const auto &p:bv){
+        if(p.x==1&&p.z==1)shared_heights.insert(p.y);
+        if(p.x==2&&p.z==1)outer_heights.insert(p.y);
+    }
+    assert(shared_heights.size()==1&&*shared_heights.begin()==2.25);
+    assert(outer_heights.size()==1&&*outer_heights.begin()==2.25);
+    std::cout<<"V3_HYBRID_I8_BANK_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I7_GROUPS_PASS\n";
     std::cout<<"V3_HYBRID_I7_IDENTICAL_OUTPUT_PASS\n";
     std::cout<<"V3_HYBRID_I2_SURFACE_PASS shared_edge=1 dry_primary=1 independent_layer=1\n";

@@ -82,6 +82,28 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             for(auto i:members){const auto &c=*candidates[i];sum+=c.head;lo=std::max(lo,c.floor_mm*0.001+0.0001);hi=std::min(hi,c.ceiling_mm*0.001-0.002);}
             return members.empty()||lo>hi?cell.head:std::clamp(sum/double(members.size()),lo,hi);
         };
+        // Bank patches are disjoint footprints. Resolve each shared
+        // vertex against the same wet component, including the second
+        // wet halo column needed by the outer corners of bank cells.
+        auto touches=[](const Cell& c,int x,int z){
+            return x>=c.x&&x<=c.x+1&&z>=c.z&&z<=c.z+1;
+        };
+        auto bank_corner=[&](const Cell& donor,int x,int z){
+            if(touches(donor,x,z))return corner(donor,x,z);
+            std::vector<const Cell*> candidates;
+            for(int a=x-2;a<=x+1;++a)for(int b=z-2;b<=z+1;++b){
+                auto it=columns.find({a,b});if(it==columns.end())continue;
+                for(auto c:it->second)if(c->type==donor.type&&c->ceiling_mm==donor.ceiling_mm)candidates.push_back(c);
+            }
+            std::vector<const Cell*> reach{&donor};
+            for(std::size_t i=0;i<reach.size();++i)for(auto c:candidates)
+                if(connected(*reach[i],*c)&&std::find(reach.begin(),reach.end(),c)==reach.end())reach.push_back(c);
+            auto rank=[&](const Cell* c){
+                return std::tuple{!touches(*c,x,z),std::abs(x-std::clamp(x,c->x,c->x+1))+std::abs(z-std::clamp(z,c->z,c->z+1)),c->x,c->z,c->floor_mm,c->ceiling_mm};
+            };
+            const auto *anchor=*std::min_element(reach.begin(),reach.end(),[&](auto a,auto b){return rank(a)<rank(b);});
+            return corner(*anchor,std::clamp(x,anchor->x,anchor->x+1),std::clamp(z,anchor->z,anchor->z+1));
+        };
         auto floor_at=[&](int x,int z,double fallback) {
             const int lx=x-g.origin.x,lz=z-g.origin.z;
             if(!g.halo_floor.empty()&&lx>=-1&&lx<=g.nx+1&&lz>=-1&&lz<=g.nz+1)
@@ -184,9 +206,13 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             for(std::size_t k=0;k<4;++k){
                 const auto [dx,dz]=offsets[k];const int xx=wx+dx,zz=wz+dz;
                 const bool shared=xx>=donor->x&&xx<=donor->x+1&&zz>=donor->z&&zz<=donor->z+1;
-                const double y=shared?corner(*donor,xx,zz):donor->head;
-                const double floor=floor_at(xx,zz,donor->floor_mm*0.001)-1.35;
-                vertices[k]={double(xx),y-0.003,double(zz),slice_only?std::min(floor,y-0.01):floor,cap*0.001};
+                const double y=bank_corner(*donor,xx,zz);
+                const double donor_floor=donor->floor_mm*0.001;
+                double floor=floor_at(xx,zz,donor_floor)-1.35;
+                if(shared)floor=std::min(floor,donor_floor-0.35);
+                // No vertical offset along a shared edge: adjacent
+                // triangles meet exactly, terrain depth clips the bank.
+                vertices[k]={double(xx),y,double(zz),slice_only?std::min(floor,y-0.01):floor,cap*0.001};
             }
             auto &v=out.materials[donor->type];v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
         }
