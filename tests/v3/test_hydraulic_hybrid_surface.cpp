@@ -141,7 +141,7 @@ int main(){
     std::map<Region,hybrid::Input> primary;
     std::map<Region,std::shared_ptr<const tp::Result>> known;
     for(int x=0;x<8;x+=2)for(int z=0;z<8;z+=2){
-        auto s=left;s.origin={x,0,z};known[s.origin]=std::make_shared<const tp::Result>(tp::extract(s));
+        auto tile_snapshot=left;tile_snapshot.origin={x,0,z};known[tile_snapshot.origin]=std::make_shared<const tp::Result>(tp::extract(tile_snapshot));
     }
     auto make_primary=[&](Region k,double head){
         hybrid::Input in{k,known.at(k),{},8,{}};in.layered=true;
