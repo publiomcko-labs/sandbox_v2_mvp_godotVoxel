@@ -168,3 +168,30 @@ $worldPath=Join-Path $env:V3_WORLD_ROOT 'hydraulic_fixture'
 $checkpoint=Get-Content (Join-Path $worldPath 'checkpoint.json') -Raw | ConvertFrom-Json
 if ($checkpoint.generation -ne 2 -or $checkpoint.core.terrain_revision -ne 2 -or $checkpoint.pins.Count -ne 6 -or !(Test-Path (Join-Path $worldPath 'hydraulic_domain.json')) -or (Test-Path (Join-Path $worldPath 'session_pending'))) { throw 'Hydraulic checkpoint contract failed' }
 Write-Host "V3_HYDRAULIC_E2E_PASS mass=$mass"
+
+# R3 integrated mode uses an isolated generator and archive identity.
+if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
+    $env:V3_HYBRID_SOLVER='1'
+    $env:V3_WORLD_ROOT=Join-Path $results 'hybrid-integrated-worlds'
+    $env:V3_WORLD_ID='hybrid_integrated_fixture'
+    New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+    $hybridMass=$null
+    foreach ($phase in @('write','reopen')) {
+        $stdout=Join-Path $results "hybrid-integrated-$phase.stdout.log"
+        $stderr=Join-Path $results "hybrid-integrated-$phase.stderr.log"
+        $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_integrated.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+        $null=$p.Handle
+        if (!$p.WaitForExit(240000)) { $p.Kill(); $p.WaitForExit(); throw "Hybrid integrated $phase timeout" }
+        $p.WaitForExit()
+        Get-Content $stdout
+        Get-Content $stderr
+        if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:') { throw "Hybrid integrated $phase errors" }
+        $marker=Select-String -LiteralPath $stdout -Pattern "V3_HYBRID_INTEGRATED_PASS phase=$phase mass=(\d+)"
+        if ($p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw "Hybrid integrated $phase failed" }
+        $observed=[int64]$marker.Matches[0].Groups[1].Value
+        if ($phase -eq 'write') { $hybridMass=$observed }
+        elseif ($hybridMass -ne $observed) { throw 'Hybrid mass changed on reopen' }
+    }
+    Remove-Item Env:V3_HYBRID_SOLVER
+    Write-Host "V3_HYBRID_INTEGRATED_E2E_PASS mass=$hybridMass"
+}

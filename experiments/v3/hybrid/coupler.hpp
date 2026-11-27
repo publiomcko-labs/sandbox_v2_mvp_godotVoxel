@@ -78,6 +78,7 @@ class Coupler {
     }
     void rebuild() {
         interfaces_.clear();
+        std::map<std::tuple<Owner,Owner,double,double>,double> aggregated;
         for(const auto &[k,t]:tiles_)if(t.resident) {
             if(!t.local)for(const auto &o:t.geometry->openings) {
                 const double height=(o.soffit_mm-o.sill_mm)*0.001;
@@ -92,10 +93,15 @@ class Coupler {
                     for(const auto &v:other.geometry->boundaries)if(v.face==face-1&&v.along==u.along) {
                         const int lo=u.exposed&&v.exposed?std::max(u.bottom_mm,v.bottom_mm):std::max(u.coarse_bottom_mm,v.coarse_bottom_mm);
                         const int hi=std::min(u.top_mm,v.top_mm);
-                        if(lo<hi)interfaces_.push_back({at_boundary(t,u),at_boundary(other,v),lo*0.001,hi*0.001,1});
+                        if(lo<hi) {
+                            const auto a=at_boundary(t,u),b=at_boundary(other,v);
+                            if(a.kind==0&&b.kind==0)aggregated[{a,b,lo*0.001,hi*0.001}]+=1;
+                            else interfaces_.push_back({a,b,lo*0.001,hi*0.001,1});
+                        }
                     }
             }
         }
+        for(const auto &[key,width]:aggregated){const auto &[a,b,lo,hi]=key;interfaces_.push_back({a,b,lo,hi,width});}
         for(std::size_t i=0;i<oceans_.size();++i) {
             const auto &o=oceans_[i];const auto it=tiles_.find(o.tile);
             if(it==tiles_.end()||!it->second.resident)continue;
@@ -194,13 +200,14 @@ public:
     // Explicit transfer from bootstrap Domain. Caller discards old owner.
     static Coupler adopt(const Domain& domain,std::size_t active_limit=8,std::size_t tile_limit=96) {
         Coupler out(domain.graph().types(),active_limit,tile_limit);
+        if(domain.tiles().size()>tile_limit)throw std::invalid_argument("R3 bootstrap capacity");
         for(const auto &[k,t]:domain.tiles()) {
-            if(!out.publish(t.geometry))throw std::invalid_argument("R3 bootstrap capacity");
+            CoupledTile owner;owner.geometry=t.geometry;owner.resident=t.available;
             for(const auto &[local,id]:t.ids) {
                 const auto &v=domain.graph().volumes().at(id);
-                if(v.litres&&!out.seed(k,local,v.type,v.litres))throw std::logic_error("R3 bootstrap ownership");
+                if(v.litres)owner.aggregate.emplace(local,tp::Content{v.type,v.litres});
             }
-            out.tiles_.at(k).resident=t.available;
+            out.tiles_.emplace(k,std::move(owner));
         }
         for(const auto &[id,o]:domain.oceans()) {
             const auto &v=domain.graph().volumes().at(o.ocean);

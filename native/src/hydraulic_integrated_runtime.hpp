@@ -13,6 +13,7 @@ class IntegratedRuntime {
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
     std::set<core::Region> group_;
+    std::vector<std::uint64_t> tick_samples_;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
     core::Region center_{};
     static constexpr int side=16,base=-32,height=64;
@@ -107,7 +108,10 @@ public:
             auto it=model_.tiles().find(k);
             if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
             if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev)||!resident(tool,k))continue;
-            if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit())continue;
+            if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
+                bool can_reclaim=false;for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){can_reclaim=true;break;}
+                if(!can_reclaim)continue;
+            }
             const auto start=std::chrono::steady_clock::now();
             const auto wanted_revision=dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
             auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
@@ -121,13 +125,14 @@ public:
         // Do not step a partial revision cohort. This preserves the front
         // on the previous certified geometry until all edited tiles arrive.
         if(!dirty_.empty())return;
-        if(ticks_%10==0&&model_.active()<model_.active_limit()) {
-            for(auto k:model_.flow_candidates(0.35))if(model_.active()<model_.active_limit())activate(k);
+        if(ticks_%10==0&&model_.active()<model_.active_limit()/2) {
+            for(auto k:model_.flow_candidates(0.35))if(model_.active()<model_.active_limit()/2)activate(k);
         }
         for(const auto &[k,t]:model_.tiles())if(t.local&&t.resident&&t.phase==experiment::Phase::local_active)model_.request_settle(k);
         const auto n=model_.active();moved_+=static_cast<std::uint64_t>(model_.tick());settles_+=n-model_.active();
         ++ticks_;debt_-=period;
-        max_tick_us_=std::max(max_tick_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
+        const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
+        max_tick_us_=std::max(max_tick_us_,us);if(tick_samples_.size()<4096)tick_samples_.push_back(us);
     }
     godot::Dictionary at(core::Vec3 p,const std::vector<Liquid>& types)const {
         godot::Dictionary d;auto s=model_.sample(p,key(p));if(!s)return d;
@@ -206,6 +211,8 @@ public:
         d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
         d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
+        auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
+        d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
         d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
         d["edit_group_revision"]=static_cast<int64_t>(revision_);
