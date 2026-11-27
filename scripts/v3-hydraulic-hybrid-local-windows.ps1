@@ -9,11 +9,11 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='b29734217f96855338467c17eed70a81eb471d64'
-$visualCandidate='b0d506ab0c348af24150b9b3d3daaf064f265279'
-$run='45986575619'
+$candidate='72b26851f4863d13a024aa937fd8e919ea4ef552'
+$visualCandidate='72b26851f4863d13a024aa937fd8e919ea4ef552'
+$run='45989013637'
 $artifact='v3-native-integration-evidence'
-$zipSha='25b04691a63cf0195ae8901402780af107a716e033f47681e2c245f0c04e8666'
+$zipSha='e1f6c30129264fd33981c570206d57b9dea2fb7c93dd50b8bddc257e6bd1aa6f'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- native third_party.lock
@@ -44,7 +44,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45986575619/artifacts/15192805811 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45989013637/artifacts/15192153492 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -76,7 +76,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 hybrid R1 experimental visual comparison A/B; H14 physics unchanged. Inspect shoreline, movement and edits; close normally. Lava/Sea are exploratory.'
+Write-Host 'V3 hybrid R1 B2 experimental visual comparison A/B; H14 physics unchanged. Inspect shoreline, movement and edits; close normally. Lava/Sea are exploratory.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
