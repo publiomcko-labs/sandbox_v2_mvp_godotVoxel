@@ -689,6 +689,20 @@
             "commit": "5533ea2c5fd8124fefc153fcacb5cd3a43af3ac5",
             "native_run": 46082290470,
             "gpu_run": 46082290574,
+            "status": "LIFECYCLE_PASS_SOURCE_FIXTURE_FAIL_GPU_PREREQUISITE_FAIL",
+            "native_conclusion": "failure",
+            "gpu_conclusion": "failure",
+            "lifecycle_mass": 13038502,
+            "lifecycle_freed_bytes": 71472,
+            "lifecycle_column_litres": 5159,
+            "close_cold_tiles": 10,
+            "close_cold_litres": 1429749,
+            "source_failure": "one nonresident discovery instead of two; three sources registered"
+          },
+          "source_fixture_correction": {
+            "commit": "37097d1c65ae6db14230f2bac607df4c39994c48",
+            "native_run": 46082537465,
+            "gpu_run": 46082537543,
             "status": "PENDING_VALIDATION"
           }
         }
