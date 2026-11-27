@@ -176,13 +176,13 @@ int main(){
     auto previous=a;
     nlohmann::json archived_ocean;
     for(int x=1;x<=120;++x){
-        auto next=flat(x*4);
-        auto reached=OceanReach::extend("extended",2,8,1,*next,std::nullopt,{{previous.get(),&proof}});
+        auto next_ocean_tile=flat(x*4);
+        auto reached=OceanReach::extend("extended",2,8,1,*next_ocean_tile,std::nullopt,{{previous.get(),&proof}});
         assert(reached.compartments.size()==1);
-        assert(OceanReach::extend("extended",2,8,2,*next,std::nullopt,{{previous.get(),&proof}}).compartments.empty());
-        assert(extended.publish(next)&&extended.acquire_ocean(reached,1,true));
-        extended.set_resident(next->origin,false);archived_ocean=extended.encode_tile(next->origin);assert(extended.detach_cold(next->origin));
-        proof=std::move(reached);previous=std::move(next);
+        assert(OceanReach::extend("extended",2,8,2,*next_ocean_tile,std::nullopt,{{previous.get(),&proof}}).compartments.empty());
+        assert(extended.publish(next_ocean_tile)&&extended.acquire_ocean(reached,1,true));
+        extended.set_resident(next_ocean_tile->origin,false);archived_ocean=extended.encode_tile(next_ocean_tile->origin);assert(extended.detach_cold(next_ocean_tile->origin));
+        proof=std::move(reached);previous=std::move(next_ocean_tile);
     }
     assert(extended.tiles().size()==1&&extended.cold_count()==120&&extended.mass()==121*32000&&extended.injected()==extended.mass());
     auto reopened_ocean=Coupler::decode(extended.encode(),types,{{ka,a}});
