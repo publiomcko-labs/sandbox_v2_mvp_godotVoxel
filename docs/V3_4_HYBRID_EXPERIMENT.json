@@ -703,7 +703,19 @@
             "commit": "37097d1c65ae6db14230f2bac607df4c39994c48",
             "native_run": 46082537465,
             "gpu_run": 46082537543,
-            "status": "PENDING_VALIDATION"
+            "status": "TWO_NONRESIDENT_SOURCES_PASS_REMOTE_POND_FAIL",
+            "native_conclusion": "failure",
+            "gpu_conclusion": "failure",
+            "remote_initial_litres": 64000,
+            "remote_injected_litres": 1848317,
+            "remote_pond_diagnostic": "finite basin exceeds certified search budget"
+          },
+          "isolated_source_fixture": {
+            "commit": "8c0bee64c635228fcd8c823a0364eb4a4301d1f5",
+            "native_run": 46082956119,
+            "gpu_run": 46082956189,
+            "status": "PENDING_VALIDATION",
+            "remote_finite_basin": "OPEN"
           }
         }
       }
