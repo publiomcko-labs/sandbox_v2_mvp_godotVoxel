@@ -5,6 +5,7 @@ on:
     paths:
       - 'native/src/content_registry/**'
       - 'native/src/core/**'
+      - 'experiments/v3/hybrid/**'
       - 'native/src/persistence/**'
       - 'godot/mods/**'
       - 'examples/v3/**'
