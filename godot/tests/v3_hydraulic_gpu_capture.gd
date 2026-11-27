@@ -90,6 +90,22 @@ func _diagnose_bank(runtime,tool: VoxelTool,camera: Camera3D) -> void:
             row.append({"pixel":x,"point":str(p),"sdf":_sdf_at(tool,p),"wet":wet})
         print("V3_GPU_BANK_DIAG y=",y," ",JSON.stringify(row))
 
+func _diagnose_cave_spots(runtime,tool: VoxelTool,camera: Camera3D) -> void:
+    # These two small earth-coloured patches are already present before any edit.
+    # Compare their actual terrain intersection with adjacent water pixels.
+    for pixel: Vector2 in [Vector2(289.5,456.5),Vector2(293.5,478.5),Vector2(301.5,459.5),Vector2(300.5,480.5)]:
+        var origin:=camera.project_ray_origin(pixel)
+        var ray:=camera.project_ray_normal(pixel)
+        var evidence: Array=[]
+        for h: float in [4.5,4.25,4.0,3.75,3.5,3.0]:
+            var p:=origin+ray*((h-origin.y)/ray.y)
+            if not tool.is_area_editable(AABB(Vector3(p.floor()),Vector3(2,2,2))):
+                evidence.append({"height":h,"unknown":true})
+                continue
+            var wet: Dictionary=runtime.session.hydraulic_at(p-Vector3(0,0.05,0))
+            evidence.append({"height":h,"point":str(p),"sdf":_sdf_at(tool,p),"wet":wet})
+        print("V3_GPU_CAVE_SPOT_DIAG pixel=",pixel," ",JSON.stringify(evidence))
+
 func _visible_tiles(water: Node3D) -> Dictionary:
     var nodes: Dictionary=water.get("_meshes")
     var tiles: Dictionary=water.get("_mesh_tiles")
@@ -298,6 +314,7 @@ func _test() -> void:
         var tool: VoxelTool=runtime.terrain.get_voxel_tool()
         tool.channel=VoxelBuffer.CHANNEL_SDF
         _diagnose_bank(runtime,tool,camera)
+        _diagnose_cave_spots(runtime,tool,camera)
         var cut:=Vector3.ZERO
         var found:=false
         for z in range(16,32):
