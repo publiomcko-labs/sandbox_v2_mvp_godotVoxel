@@ -51,6 +51,27 @@ int main(){
         }
     }
     assert(d.tiles().at(b.origin).renderable());
+    // H11: republishing the active side must retain certified geometry
+    // of the inactive neighbour, without reopening its physical portal.
+    Domain cached({{"water",1,1000}},4,4,1,0);
+    auto ca=a,cb=a;cb.origin.x=4;
+    assert(cached.publish(tp::extract(ca))&&cached.publish(tp::extract(cb)));
+    assert(cached.seed_finite("a",{1,0.1,1},0,4,true));
+    assert(cached.seed_finite("b",{5,0.1,1},0,3.974,true));
+    const auto cached_mass=cached.graph().finite();
+    cached.invalidate(cb.origin,1);
+    cached.invalidate(ca.origin,2);ca.revision=2;
+    assert(cached.publish(tp::extract(ca)));
+    assert(cached.graph().portals().size()==1&&!cached.graph().portals().begin()->second.available);
+    const auto c1=cached.tiles().at(ca.origin).ids.begin()->second,c2=cached.tiles().at(cb.origin).ids.begin()->second;
+    const auto common=cached.graph().presentation_heads({c1,c2},0.15,true);
+    assert(common.at(c1)==common.at(c2));
+    assert(cached.tick().moved==0&&cached.graph().finite()==cached_mass);
+    cached.invalidate(cb.origin,2);
+    cached.invalidate(ca.origin,3);ca.revision=3;
+    assert(cached.publish(tp::extract(ca))&&cached.graph().portals().empty());
+    assert(cached.graph().finite()==cached_mass);
+    std::cout<<"V3_HYDRAULIC_CACHED_RECONNECT_PASS visual_only closed_physics edited_neighbour_excluded\n";
     tp::Snapshot shape{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
     for(int z=1;z<=2;++z)for(int x=1;x<=2;++x)for(int y=1;y<8;++y)
         shape.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;

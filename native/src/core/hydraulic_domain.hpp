@@ -30,10 +30,13 @@ class Domain {
         return n++;
     }
     static void connect(Graph &g,Id &next,const Tile &a,const Tile &b,int face) {
-        if(!a.available||!b.available)return;
+        // Keep a certified geometric connection even when streaming has
+        // suspended a neighbouring tile. Such a portal remains physically
+        // closed. A tile whose geometry was edited is NOT certified.
+        if(!a.renderable()||!b.renderable())return;
         for(const auto &o:tp::connect_faces(*a.geometry,*b.geometry,face))
             g.add_portal({allocate(next),a.ids.at(o.a),b.ids.at(o.b),double(o.sill_mm)*0.001,
-                o.area_m2,0.62,true,std::max(a.geometry->revision,b.geometry->revision),double(o.soffit_mm-o.sill_mm)*0.001});
+                o.area_m2,0.62,a.available&&b.available,std::max(a.geometry->revision,b.geometry->revision),double(o.soffit_mm-o.sill_mm)*0.001});
     }
     static void attach(Graph &g,Id &next,const Tile &t,const OceanLink &o) {
         if(!t.available)return;
