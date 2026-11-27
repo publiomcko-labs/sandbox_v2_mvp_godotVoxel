@@ -14,6 +14,7 @@ class IntegratedRuntime {
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
     std::set<core::Region> group_,activate_pending_;
     std::vector<std::uint64_t> tick_samples_;
+    std::size_t pristine_survey_tiles_=0;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
     core::Region center_{};
     static constexpr int side=16,base=-32,height=64;
@@ -42,7 +43,7 @@ class IntegratedRuntime {
         ++activations_;return true;
     }
 public:
-    explicit IntegratedRuntime(const Domain& bootstrap):model_(experiment::Coupler::adopt(bootstrap)),sources_(bootstrap.seeded()){}
+    explicit IntegratedRuntime(const Domain& bootstrap,std::size_t surveyed=0):model_(experiment::Coupler::adopt(bootstrap)),sources_(bootstrap.seeded()),pristine_survey_tiles_(surveyed){}
     IntegratedRuntime(experiment::Coupler model,std::set<std::string> sources):model_(std::move(model)),sources_(std::move(sources)){}
     const auto& model()const{return model_;}
     bool allows_edit(core::Vec3 p,double radius,bool add) {
@@ -208,6 +209,7 @@ public:
         d["solver"]="hybrid";d["litres"]=model_.mass();d["initial"]=model_.initial();d["injected"]=model_.injected();d["drained"]=model_.drained();
         d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
         d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
+        d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);

@@ -24,6 +24,9 @@ class Runtime {
     std::uint64_t capacity_rejections_=0,dry_evictions_=0;
     std::size_t peak_volumes_=0,peak_portals_=0;
     std::set<core::Region> edited_tiles_,edit_group_,seed_interest_;
+    // Only bootstrap geometry from an unedited world. Never reuse this
+    // exception for edited or reopened nonzero-revision worlds.
+    std::set<core::Region> pristine_surveyed_;
     std::map<std::string,std::set<core::Region>> seed_windows_;
     std::uint64_t seed_boundary_caps_=0;
     std::uint64_t edit_group_revision_=0;
@@ -168,6 +171,7 @@ class Runtime {
             core::Vec3 anchor{a[0].get<double>()+0.5,a[1].get<double>()+0.5,a[2].get<double>()+0.5};
             const auto k=key(anchor);
             if(!within_interest(k,center))continue;
+            if(integrated_mode_)seed_interest_.insert(k);
             auto found=domain_.tiles().find(k);
             if(found==domain_.tiles().end()||!found->second.available)continue;
             const auto &tile=found->second;
@@ -269,8 +273,12 @@ public:
         if(integrated_){integrated_->frame(tool,position,revision,elapsed);return;}
         const auto center=key(position);
         last_center_=center;
-        // Only the 3x3 near-field is active. No voxel streaming requests.
-        for(const auto &[k,t]:domain_.tiles())if(t.available&&(!hydraulic_interest(k,center)||!resident(tool,k)))
+        const bool pristine=integrated_mode_&&revision==0;
+        // Surveyed pristine seed tiles may remain available to the
+        // finite basin initializer without LOD0. Once adopted, ordinary
+        // integrated residency applies and only presentation is retained.
+        for(const auto &[k,t]:domain_.tiles())if(t.available&&(!hydraulic_interest(k,center)||
+            (!resident(tool,k)&&!(pristine&&pristine_surveyed_.contains(k)))))
             domain_.invalidate(k,t.geometry->revision);
         // Under pressure reclaim only suspended, dry geometry outside
         // the near/wet/seed interest. Never evict wet or edited state.
@@ -293,10 +301,13 @@ public:
         }
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
-            if(hydraulic_interest(k,center)&&resident(tool,k)) {
+            const bool loaded=resident(tool,k);
+            const bool surveyed=pristine&&seed_interest_.contains(k)&&result->revision==0;
+            if(hydraulic_interest(k,center)&&(loaded||surveyed)) {
                 const auto before_volumes=g.volumes().size(),before_portals=g.portals().size();
                 bool capacity=false;
                 if(domain_.publish(std::move(*result),&capacity)){
+                    if(surveyed&&!loaded)pristine_surveyed_.insert(k);
                     edited_tiles_.erase(k);++publications_;
                     if(g.volumes().size()<before_volumes||g.portals().size()<before_portals)capacity_blocked_.clear();
                     peak_volumes_=std::max(peak_volumes_,g.volumes().size());
@@ -308,7 +319,7 @@ public:
         }
         seed(center);
         if(integrated_mode_&&!domain_.seeded().empty()) {
-            integrated_=std::make_unique<IntegratedRuntime>(domain_);
+            integrated_=std::make_unique<IntegratedRuntime>(domain_,pristine_surveyed_.size());
             domain_=Domain(profile_.types); // relinquish bootstrap mass owner
             return;
         }
@@ -333,9 +344,11 @@ public:
             if(t!=domain_.tiles().end()&&t->second.available)continue;
             if(pending_.contains(k)||capacity_blocked_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==revision))continue;
             if(domain_.tiles().size()>=256&&t==domain_.tiles().end())continue;
-            if(!resident(tool,k))continue;
+            const bool loaded=resident(tool,k);
+            const bool survey=pristine&&seed_interest_.contains(k);
+            if(!loaded&&!survey)continue;
             const auto start=std::chrono::steady_clock::now();
-            auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),revision,integrated_mode_);
+            auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),revision,integrated_mode_,survey);
             const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
             max_snapshot_us_=std::max(max_snapshot_us_,us);
             if(snapshot&&worker_.submit(std::move(*snapshot))){pending_[k]=revision;break;}

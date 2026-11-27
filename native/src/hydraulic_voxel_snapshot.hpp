@@ -13,16 +13,20 @@ namespace tp=topology;
 // plain C++ data only, suitable for off-thread topology extraction later.
 // It is a geometric classification, not an additional terrain store.
 inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::VoxelTool>& tool,
-        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false) {
+        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false,bool pristine_survey=false) {
     using namespace godot;
     if(extent.x<1||extent.x>16||extent.z<1||extent.z>16||extent.y<1||extent.y>64||
         std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
         std::abs(std::int64_t(origin.z))>1000000)
         throw std::invalid_argument("hydraulic voxel snapshot bounds");
     const auto core_size=extent+Vector3i(1,1,1);
-    if(tool.is_null()||!tool->is_area_editable(AABB(Vector3(origin),Vector3(core_size))))return {};
+    // VoxelData::copy falls back to the same generator outside loaded
+    // blocks. Its fallback is NOT safe for a world with accepted edits:
+    // unloaded edited blocks might be absent from memory.
+    if(pristine_survey&&(!render||revision!=0))throw std::invalid_argument("pristine hydraulic survey revision");
+    if(tool.is_null()||(!pristine_survey&&!tool->is_area_editable(AABB(Vector3(origin),Vector3(core_size)))))return {};
     const auto halo_origin=origin-Vector3i(1,0,1),halo_size=extent+Vector3i(3,1,3);
-    const bool halo=tool->is_area_editable(AABB(Vector3(halo_origin),Vector3(halo_size)));
+    const bool halo=pristine_survey||tool->is_area_editable(AABB(Vector3(halo_origin),Vector3(halo_size)));
     const int pad=halo?1:0;
     const auto size=halo?halo_size:core_size;
     Ref<VoxelBuffer> buffer;buffer.instantiate();buffer->create(size.x,size.y,size.z);
