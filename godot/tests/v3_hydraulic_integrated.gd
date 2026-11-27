@@ -203,11 +203,15 @@ func _wait_source(runtime,water: Node3D,id: String) -> bool:
 func _sources(runtime,water: Node3D,reopen: bool) -> void:
     var before: Dictionary=runtime.session.hydraulic_report()
     var initial:=int(before["initial"])
+    if int(before["sources"])!=3 or (not reopen and int(before["nonresident_source_discoveries"])<2):
+        _fail("source view discovery "+str(before))
+        return
+    print("V3_HYBRID_VISIBLE_SOURCE_PASS phase=",("reopen" if reopen else "write")," state=",before)
     runtime.player.global_position=Vector3(48,12,-28)
     if not await _wait_source(runtime,water,"hydro:lava_pool"):
         return
     var lava: Dictionary=runtime.session.hydraulic_report()
-    if (not reopen and int(lava["initial"])!=initial+64000) or (reopen and int(lava["initial"])!=initial):
+    if int(lava["initial"])!=initial or initial!=11378442:
         _fail("late finite initialization "+str(lava))
         return
     var found_lava:=false
@@ -378,7 +382,7 @@ func _test() -> void:
         if not _frame(runtime,water,0):
             return
         var state: Dictionary=runtime.session.hydraulic_report()
-        if str(state.get("solver",""))=="hybrid" and int(state["near_active_tiles"])>=9 and bool(water.get("_hybrid_ready")) and int(water.call("get_report")["meshes"])>0:
+        if str(state.get("solver",""))=="hybrid" and int(state["near_active_tiles"])>=9 and int(state.get("visible_sources_pending",1))==0 and bool(water.get("_hybrid_ready")) and int(water.call("get_report")["meshes"])>0:
             break
         if Time.get_ticks_msec()>deadline:
             _fail("readiness "+str(state))

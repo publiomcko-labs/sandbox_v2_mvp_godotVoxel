@@ -534,8 +534,27 @@
           "gpu_frame_p95_us": 48197
         },
         "i20": {
+          "status": "NATIVE_GPU_PASS_STREAM_STEP_BUDGET_ONLY",
+          "commit": "1aaead32c0259de371fe8a8501f383da99ff8859",
+          "native_run": 46073698461,
+          "gpu_run": 46073698467,
+          "native_artifact": 15234187127,
+          "gpu_artifact": 15234406971,
+          "stream_steps": 45,
+          "stream_step_max_us": 6425,
+          "prior_sync_us": 113628,
+          "reopen_stream_step_max_us": 6156,
+          "gpu_tick_p95_us": 4342,
+          "gpu_refresh_p95_us": 6206,
+          "gpu_refresh_p99_us": 7358,
+          "gpu_frame_p95_us": 54561,
+          "mass_litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34
+        },
+        "i21": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "incremental saved-stream acquisition and bounded read cache"
+          "focus": "visible range mod anchor discovery, independent of LOD0"
         }
       }
     },

@@ -13,6 +13,9 @@ class IntegratedRuntime {
     std::set<std::string> sources_;
     std::map<std::string,std::set<core::Region>> source_windows_;
     std::set<core::Region> source_interest_;
+    std::size_t visible_sources_pending_{};
+    std::uint64_t nonresident_source_discoveries_{};
+    double view_distance_=192.0;
     std::set<std::string> source_conflicts_;
     std::map<std::string,std::string> source_diagnostics_;
     std::map<std::string,std::tuple<std::uint64_t,std::uint64_t,std::uint64_t>> source_attempts_;
@@ -45,7 +48,7 @@ class IntegratedRuntime {
     bool interested(core::Region k)const {
         if(dirty_.contains(k)||source_interest_.contains(k))return true;
         if(std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side)return true;
-        if(std::abs(k.x-center_.x)>144||std::abs(k.z-center_.z)>144)return false;
+        if(std::abs(k.x-center_.x)>view_distance_+side||std::abs(k.z-center_.z)>view_distance_+side)return false;
         for(auto d:{core::Region{0,0,0},core::Region{-16,0,0},core::Region{16,0,0},core::Region{0,0,-16},core::Region{0,0,16}}) {
             core::Region n{k.x+d.x,base,k.z+d.z};
             if(model_.tiles().contains(n)&&(model_.tile_mass(n)||model_.tiles().at(n).local))return true;
@@ -57,17 +60,18 @@ class IntegratedRuntime {
         return it!=model_.tiles().end()&&!dirty_.contains(k)&&
             (provenance_.certifies(k,it->second.geometry->revision,rev)||(it->second.resident&&resident(tool,k)));
     }
-    void discover_sources(const nlohmann::json& rules,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool) {
-        source_interest_.clear();
+    void discover_sources(const nlohmann::json& rules,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position) {
+        source_interest_.clear();visible_sources_pending_=0;
         for(const auto &rule:rules){
             const auto id=rule.at("id").get<std::string>();
             if(sources_.contains(id))continue;
             const auto &a=rule.at("anchor_m");
             const core::Vec3 anchor{a[0].get<double>()+0.5,a[1].get<double>()+0.5,a[2].get<double>()+0.5};
             const auto k=key(anchor);
-            // Discovery follows current interest, not the initial spawn.
-            // Full view-range acquisition is a separate streaming gate.
-            if(std::abs(k.x-center_.x)>side||std::abs(k.z-center_.z)>side){source_windows_.erase(id);source_attempts_.erase(id);continue;}
+            // Visible mod anchors are surveyed regardless of LOD0 residency.
+            // Only an anchor/window is scheduled, not every tile in the view.
+            if(std::hypot(anchor.x-position.x,anchor.z-position.z)>view_distance_){source_windows_.erase(id);source_attempts_.erase(id);continue;}
+            ++visible_sources_pending_;
             const bool ocean=rule.at("source_kind")=="fixed_head_ocean";
             const bool volume=rule.contains("volume_litres");
             auto &window=source_windows_[id];
@@ -118,7 +122,7 @@ class IntegratedRuntime {
                     continue;
                 }
             }
-            if(accepted){sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
+            if(accepted){if(!model_.tiles().at(k).resident)++nonresident_source_discoveries_;--visible_sources_pending_;sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
             else {source_conflicts_.insert(id);source_diagnostics_[id]="wet/local owner or invalid capacity at certified anchor";}
         }
     }
@@ -182,10 +186,11 @@ public:
             if(stream_job_&&stream_job_->key()==k)stream_job_.reset();
         }
     }
-    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules,const StreamSnapshotSource& stream) {
+    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules,const StreamSnapshotSource& stream,double view_distance) {
         center_=key(p);
         if(provenance_.revision()!=rev)provenance_.invalidate(rev);
-        discover_sources(rules,rev,tool);
+        view_distance_=std::clamp(view_distance,16.0,4096.0);
+        discover_sources(rules,rev,tool,p);
         for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k))){
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
@@ -367,6 +372,7 @@ public:
         Array source_ids,source_conflicts;for(const auto &id:sources_)source_ids.push_back(String::utf8(id.c_str()));
         for(const auto &id:source_conflicts_)source_conflicts.push_back(String::utf8(id.c_str()));
         d["source_ids"]=source_ids;d["source_conflicts"]=source_conflicts;d["source_interest_tiles"]=static_cast<int64_t>(source_interest_.size());
+        d["visible_sources_pending"]=static_cast<int64_t>(visible_sources_pending_);d["nonresident_source_discoveries"]=static_cast<int64_t>(nonresident_source_discoveries_);d["source_view_distance"]=view_distance_;
         Dictionary reasons;for(const auto &[id,reason]:source_diagnostics_)reasons[String::utf8(id.c_str())]=String::utf8(reason.c_str());d["source_diagnostics"]=reasons;
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
         d["visual_survey_tiles"]=static_cast<int64_t>(visual_survey_tiles_);d["post_edit_survey_tiles"]=static_cast<int64_t>(post_edit_survey_tiles_);

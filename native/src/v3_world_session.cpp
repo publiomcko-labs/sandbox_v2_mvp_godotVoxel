@@ -260,7 +260,7 @@ bool V3WorldSession::hydraulic_frame(WorldBootstrap *world,const Vector3 &positi
         ct::require(terrain!=nullptr,"missing terrain");
         const sandbox::hydraulic::StreamSnapshotSource source{terrain->get_stream(),terrain->get_generator(),terrain->get_format(),
             static_cast<int>(terrain->get_data_block_size()),state_->durable_terrain_revision};
-        state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns),source);
+        state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns),source,terrain->get_view_distance());
         return true;
     }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }
