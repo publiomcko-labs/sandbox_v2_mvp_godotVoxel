@@ -83,6 +83,38 @@ int main(){
     frontier.set_resident(kb,false);
     assert(!frontier.reclaim_suspended(kb)&&frontier.tiles().at(kb).local&&frontier.mass()==32000);
     std::cout<<"V3_HYBRID_I16_RECLAIM_PASS\n";
+    // I22: stream more owners than the hot budget without changing mass
+    // or local pipe momentum. The external record is the only cold owner.
+    Coupler streamed(types,1,2);
+    assert(streamed.publish(a)&&streamed.publish(b)&&streamed.seed(ka,a->compartments.front().id,0,32000));
+    assert(streamed.activate(ka));streamed.tick();streamed.set_resident(ka,false);
+    const auto owner=streamed.encode_tile(ka);const auto owner_mass=streamed.tile_mass(ka);
+    const auto global_mass=streamed.mass();
+    assert(streamed.detach_cold(ka)&&streamed.active()==0&&streamed.cold_count()==1&&streamed.cold_mass()==owner_mass);
+    assert(streamed.mass()==global_mass&&streamed.publish(c));
+    assert(!streamed.restore_cold(a,owner));
+    streamed.set_resident(kc,false);assert(streamed.forget_dry(kc));
+    auto hot_reopen=Coupler::decode(streamed.encode(),types,{{kb,b}});
+    assert(hot_reopen.mass()==global_mass&&hot_reopen.cold_count()==1);
+    assert(hot_reopen.restore_cold(a,owner)&&hot_reopen.encode_tile(ka)==owner);
+    assert(hot_reopen.mass()==global_mass&&hot_reopen.cold_count()==0&&hot_reopen.active()==1);
+    assert(!hot_reopen.restore_cold(a,owner));
+    Coupler many(types,1,2);
+    std::vector<nlohmann::json> cold_rows;
+    for(int i=0;i<120;++i){
+        const auto g=flat(i*4);const auto k=g->origin;
+        assert(many.publish(g)&&many.seed(k,g->compartments.front().id,0,16000));
+        many.set_resident(k,false);cold_rows.push_back(many.encode_tile(k));assert(many.detach_cold(k));
+        assert(many.tiles().empty()&&many.mass()==16000*(i+1));
+    }
+    assert(many.cold_count()==120&&many.cold_mass()==1920000);
+    auto many_reopen=Coupler::decode(many.encode(),types,{});
+    for(int i=119;i>=0;--i){
+        const auto g=flat(i*4);assert(many_reopen.restore_cold(g,cold_rows.at(static_cast<std::size_t>(i))));
+        assert(many_reopen.encode_tile(g->origin)==cold_rows.at(static_cast<std::size_t>(i))&&many_reopen.mass()==1920000);
+        assert(many_reopen.detach_cold(g->origin));
+    }
+    std::cout<<"V3_HYBRID_I22_COLD_OWNER_PASS count="<<many_reopen.cold_count()<<" mass="<<many_reopen.mass()<<"\n";
     // A two-tile exposed bowl with a closed outer rim. Initialize
     // late only after the whole reached component has been certified.
     auto bowl=[](int offset){

@@ -34,7 +34,8 @@ class Coupler {
     std::vector<Ocean> oceans_;
     std::vector<Interface> interfaces_;
     std::size_t active_limit_,tile_limit_;
-    Litres initial_{},injected_{},drained_{};
+    Litres initial_{},injected_{},drained_{},cold_mass_{};
+    std::uint64_t cold_count_{};
     std::uint64_t epoch_{};
     // Ephemeral render invalidations; never persisted or used by physics.
     std::set<core::Region> surface_changes_;
@@ -215,12 +216,14 @@ public:
     const auto& tiles()const{return tiles_;}
     std::size_t active()const{std::size_t n=0;for(const auto &[k,t]:tiles_){(void)k;if(t.local)++n;}return n;}
     Litres mass()const{
-        Litres sum=0;for(const auto &[k,t]:tiles_){(void)k;if(t.local)sum+=t.local->mass();else for(const auto &[id,v]:t.aggregate){(void)id;sum+=v.litres;}}return sum;
+        Litres sum=cold_mass_;for(const auto &[k,t]:tiles_){(void)k;if(t.local)sum+=t.local->mass();else for(const auto &[id,v]:t.aggregate){(void)id;sum+=v.litres;}}return sum;
     }
     Litres tile_mass(core::Region k)const {
         const auto &t=tiles_.at(k);if(t.local)return t.local->mass();
         Litres sum=0;for(const auto &[id,v]:t.aggregate){(void)id;sum+=v.litres;}return sum;
     }
+    Litres cold_mass()const{return cold_mass_;}
+    std::uint64_t cold_count()const{return cold_count_;}
     Litres initial()const{return initial_;}
     Litres injected()const{return injected_;}
     std::size_t active_limit()const{return active_limit_;}
@@ -511,22 +514,64 @@ public:
     }
     // Separate experimental schema: caller supplies immutable geometry
     // from the same terrain checkpoint. Flux momentum is persisted.
+    // A single owner record is independent of the hot graph. Geometry is
+    // supplied separately by the revision-certified archive reader.
+    nlohmann::json encode_tile(core::Region k)const {
+        using J=nlohmann::json;
+        const auto &t=tiles_.at(k);
+        J content=J::array(),pipes=J::array();
+        if(t.local){
+            for(std::size_t i=0;i<t.local->columns().size();++i){const auto &c=t.local->columns()[i];if(c.litres)content.push_back({i,types_.at(c.type).id,c.litres});}
+            for(const auto &p:t.local->pipes())pipes.push_back({p.flux,p.credit});
+        }else for(const auto &[id,v]:t.aggregate)if(v.litres)content.push_back({id,types_.at(v.type).id,v.litres});
+        return {{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
+            {"phase",static_cast<int>(t.phase)},{"resident",t.resident},{"stable",t.stable_ticks},{"content",content},{"pipes",pipes}};
+    }
+    bool can_archive(core::Region k)const {
+        const auto it=tiles_.find(k);
+        return it!=tiles_.end()&&!it->second.resident&&
+            std::none_of(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.tile==k;});
+    }
+    // Caller must durably write the exact owner and geometry first.
+    // The global ledger includes cold mass, but tick/rebuild never scan it.
+    bool detach_cold(core::Region k) {
+        if(!can_archive(k))return false;
+        const auto amount=tile_mass(k);
+        if(!amount&&!tiles_.at(k).local)return false;
+        if(cold_mass_>2*ledger_limit-amount||cold_count_==std::numeric_limits<std::uint64_t>::max())return false;
+        cold_mass_+=amount;++cold_count_;
+        tiles_.erase(k);surface_changes_.insert(k);rebuild();verify();return true;
+    }
+    bool restore_cold(std::shared_ptr<const tp::Result> geometry,const nlohmann::json& row) {
+        if(!geometry||!cold_count_||tiles_.size()>=tile_limit_||tiles_.contains(geometry->origin))return false;
+        if(row.at("resident").get<bool>()||(row.at("local").get<bool>()&&active()>=active_limit_))return false;
+        const auto k=geometry->origin;
+        const auto &a=row.at("tile");
+        if(a.at(0).get<int>()!=k.x||a.at(1).get<int>()!=k.y||a.at(2).get<int>()!=k.z)return false;
+        if(!tiles_.empty()&&(geometry->nx!=tiles_.begin()->second.geometry->nx||geometry->nz!=tiles_.begin()->second.geometry->nz||k.y!=tiles_.begin()->first.y))return false;
+        Litres amount=0;
+        for(const auto &v:row.at("content")){
+            const auto n=v.at(2).get<Litres>();if(n<=0||n>cold_mass_-amount)return false;amount+=n;
+        }
+        // Decode into an isolated owner; no change to the live ledger or
+        // graph if the revision, pipe state or content is invalid.
+        using J=nlohmann::json;
+        auto staged=decode(J{{"schema","hybrid-coupler-1"},{"initial",amount},{"injected",0},{"drained",0},{"epoch",epoch_},
+            {"active_limit",1},{"tile_limit",1},{"tiles",J::array({row})},{"oceans",J::array()}},types_,{{k,geometry}});
+        if(staged.mass()!=amount||staged.tiles_.at(k).epoch>epoch_||
+            (cold_count_==1&&amount!=cold_mass_))return false;
+        tiles_.insert(staged.tiles_.extract(k));cold_mass_-=amount;--cold_count_;
+        surface_changes_.insert(k);rebuild();verify();return true;
+    }
     nlohmann::json encode()const {
         using J=nlohmann::json;
         J rows=J::array(),ocean_rows=J::array();
-        for(const auto &[k,t]:tiles_) {
-            J content=J::array(),pipes=J::array();
-            if(t.local){
-                for(std::size_t i=0;i<t.local->columns().size();++i){const auto &c=t.local->columns()[i];if(c.litres)content.push_back({i,types_.at(c.type).id,c.litres});}
-                for(const auto &p:t.local->pipes())pipes.push_back({p.flux,p.credit});
-            }else for(const auto &[id,v]:t.aggregate)if(v.litres)content.push_back({id,types_.at(v.type).id,v.litres});
-            rows.push_back({{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
-                {"phase",static_cast<int>(t.phase)},{"resident",t.resident},{"stable",t.stable_ticks},{"content",content},{"pipes",pipes}});
-        }
+        for(const auto &[k,t]:tiles_){(void)t;rows.push_back(encode_tile(k));}
         for(const auto &o:oceans_)ocean_rows.push_back({{"id",o.id},{"tile",{o.tile.x,o.tile.y,o.tile.z}},
             {"anchor",{o.anchor.x,o.anchor.y,o.anchor.z}},{"type",types_.at(o.type).id},{"head",o.head},{"sill",o.sill},{"width",o.width}});
         return {{"schema","hybrid-coupler-1"},{"initial",initial_},{"injected",injected_},{"drained",drained_},{"epoch",epoch_},
-            {"active_limit",active_limit_},{"tile_limit",tile_limit_},{"tiles",rows},{"oceans",ocean_rows}};
+            {"active_limit",active_limit_},{"tile_limit",tile_limit_},{"tiles",rows},{"oceans",ocean_rows},
+            {"cold_mass",cold_mass_},{"cold_count",cold_count_}};
     }
     static Coupler decode(const nlohmann::json& j,std::vector<Liquid> types,
         const std::map<core::Region,std::shared_ptr<const tp::Result>>& geometry) {
@@ -562,7 +607,9 @@ public:
                 type(row.at("type")),row.at("head").get<double>(),row.at("sill").get<double>(),row.at("width").get<double>()}))throw std::invalid_argument("R3 archive ocean");
         }
         out.initial_=j.at("initial").get<Litres>();out.injected_=j.at("injected").get<Litres>();out.drained_=j.at("drained").get<Litres>();
-        if(out.initial_<0||out.injected_<0||out.drained_<0)throw std::invalid_argument("R3 archive ledger");
+        out.cold_mass_=j.value("cold_mass",Litres(0));out.cold_count_=j.value("cold_count",std::uint64_t(0));
+        if(out.initial_<0||out.injected_<0||out.drained_<0||out.cold_mass_<0||
+            out.cold_mass_>2*ledger_limit||(!out.cold_count_&&out.cold_mass_))throw std::invalid_argument("R3 archive ledger");
         out.epoch_=j.at("epoch").get<std::uint64_t>();out.rebuild();out.verify();return out;
     }
 };
