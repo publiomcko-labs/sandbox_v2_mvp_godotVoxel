@@ -22,6 +22,21 @@ var _next_update:=0
 var _mesh_builds:=0
 var _level_updates:=0
 var _max_update_usec:=0
+var _hybrid_only:=OS.get_environment("V3_HYBRID_RENDERER")=="B"
+var _hybrid_display:=_hybrid_only
+var _hybrid_nodes: Dictionary={}
+var _hybrid_stage: Dictionary={}
+var _hybrid_ready:=false
+var _hybrid_builds:=0
+var _hybrid_build_us: Array[int]=[]
+var _hybrid_publish_us: Array[int]=[]
+var _hybrid_snapshot_us: Array[int]=[]
+var _hybrid_fallback_columns:=0
+var _hybrid_digest:=""
+var _hybrid_group: Dictionary={}
+var _hybrid_group_revision:=0
+var _hybrid_holds:=0
+var _hybrid_swaps:=0
 
 func _ready() -> void:
     _rocks=world.get_node("RockManager") as Node3D
@@ -43,6 +58,14 @@ func _ready() -> void:
         _flow_materials.append(flow_mat)
 
 func refresh() -> void:
+    if _hybrid_only:
+        hybrid_refresh()
+        var flow_rows: Dictionary={}
+        for row: Array in session.hydraulic_surfaces():
+            if row.size()>4:
+                flow_rows[int(row[0])]=[int(row[1]),row[4]]
+        _refresh_flow(flow_rows)
+        return
     var start:=Time.get_ticks_usec()
     var live: Dictionary={}
     var wanted: Dictionary={}
@@ -150,10 +173,124 @@ func refresh() -> void:
     _refresh_flow(flow_rows)
     _max_update_usec=maxi(_max_update_usec,Time.get_ticks_usec()-start)
 
+func _free_hybrid_nodes(nodes: Array) -> void:
+    for node: MeshInstance3D in nodes:
+        node.visible=false
+        node.queue_free()
+
+func _commit_hybrid_tile(tile: Vector3i) -> void:
+    if _hybrid_nodes.has(tile):
+        _free_hybrid_nodes(_hybrid_nodes[tile])
+        _hybrid_nodes.erase(tile)
+    if _hybrid_stage.has(tile):
+        _hybrid_nodes[tile]=_hybrid_stage[tile]
+        _hybrid_stage.erase(tile)
+        for node: MeshInstance3D in _hybrid_nodes[tile]:
+            node.visible=_hybrid_display
+
+func hybrid_display(enabled: bool) -> void:
+    _hybrid_display=enabled
+    for nodes: Array in _hybrid_nodes.values():
+        for node: MeshInstance3D in nodes:
+            node.visible=enabled
+
+func hybrid_refresh() -> Dictionary:
+    var started:=Time.get_ticks_usec()
+    var state: Dictionary=session.hydraulic_report()
+    var revision:=int(state["edit_group_revision"])
+    if revision!=_hybrid_group_revision:
+        _hybrid_group_revision=revision
+        for tile: Vector3i in state["edit_group_tiles"]:
+            _hybrid_group[tile]=true
+            if _hybrid_stage.has(tile):
+                _free_hybrid_nodes(_hybrid_stage[tile])
+                _hybrid_stage.erase(tile)
+    var data: Dictionary=session.hydraulic_hybrid()
+    _hybrid_digest=str(data["physics_digest"])
+    if _hybrid_snapshot_us.size()<4096:
+        _hybrid_snapshot_us.append(int(data["snapshot_us"]))
+    var wanted: Array=data["wanted"]
+    var ready: Array=data["ready"]
+    for row: Dictionary in data["updates"]:
+        var tile: Vector3i=row["tile"]
+        var nodes: Array=[]
+        for material: Array in row["materials"]:
+            var vertices: PackedVector3Array=material[1]
+            if vertices.is_empty():
+                continue
+            var normals:=PackedVector3Array()
+            normals.resize(vertices.size())
+            normals.fill(Vector3.UP)
+            var arrays: Array=[]
+            arrays.resize(Mesh.ARRAY_MAX)
+            arrays[Mesh.ARRAY_VERTEX]=vertices
+            arrays[Mesh.ARRAY_NORMAL]=normals
+            arrays[Mesh.ARRAY_TEX_UV]=material[2]
+            var mesh:=ArrayMesh.new()
+            mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
+            var node:=MeshInstance3D.new()
+            node.mesh=mesh
+            node.material_override=_materials[int(material[0])]
+            node.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+            node.visible=false
+            add_child(node)
+            nodes.append(node)
+        if _hybrid_stage.has(tile):
+            _free_hybrid_nodes(_hybrid_stage[tile])
+        _hybrid_stage[tile]=nodes
+        _hybrid_builds+=1
+        _hybrid_fallback_columns+=int(row["fallback_columns"])
+        if _hybrid_build_us.size()<4096:
+            _hybrid_build_us.append(int(row["build_us"]))
+    var group_ready:=int(state["pending_edit_tiles"])==0
+    for tile: Vector3i in _hybrid_group:
+        if wanted.has(tile) and not ready.has(tile):
+            group_ready=false
+    for tile: Vector3i in _hybrid_stage.keys():
+        if not wanted.has(tile):
+            _free_hybrid_nodes(_hybrid_stage[tile])
+            _hybrid_stage.erase(tile)
+            continue
+        if not _hybrid_group.has(tile) or group_ready:
+            _commit_hybrid_tile(tile)
+    for tile: Vector3i in _hybrid_nodes.keys():
+        if not wanted.has(tile) and (not _hybrid_group.has(tile) or group_ready):
+            _commit_hybrid_tile(tile)
+    if not _hybrid_group.is_empty():
+        if group_ready:
+            _hybrid_swaps+=1
+            _hybrid_group.clear()
+        else:
+            _hybrid_holds+=1
+    _hybrid_ready=ready.size()==wanted.size() and _hybrid_stage.is_empty() and group_ready
+    if _hybrid_publish_us.size()<4096:
+        _hybrid_publish_us.append(Time.get_ticks_usec()-started)
+    return {"ready":_hybrid_ready,"digest":_hybrid_digest,"wanted":wanted.size(),"current":ready.size()}
+
+func _percentile(samples: Array[int],fraction: float) -> int:
+    if samples.is_empty():
+        return 0
+    var sorted:=samples.duplicate()
+    sorted.sort()
+    return int(sorted[mini(sorted.size()-1,ceili(float(sorted.size())*fraction)-1)])
+
+func hybrid_report() -> Dictionary:
+    var triangles:=0
+    var meshes:=0
+    for nodes: Array in _hybrid_nodes.values():
+        for node: MeshInstance3D in nodes:
+            meshes+=1
+            triangles+=int(node.mesh.surface_get_array_len(0)/3.0)
+    return {"tiles":_hybrid_nodes.size(),"meshes":meshes,"triangles":triangles,"vertex_bytes_estimate":triangles*3*32,
+        "builds":_hybrid_builds,"fallback_columns":_hybrid_fallback_columns,"group_holds":_hybrid_holds,"group_swaps":_hybrid_swaps,
+        "worker_p95_us":_percentile(_hybrid_build_us,0.95),"worker_p99_us":_percentile(_hybrid_build_us,0.99),
+        "snapshot_p95_us":_percentile(_hybrid_snapshot_us,0.95),"publish_refresh_p95_us":_percentile(_hybrid_publish_us,0.95),
+        "publish_refresh_p99_us":_percentile(_hybrid_publish_us,0.99)}
+
 func _refresh_flow(rows: Dictionary) -> void:
     var per_slot: Dictionary={}
     for id: int in rows:
-        if not _meshes.has(id) or not (_meshes[id] as MeshInstance3D).visible:
+        if not _hybrid_only and (not _meshes.has(id) or not (_meshes[id] as MeshInstance3D).visible):
             continue
         var slot:=int(rows[id][0])
         var vertices: PackedVector3Array=per_slot.get(slot,PackedVector3Array())
@@ -227,6 +364,11 @@ func _physics_process(_delta: float) -> void:
         processed+=1
 
 func get_report() -> Dictionary:
+    if _hybrid_only:
+        var report:=hybrid_report()
+        report["visible_meshes"]=report["meshes"]
+        report["flow_quads"]=_flow_quads
+        return report
     var visible_meshes:=0
     for node: MeshInstance3D in _meshes.values():
         if node.visible:

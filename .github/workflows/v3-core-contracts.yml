@@ -25,6 +25,16 @@ jobs:
           ref: 55f93686c01528224f448c19128836e7df245f72
           path: .deps/json
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: AngusJohnson/Clipper2
+          ref: 21ebba05db8894f0c7217ad35ea518080f324946
+          path: .deps/clipper2
+          persist-credentials: false
+      - name: Compare planar polygon union and local triangles (R1 only)
+        run: |
+          g++ -std=c++20 -O2 -I .deps/clipper2/CPP/Clipper2Lib/include tests/v3/test_hybrid_clipper.cpp .deps/clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp .deps/clipper2/CPP/Clipper2Lib/src/clipper.triangulation.cpp -o /tmp/v3-clipper
+          /tmp/v3-clipper
       - name: Build and run C++20 contracts
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_manifest.cpp -o /tmp/v3-manifest

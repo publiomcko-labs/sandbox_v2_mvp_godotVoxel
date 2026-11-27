@@ -1,4 +1,6 @@
 extends SceneTree
+var _comparison_water: Node3D
+var _comparison_runtime: Node
 func _initialize() -> void:
     call_deferred("_test")
 func _fail(reason: String) -> void:
@@ -16,6 +18,65 @@ func _capture(name: String) -> bool:
         _fail("cannot save viewport "+name)
         return false
     print("V3_GPU_CAPTURE_PASS name=",name," size=",image.get_size())
+    if is_instance_valid(_comparison_water):
+        var baseline: Dictionary=_comparison_runtime.session.hydraulic_report()
+        var a_nodes: Dictionary=_comparison_water.get("_meshes")
+        var a_visible: Array[MeshInstance3D]=[]
+        var a_triangles:=0
+        for node: MeshInstance3D in a_nodes.values():
+            if node.visible:
+                a_visible.append(node)
+                a_triangles+=int(node.mesh.surface_get_array_len(0)/3.0)
+        var a_draws:=RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+        var deadline:=Time.get_ticks_msec()+20000
+        var status: Dictionary=_comparison_water.call("hybrid_refresh")
+        var digest: String=status["digest"]
+        # On the immediate edit frame the old revision must be retained,
+        # not forced to publish by advancing physics for the screenshot.
+        if int(baseline["pending_edit_tiles"])==0:
+            while not bool(status["ready"]):
+                await process_frame
+                status=_comparison_water.call("hybrid_refresh")
+                if Time.get_ticks_msec()>deadline:
+                    _fail("R1 snapshot publication timeout "+str(status))
+                    return false
+        if status["digest"]!=digest or _comparison_runtime.session.hydraulic_report()!=baseline:
+            _fail("R1 changed physical state during frozen replay")
+            return false
+        for node in a_visible:
+            node.visible=false
+        _comparison_water.call("hybrid_display",true)
+        await process_frame
+        await RenderingServer.frame_post_draw
+        var b_image:=root.get_texture().get_image()
+        var b_draws:=RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+        var b_report: Dictionary=_comparison_water.call("hybrid_report")
+        _comparison_water.call("hybrid_display",false)
+        for node in a_visible:
+            node.visible=true
+        if b_image==null or b_image.is_empty() or int(b_report["meshes"])<=0:
+            _fail("R1 empty B viewport")
+            return false
+        if b_image.save_png(OS.get_environment("V3_GPU_CAPTURE_ROOT").path_join(name+"-B.png"))!=OK:
+            _fail("R1 cannot save B viewport")
+            return false
+        # RGB mask is a heuristic, not a proof of wet world occupancy.
+        var a_only:=0
+        var b_only:=0
+        var shared:=0
+        for z in range(0,image.get_height(),2):
+            for x in range(0,image.get_width(),2):
+                var ca:=image.get_pixel(x,z)
+                var cb:=b_image.get_pixel(x,z)
+                var aw:=ca.b>ca.r*1.25 and ca.g>ca.r*1.1
+                var bw:=cb.b>cb.r*1.25 and cb.g>cb.r*1.1
+                if aw and bw:
+                    shared+=1
+                elif aw:
+                    a_only+=1
+                elif bw:
+                    b_only+=1
+        print("V3_R1_AB name=",name," digest=",digest," A_meshes=",a_visible.size()," A_triangles=",a_triangles," A_draws=",a_draws," B_draws=",b_draws," mask_shared=",shared," mask_A_only=",a_only," mask_B_only=",b_only," B=",b_report)
     return true
 
 # Diagnostic of the exact fixed-camera pixels lost in H9/H10. Inspect
@@ -352,6 +413,9 @@ func _test() -> void:
     runtime.player.set_process(false)
     runtime.player.set_physics_process(false)
     var water: Node3D=runtime.world.get_node("Water")
+    if OS.get_environment("V3_HYBRID_COMPARE")=="1":
+        _comparison_water=water
+        _comparison_runtime=runtime
     water.set_process(false)
     water.set_physics_process(false)
     runtime.player.global_position=Vector3(-4,12,28)

@@ -1,7 +1,7 @@
-name: V3 H14 repeated shoreline qualification
+name: V3 R1 repeated shoreline qualification
 on:
   push:
-    branches: [v3/hydraulic]
+    branches: [exp/v3-hydraulic-hybrid]
     paths:
       - '.github/workflows/v3-hydraulic-gpu.yml'
       - 'godot/tests/v3_hydraulic_gpu_capture.gd'
@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 55); do
-            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45982136425")
-            test "$(jq -r .head_sha <<< "$result")" = "1067bc7d6ebae83f41820ceef78403b79abaafba"
+            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45986575619")
+            test "$(jq -r .head_sha <<< "$result")" = "b29734217f96855338467c17eed70a81eb471d64"
             if [ "$(jq -r .status <<< "$result")" = completed ]; then
               test "$(jq -r .conclusion <<< "$result")" = success
               exit 0
@@ -48,31 +48,32 @@ jobs:
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Existing Godot instance detected; refusing to interfere' }
       - uses: actions/checkout@v4
         with:
-          path: h14-movement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hybrid-r1-${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: v3-native-integration-evidence
-          run-id: 45982136425
+          run-id: 45986575619
           github-token: ${{ github.token }}
-          path: h14-movement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hybrid-r1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Run isolated rendered Godot fixture and capture only game viewport
-        working-directory: h14-movement-${{ github.run_id }}-${{ github.run_attempt }}
+        working-directory: hybrid-r1-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
-          git diff --quiet 1067bc7d6ebae83f41820ceef78403b79abaafba HEAD -- native godot/scripts godot/shaders godot/scenes godot/mods third_party.lock
+          git diff --quiet b29734217f96855338467c17eed70a81eb471d64 HEAD -- native godot/shaders godot/scenes godot/mods third_party.lock
           if ($LASTEXITCODE -ne 0) { throw 'Runtime differs from validated native candidate' }
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Godot already running' }
           ./scripts/bootstrap-windows.ps1 -RuntimeOnly
           $root=(Get-Location).Path
           $project=Join-Path $root 'godot'
           $editor=Join-Path $root '.tools/godot.exe'
-          $capture=Join-Path $root 'reports/generated/h14-movement'
+          $capture=Join-Path $root 'reports/generated/hybrid-r1'
           New-Item -ItemType Directory -Force $capture,(Join-Path $project '.godot') | Out-Null
           [IO.File]::WriteAllText((Join-Path $project '.godot/extension_list.cfg'),("res://sandbox_native.gdextension"+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
           $env:V3_GPU_CAPTURE_ROOT=$capture
+          $env:V3_HYBRID_COMPARE='1'
           $env:V3_WORLD_ROOT=Join-Path $capture 'worlds'
           $env:V3_MOD_ROOT=Join-Path $root 'examples/v3/mods'
           $env:V3_WORLD_ID='h7_gpu_fixture'
@@ -84,7 +85,7 @@ jobs:
           $stderr=Join-Path $capture 'stderr.log'
           $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','--resolution','1280x720','--position','80,80','--max-fps','30','--script','res://tests/v3_hydraulic_gpu_capture.gd') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           $null=$p.Handle
-          if (!$p.WaitForExit(360000)) { $p.Kill(); $p.WaitForExit(); throw 'Owned Godot fixture timed out' }
+          if (!$p.WaitForExit(480000)) { $p.Kill(); $p.WaitForExit(); throw 'Owned Godot fixture timed out' }
           $p.WaitForExit()
           Get-Content $stdout
           Get-Content $stderr
@@ -92,14 +93,14 @@ jobs:
           if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_GPU_MOVEMENT_PASS')) { throw 'Movement fixture missing' }
           if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_GPU_STRESS_PASS')) { throw 'Repeated shore edit fixture missing' }
           if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|SCRIPT ERROR:|V3_HYDRAULIC_RUNTIME_FAIL:') { throw 'Graphical errors detected' }
-          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 16) { throw 'Expected sixteen game viewport captures' }
+          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 32) { throw 'Expected 32 A/B game viewport captures' }
           Write-Host 'V3_GPU_CAPTURE_ARTIFACT_READY'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v3-h14-movement-viewport
+          name: v3-hybrid-r1-viewport
           retention-days: 14
           if-no-files-found: warn
           path: |
-            h14-movement-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h14-movement/*.png
-            h14-movement-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h14-movement/*.log
+            hybrid-r1-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/hybrid-r1/*.png
+            hybrid-r1-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/hybrid-r1/*.log
