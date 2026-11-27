@@ -73,12 +73,13 @@
   ],
   "results": {
     "R1": {
-      "status": "CORE_PASS_GPU_PENDING",
+      "status": "CORE_NATIVE_PASS_GPU_PENDING",
       "core_run": 45986752819,
       "native_run": 45986575619,
       "gpu_run": 45986751707,
       "clipper2_triangles": 8,
-      "local_triangles": 480
+      "local_triangles": 480,
+      "native_artifact": 15192805811
     },
     "R2": {
       "status": "MICROBENCH_PASS_RESTRICTED",
@@ -91,7 +92,13 @@
       "water_sign_flips": 35
     },
     "R3": {
-      "status": "ELIGIBLE_RESTRICTED_PROTOTYPE_NOT_INTEGRATED"
+      "status": "CORE_PASS_RESTRICTED_NOT_RUNTIME_INTEGRATED",
+      "commit": "917b3500ef270cb9fa950015bc6bbc4291732235",
+      "run": 45988106015,
+      "mass_litres": 48000,
+      "source_litres": 56769,
+      "drain_litres": 33511,
+      "mid_flow_reopen": true
     },
     "R4": {
       "status": "BLOCKED_GEOMETRY_GATE"
