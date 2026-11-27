@@ -11,6 +11,10 @@ namespace sandbox::hydraulic {
 class IntegratedRuntime {
     experiment::Coupler model_;
     std::set<std::string> sources_;
+    std::map<std::string,std::set<core::Region>> source_windows_;
+    std::set<core::Region> source_interest_;
+    std::set<std::string> source_conflicts_;
+    std::map<std::string,std::tuple<std::uint64_t,std::uint64_t,std::uint64_t>> source_attempts_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
     std::set<core::Region> group_,activate_pending_,visual_invalidated_;
@@ -33,7 +37,7 @@ class IntegratedRuntime {
         return out;
     }
     bool interested(core::Region k)const {
-        if(dirty_.contains(k))return true;
+        if(dirty_.contains(k)||source_interest_.contains(k))return true;
         if(std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side)return true;
         if(std::abs(k.x-center_.x)>144||std::abs(k.z-center_.z)>144)return false;
         for(auto d:{core::Region{0,0,0},core::Region{-16,0,0},core::Region{16,0,0},core::Region{0,0,-16},core::Region{0,0,16}}) {
@@ -41,6 +45,67 @@ class IntegratedRuntime {
             if(model_.tiles().contains(n)&&(model_.tile_mass(n)||model_.tiles().at(n).local))return true;
         }
         return false;
+    }
+    bool source_certified(core::Region k,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool)const {
+        const auto it=model_.tiles().find(k);
+        return it!=model_.tiles().end()&&!dirty_.contains(k)&&
+            (provenance_.certifies(k,it->second.geometry->revision,rev)||(it->second.resident&&resident(tool,k)));
+    }
+    void discover_sources(const nlohmann::json& rules,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool) {
+        source_interest_.clear();
+        for(const auto &rule:rules){
+            const auto id=rule.at("id").get<std::string>();
+            if(sources_.contains(id))continue;
+            const auto &a=rule.at("anchor_m");
+            const core::Vec3 anchor{a[0].get<double>()+0.5,a[1].get<double>()+0.5,a[2].get<double>()+0.5};
+            const auto k=key(anchor);
+            // Discovery follows current interest, not the initial spawn.
+            // Full view-range acquisition is a separate streaming gate.
+            if(std::abs(k.x-center_.x)>side||std::abs(k.z-center_.z)>side){source_windows_.erase(id);source_attempts_.erase(id);continue;}
+            const bool ocean=rule.at("source_kind")=="fixed_head_ocean";
+            auto &window=source_windows_[id];
+            if(window.empty()){
+                if(ocean)window.insert(k);
+                else for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)window.insert({k.x+x*side,base,k.z+z*side});
+            }
+            source_interest_.insert(window.begin(),window.end());
+            if(!dirty_.empty()||!std::all_of(window.begin(),window.end(),[&](auto q){return source_certified(q,rev,tool);}))continue;
+            // Retry on new certification, terrain revision or a bounded
+            // simulation cadence if a competing front currently owns it.
+            const auto stamp=std::tuple{publications_,ticks_/20,rev};
+            if(source_attempts_.contains(id)&&source_attempts_.at(id)==stamp)continue;
+            source_attempts_[id]=stamp;
+            const auto &g=*model_.tiles().at(k).geometry;
+            const double level=rule.at("level_m").get<double>();
+            std::optional<core::Vec3> chosen;Id compartment_id{};
+            double best=std::numeric_limits<double>::infinity();
+            for(const auto &col:g.column_runs)for(const auto &s:col){
+                const double floor=tp::span_floor_mm(g,s)*0.001;
+                if(s.top!=height||floor+0.1>=level)continue;
+                core::Vec3 q{k.x+s.x+0.5,floor+0.05,k.z+s.z+0.5};
+                const double distance=(q.x-anchor.x)*(q.x-anchor.x)+(q.z-anchor.z)*(q.z-anchor.z);
+                if(distance<best){best=distance;chosen=q;compartment_id=s.compartment;}
+            }
+            if(!chosen){source_conflicts_.insert(id);continue;}
+            const auto type=rule.at("slot").get<std::size_t>();
+            bool accepted=false;
+            if(ocean)accepted=model_.ocean({id,k,*chosen,type,level,chosen->y,4});
+            else{
+                std::set<core::Region> frontier;
+                const auto result=model_.seed_surface_basin(k,compartment_id,type,level,base+height,window,frontier);
+                accepted=result==experiment::Coupler::BasinResult::seeded;
+                if(result==experiment::Coupler::BasinResult::frontier){
+                    bool expanded=false;
+                    for(auto q:frontier)if(window.size()<64&&std::abs(q.x-k.x)<=5*side&&std::abs(q.z-k.z)<=5*side)
+                        expanded=window.insert(q).second||expanded;
+                    source_interest_.insert(window.begin(),window.end());
+                    if(!expanded)source_conflicts_.insert(id);
+                    continue;
+                }
+            }
+            if(accepted){sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);}
+            else source_conflicts_.insert(id);
+        }
     }
     bool activate(core::Region k) {
         if(model_.tiles().at(k).local)return true;
@@ -83,9 +148,10 @@ public:
             worker_.invalidate(k);pending_.erase(k);pending_survey_.erase(k);blocked_.erase(k);
         }
     }
-    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed) {
+    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules) {
         center_=key(p);
         if(provenance_.revision()!=rev)provenance_.invalidate(rev);
+        discover_sources(rules,rev,tool);
         for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k))){
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
@@ -115,7 +181,7 @@ public:
         }
         // Same Voxel Tools snapshots as H14; one acquisition per frame,
         // cached wet geometry survives loss of LOD0 residency.
-        std::set<core::Region> candidates;
+        std::set<core::Region> candidates=source_interest_;
         for(const auto &[k,r]:dirty_){(void)r;candidates.insert(k);}
         for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)candidates.insert({center_.x+x*16,base,center_.z+z*16});
         for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)||t.local)
@@ -232,6 +298,9 @@ public:
         d["solver"]="hybrid";d["litres"]=model_.mass();d["initial"]=model_.initial();d["injected"]=model_.injected();d["drained"]=model_.drained();
         d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
         d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
+        Array source_ids,source_conflicts;for(const auto &id:sources_)source_ids.push_back(String::utf8(id.c_str()));
+        for(const auto &id:source_conflicts_)source_conflicts.push_back(String::utf8(id.c_str()));
+        d["source_ids"]=source_ids;d["source_conflicts"]=source_conflicts;d["source_interest_tiles"]=static_cast<int64_t>(source_interest_.size());
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
         d["visual_survey_tiles"]=static_cast<int64_t>(visual_survey_tiles_);d["post_edit_survey_tiles"]=static_cast<int64_t>(post_edit_survey_tiles_);
         d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());

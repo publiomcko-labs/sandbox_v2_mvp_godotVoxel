@@ -19,3 +19,5 @@ No human blocker identified. Work remains executable; this is a continuation che
 
 ## Revised priority / I16 candidate
 Lifecycle first, then late sources, barriers, streaming, performance, geometry/finish. I16 implements exact suspended resource reclamation and compatible aggregation, with an isolated actual terrain edit/revisit/reopen fixture; validation pending. Do not equate exact suspended reclaim with resident 20-tick equilibrium qualification.
+
+I16 verified core/native/GPU. Real terrain edit/revisit and reopen freed 71,472 bytes each cycle, exact global and probed mass, reclaims 1/2. Existing real breach still zero resident settles; non-equivalent suspended fronts intentionally retained. I17 adds late mod-defined finite/ocean discovery and actual source write/reopen fixture; validation pending. Next structural priority after sources is barrier preflight.

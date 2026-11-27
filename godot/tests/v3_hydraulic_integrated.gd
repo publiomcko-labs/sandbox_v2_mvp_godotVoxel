@@ -186,10 +186,72 @@ func _lifecycle(runtime,water: Node3D,reopen: bool) -> void:
     print("V3_HYBRID_LIFECYCLE_PASS phase=",("reopen" if reopen else "write")," mass=",mass," freed_bytes=",hot["local_bytes"]," reclaimed=",cold["suspended_reclaims"]," column=",column)
     runtime.request_close()
 
+func _wait_source(runtime,water: Node3D,id: String) -> bool:
+    var deadline:=Time.get_ticks_msec()+90000
+    while true:
+        if not _frame(runtime,water,0):
+            return false
+        var state: Dictionary=runtime.session.hydraulic_report()
+        if id in state.get("source_ids",[]) and int(state["near_active_tiles"])>=9:
+            return true
+        if Time.get_ticks_msec()>deadline:
+            _fail("late source "+id+" "+str(state))
+            return false
+        await process_frame
+    return false
+
+func _sources(runtime,water: Node3D,reopen: bool) -> void:
+    var before: Dictionary=runtime.session.hydraulic_report()
+    var initial:=int(before["initial"])
+    runtime.player.global_position=Vector3(48,12,-28)
+    if not await _wait_source(runtime,water,"hydro:lava_pool"):
+        return
+    var lava: Dictionary=runtime.session.hydraulic_report()
+    if (not reopen and int(lava["initial"])<=initial) or (reopen and int(lava["initial"])!=initial):
+        _fail("late finite initialization "+str(lava))
+        return
+    var found_lava:=false
+    for z in range(-44,-12):
+        for x in range(32,64):
+            for y in range(-12,3):
+                var sample: Dictionary=runtime.session.hydraulic_at(Vector3(x+0.5,y+0.5,z+0.5))
+                if not sample.is_empty() and float(sample["density"])==2800.0:
+                    found_lava=true
+                    break
+            if found_lava:
+                break
+        if found_lava:
+            break
+    if not found_lava:
+        _fail("late lava physical sample")
+        return
+    var finite:=int(lava["initial"])
+    runtime.player.global_position=Vector3(-128,12,128)
+    if not await _wait_source(runtime,water,"hydro:sea"):
+        return
+    var start: Dictionary=runtime.session.hydraulic_report()
+    for i in range(40):
+        if not _frame(runtime,water,50000000):
+            return
+        var state: Dictionary=runtime.session.hydraulic_report()
+        if int(state["initial"])!=finite or int(state["litres"])!=finite+int(state["injected"])-int(state["drained"]):
+            _fail("ocean ledger "+str(state))
+            return
+        await process_frame
+        if int(state["injected"])>int(start["injected"]):
+            break
+    var after: Dictionary=runtime.session.hydraulic_report()
+    if int(after["sources"])!=3 or int(after["injected"])<=int(start["injected"]):
+        _fail("late ocean did not inject "+str(after))
+        return
+    print("V3_HYBRID_SOURCES_PASS phase=",("reopen" if reopen else "write")," initial=",finite," state=",after)
+    runtime.request_close()
+
 func _test() -> void:
     var args:=OS.get_cmdline_user_args()
     var reopen: bool="--phase=reopen" in args
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
+    var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
     if not runtime.running:
@@ -223,6 +285,9 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if sources:
+        await _sources(runtime,water,"--phase=sources-reopen" in args)
         return
     if lifecycle:
         await _lifecycle(runtime,water,"--phase=lifecycle-reopen" in args)

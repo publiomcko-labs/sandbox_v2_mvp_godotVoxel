@@ -431,8 +431,32 @@
           "gpu_snapshot_max_us": 33565
         },
         "i16": {
+          "status": "CORE_NATIVE_GPU_PASS_EXACT_SUSPENDED_RECLAIM_RUNTIME",
+          "focus": "exact quiescent suspension reclaim, compatible aggregation, persisted lifecycle and real edit/revisit/reopen fixture",
+          "commit": "d31211a66ecd1654c8b0b916fe8502c2ebe82480",
+          "core_run": 46070386466,
+          "native_run": 46070386457,
+          "gpu_run": 46070386486,
+          "native_artifact": 15232377752,
+          "native_artifact_sha256": "77268212019e35a0ee9675216948d5d53b68c111753d5a93186f7f9045fd01b6",
+          "gpu_artifact": 15232203648,
+          "gpu_artifact_sha256": "7b9a97f28face6266dbab1de2ec29134152a54918c8de4f474d2addfe6559efa",
+          "lifecycle_freed_bytes": 71472,
+          "lifecycle_column_litres": 5159,
+          "lifecycle_reclaims_write": 1,
+          "lifecycle_reclaims_reopen": 2,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_tick_p95_us": 4555,
+          "gpu_combined_refresh_p95_us": 6753,
+          "gpu_combined_refresh_p99_us": 10255,
+          "gpu_frame_p95_us": 48717,
+          "gpu_settles": 0
+        },
+        "i17": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "exact quiescent suspension reclaim, compatible aggregation, persisted lifecycle and real edit/revisit/reopen fixture"
+          "focus": "mod registry late finite basin and fixed head source discovery"
         }
       }
     },

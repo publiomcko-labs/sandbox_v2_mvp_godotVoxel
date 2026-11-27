@@ -328,6 +328,68 @@ public:
         if(t.local||t.aggregate.contains(id)||type>=types_.size()||amount<=0||amount>compartment(t,id).curve.capacity())return false;
         t.aggregate.emplace(id,tp::Content{type,amount});initial_+=amount;surface_changes_.insert(key);verify();return true;
     }
+    // Atomic finite-source initialization on certified dry exposed
+    // compartments. Discovery uses geometric openings even when the
+    // tiles are not physics-resident; no exchange is enabled by seeding.
+    enum class BasinResult { seeded, waiting, frontier, conflict };
+    BasinResult seed_surface_basin(core::Region root,Id id,std::size_t type,double level,int ceiling,
+            const std::set<core::Region>& window,std::set<core::Region>& frontier) {
+        frontier.clear();
+        if(!window.contains(root)||type>=types_.size()||!std::isfinite(level)||window.size()>64)return BasinResult::conflict;
+        using Node=std::pair<core::Region,Id>;
+        std::map<Node,Litres> eligible;
+        std::map<Node,std::vector<Node>> links;
+        for(auto k:window){
+            const auto it=tiles_.find(k);if(it==tiles_.end())return BasinResult::waiting;
+            for(const auto &c:it->second.geometry->compartments){
+                const auto &g=*it->second.geometry;
+                const bool exposed=std::any_of(c.spans.begin(),c.spans.end(),[&](const auto &s){return g.origin.y+s.top*g.step==ceiling;});
+                const auto amount=c.curve.at_level(level);
+                if(exposed&&amount>0)eligible.emplace(Node{k,c.id},amount);
+            }
+        }
+        const Node first{root,id};if(!eligible.contains(first))return BasinResult::conflict;
+        auto link=[&](Node a,Node b,const tp::Opening& o){
+            if(o.sill_mm>=level*1000||o.soffit_mm!=ceiling*1000||!eligible.contains(a)||!eligible.contains(b))return;
+            links[a].push_back(b);links[b].push_back(a);
+        };
+        for(auto k:window){
+            const auto &g=*tiles_.at(k).geometry;
+            for(const auto &o:g.openings)link({k,o.a},{k,o.b},o);
+            for(int face:{1,3}){
+                const core::Region q{k.x+(face==1?g.nx:0),k.y,k.z+(face==3?g.nz:0)};
+                if(!window.contains(q))continue;
+                for(const auto &o:tp::connect_faces(g,*tiles_.at(q).geometry,face))link({k,o.a},{q,o.b},o);
+            }
+        }
+        std::set<Node> reached{first};std::deque<Node> queue{first};
+        while(!queue.empty()){
+            const auto n=queue.front();queue.pop_front();
+            const auto &tile=tiles_.at(n.first);
+            // Never duplicate a previously discovered body or overwrite
+            // a local front. Wait for the owner to become safely dry.
+            if(tile.local||tile.aggregate.contains(n.second))return BasinResult::conflict;
+            for(const auto &q:links[n])if(reached.insert(q).second)queue.push_back(q);
+        }
+        for(const auto &n:reached){
+            const auto &g=*tiles_.at(n.first).geometry;
+            for(const auto &edge:g.boundaries){
+                if(edge.compartment!=n.second||edge.top_mm!=ceiling*1000||edge.bottom_mm>=level*1000)continue;
+                const core::Region q{n.first.x+(edge.face==0?-g.nx:edge.face==1?g.nx:0),n.first.y,
+                    n.first.z+(edge.face==2?-g.nz:edge.face==3?g.nz:0)};
+                if(!window.contains(q))frontier.insert(q);
+            }
+        }
+        if(!frontier.empty())return BasinResult::frontier;
+        Litres total=0;
+        for(const auto &n:reached){const auto amount=eligible.at(n);if(amount>ledger_limit-initial_-total)return BasinResult::conflict;total+=amount;}
+        // All owners and capacity validated before any mutation.
+        for(const auto &n:reached){
+            tiles_.at(n.first).aggregate.emplace(n.second,tp::Content{type,eligible.at(n)});
+            surface_changes_.insert(n.first);
+        }
+        initial_+=total;verify();return BasinResult::seeded;
+    }
     bool activate(core::Region key) {
         auto &t=tiles_.at(key);if(!t.resident||t.local)return false;
         if(active()>=active_limit_){t.phase=Phase::blocked;return false;}

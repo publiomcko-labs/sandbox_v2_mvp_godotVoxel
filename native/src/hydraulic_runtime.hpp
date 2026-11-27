@@ -270,7 +270,7 @@ public:
     }
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed) {
         if(!core::valid_point(position))throw std::invalid_argument("hydraulic interest");
-        if(integrated_){integrated_->frame(tool,position,revision,elapsed);return;}
+        if(integrated_){integrated_->frame(tool,position,revision,elapsed,profile_.config.at("sources"));return;}
         const auto center=key(position);
         last_center_=center;
         const bool pristine=integrated_mode_&&revision==0;
@@ -318,7 +318,11 @@ public:
             }
         }
         seed(center);
-        if(integrated_mode_&&!domain_.seeded().empty()) {
+        const bool near_source=std::any_of(profile_.config.at("sources").begin(),profile_.config.at("sources").end(),[&](const auto &rule){
+            const auto &a=rule.at("anchor_m");
+            return within_interest(key({a[0].template get<double>()+0.5,a[1].template get<double>()+0.5,a[2].template get<double>()+0.5}),center);
+        });
+        if(integrated_mode_&&(!domain_.seeded().empty()||!near_source)) {
             integrated_=std::make_unique<IntegratedRuntime>(domain_,pristine_surveyed_.size());
             domain_=Domain(profile_.types); // relinquish bootstrap mass owner
             return;

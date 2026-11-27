@@ -83,6 +83,26 @@ int main(){
     frontier.set_resident(kb,false);
     assert(!frontier.reclaim_suspended(kb)&&frontier.tiles().at(kb).local&&frontier.mass()==32000);
     std::cout<<"V3_HYBRID_I16_RECLAIM_PASS\n";
+    // A two-tile exposed bowl with a closed outer rim. Initialize
+    // late only after the whole reached component has been certified.
+    auto bowl=[](int offset){
+        tp::Snapshot s{{offset,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+        for(int z=1;z<=2;++z)for(int x=(offset?0:1);x<=(offset?2:3);++x)for(int y=0;y<8;++y)
+            s.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+        return std::make_shared<const tp::Result>(tp::extract(s));
+    };
+    const auto ba=bowl(0),bb=bowl(4);
+    Coupler late(types,1,2);assert(late.publish(ba));
+    const auto bid=tp::compartment_at(*ba,{2.5,0.5,1.5});assert(bid);
+    std::set<sandbox::core::Region> edge;
+    assert(late.seed_surface_basin(ka,*bid,1,3,8,{ka},edge)==Coupler::BasinResult::frontier&&edge.contains(kb)&&late.mass()==0);
+    assert(late.publish(bb));late.set_resident(kb,false);
+    assert(late.seed_surface_basin(ka,*bid,1,3,8,{ka,kb},edge)==Coupler::BasinResult::seeded);
+    assert(late.mass()==36000&&late.initial()==36000&&late.tile_mass(kb)==18000);
+    assert(late.seed_surface_basin(ka,*bid,1,3,8,{ka,kb},edge)==Coupler::BasinResult::conflict&&late.mass()==36000);
+    auto late_save=Coupler::decode(late.encode(),types,{{ka,ba},{kb,bb}});
+    assert(late_save.encode()==late.encode());
+    std::cout<<"V3_HYBRID_I17_LATE_BASIN_PASS mass="<<late.mass()<<"\n";
     // Explicit ocean source and sink, no infinite volume in resident state.
     Coupler sea(types,1,1);assert(sea.publish(a));
     assert(sea.ocean({"sea",ka,{0.5,0.1,0.5},0,2,0,1}));

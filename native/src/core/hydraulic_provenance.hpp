@@ -21,6 +21,11 @@ public:
     bool pristine(core::Region k,std::uint64_t world_revision)const{
         return complete_&&revision_==world_revision&&key_valid(k)&&!edited_.contains(k);
     }
+    bool certifies(core::Region k,std::uint64_t geometry_revision,std::uint64_t world_revision)const{
+        if(!complete_||revision_!=world_revision||geometry_revision>world_revision||!key_valid(k))return false;
+        const auto it=edited_.find(k);
+        return it==edited_.end()||geometry_revision>=it->second;
+    }
     void invalidate(std::uint64_t revision){complete_=false;revision_=revision;edited_.clear();}
     void record(std::uint64_t revision,const std::set<core::Region>& keys){
         if(!complete_||revision_==UINT64_MAX||revision!=revision_+1||keys.empty()){
