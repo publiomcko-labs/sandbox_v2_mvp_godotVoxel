@@ -165,6 +165,32 @@ int main(){
     assert(sea.drained()>0&&sea.mass()==sea.injected()-sea.drained());
     auto sea_reopen=Coupler::decode(nlohmann::json::parse(sea.encode().dump()),types,{{ka,a}});
     assert(sea_reopen.encode()==sea.encode());
+    // I22d: a source-connected ocean chain extends beyond the entire hot
+    // budget without enumerating a global ocean or wetting a roofed cave.
+    Coupler extended(types,1,2);
+    assert(extended.publish(a)&&extended.ocean({"extended",ka,{0.5,0.1,0.5},0,2,0,1}));
+    auto proof=OceanReach::extend("extended",2,8,1,*a,a->compartments.front().id,{});
+    assert(proof.compartments.size()==1&&proof.frontier(*a).contains(kb));
+    assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000&&extended.initial()==0);
+    assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000);
+    auto previous=a;
+    for(int x=1;x<=120;++x){
+        auto next=flat(x*4);
+        auto reached=OceanReach::extend("extended",2,8,1,*next,std::nullopt,{{previous.get(),&proof}});
+        assert(reached.compartments.size()==1);
+        assert(OceanReach::extend("extended",2,8,2,*next,std::nullopt,{{previous.get(),&proof}}).compartments.empty());
+        assert(extended.publish(next)&&extended.acquire_ocean(reached,1,true));
+        extended.set_resident(next->origin,false);assert(extended.detach_cold(next->origin));
+        proof=std::move(reached);previous=std::move(next);
+    }
+    assert(extended.tiles().size()==1&&extended.cold_count()==120&&extended.mass()==121*32000&&extended.injected()==extended.mass());
+    tp::Snapshot roof{{484,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=0;y<2;++y)
+        roof.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    const auto roof_geometry=tp::extract(roof);
+    auto isolated=OceanReach::extend("extended",2,8,1,roof_geometry,std::nullopt,{{previous.get(),&proof}});
+    assert(isolated.compartments.empty());
+    std::cout<<"V3_HYBRID_I22_OCEAN_CONNECTIVITY_PASS regions=121 hot=1 injected="<<extended.injected()<<" cave=excluded stale=excluded\n";
     // I2 local carve changes an existing floor and opens a formerly
     // solid horizontal column. Remap must not wet the remote cell.
     tp::Snapshot old{{0,0,0},4,8,2,1,1,std::vector<std::uint8_t>(4*8*2,0)};

@@ -1,5 +1,6 @@
 #pragma once
 #include "virtual_pipes.hpp"
+#include "ocean_connectivity.hpp"
 #include "core/hydraulic_domain.hpp"
 #include <nlohmann/json.hpp>
 namespace sandbox::hydraulic::experiment {
@@ -392,6 +393,37 @@ public:
             surface_changes_.insert(n.first);
         }
         initial_+=total;verify();return BasinResult::seeded;
+    }
+    // Materialize only newly certified pristine ocean compartments, with
+    // an explicit source ledger. Existing wet owners and local fronts are
+    // never reset to the head; they continue through the physical solver.
+    // The caller owns the world revision/provenance certificate.
+    bool acquire_ocean(const OceanReach& proof,std::uint64_t world_revision,bool pristine) {
+        if(!pristine||proof.world_revision!=world_revision||proof.compartments.empty())return false;
+        const auto source=std::find_if(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.id==proof.source&&o.head==proof.head;});
+        const auto it=tiles_.find(proof.key);
+        if(source==oceans_.end()||it==tiles_.end()||it->second.local||
+            it->second.geometry->revision!=proof.geometry_revision)return false;
+        auto &tile=it->second;
+        std::map<Id,tp::Content> additions;
+        Litres total=0;
+        for(auto id:proof.compartments){
+            const auto &comp=compartment(tile,id);
+            if(comp.spans.empty()||!std::all_of(comp.spans.begin(),comp.spans.end(),[&](const auto &s){
+                return tile.geometry->origin.y+s.top*tile.geometry->step==proof.ceiling;
+            }))return false;
+            if(const auto old=tile.aggregate.find(id);old!=tile.aggregate.end()){
+                if(old->second.type!=source->type)return false;
+                continue;
+            }
+            const auto amount=comp.curve.at_level(source->head);
+            if(amount<=0||amount>ledger_limit-injected_-total)return false;
+            total+=amount;additions.emplace(id,tp::Content{source->type,amount});
+        }
+        for(const auto &[id,content]:additions)tile.aggregate.emplace(id,content);
+        injected_+=total;
+        if(total)surface_changes_.insert(proof.key);
+        verify();return true;
     }
     bool activate(core::Region key) {
         auto &t=tiles_.at(key);if(!t.resident||t.local)return false;
