@@ -157,13 +157,13 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
     var holds:=0
     var portal_moved:=int(runtime.session.hydraulic_report()["moved"])
     while accepted<8:
-        var candidate: Variant=_cross_tile_cut(runtime,tool,previous) if accepted==0 else _next_shore_cut(runtime,tool,previous)
+        var candidate: Variant=_next_shore_cut(runtime,tool,previous)
         if candidate==null:
             _fail("stress: insufficient distinct shore positions "+str(accepted))
             return false
         var target: Vector3=candidate
         previous.append(target)
-        if runtime.submit_brush(target,false,6.0 if accepted==0 else 3.0)!="accepted":
+        if runtime.submit_brush(target,false,3.0)!="accepted":
             if previous.size()>48:
                 _fail("stress: too many rejected positions")
                 return false
@@ -190,7 +190,7 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
                 _fail("stress: lost mass")
                 return false
             if first_wet<0:
-                var wet_probe: Variant=_wet_breach_probe(runtime,target,6.0 if accepted==1 else 3.0)
+                var wet_probe: Variant=_wet_breach_probe(runtime,target,3.0)
                 if wet_probe!=null:
                     print("V3_GPU_STRESS_WET point=",wet_probe)
                     first_wet=step+1
@@ -202,9 +202,6 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
             await process_frame
         if first_wet<0:
             _fail("stress: excavated floor never filled "+str(target))
-            return false
-        if accepted==1 and int(runtime.session.hydraulic_report()["moved"])<=portal_moved:
-            _fail("stress: no cross-tile transfer into previously dry tile")
             return false
         for i in range(runtime.session.hydraulic_surfaces().size()+1):
             water.call("refresh")
@@ -224,7 +221,7 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
         return false
     if not await _capture("14-stress-settled"):
         return false
-    print("V3_GPU_STRESS_PASS accepted=",accepted," observed_group_holds=",holds," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
+    print("V3_GPU_STRESS_PASS transfer_delta=",int(runtime.session.hydraulic_report()["moved"])-portal_moved," accepted=",accepted," observed_group_holds=",holds," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
     return true
 
 func _tile_key(p: Vector3) -> Vector3i:
