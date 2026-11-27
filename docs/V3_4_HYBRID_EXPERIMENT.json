@@ -403,8 +403,32 @@
           "gpu_snapshot_max_us": 51359
         },
         "i15": {
-          "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "persistent per-tile edit provenance and bounded pristine presentation survey in edited worlds"
+          "status": "CORE_NATIVE_GPU_PASS_EDIT_PROVENANCE_BOUNDED_SURVEY_PARTIAL",
+          "focus": "persistent per-tile edit provenance and bounded pristine presentation survey in edited worlds",
+          "commit": "337c92f8cf9806c639104a1d758c57ca2ebb6d7b",
+          "core_run": 46068450907,
+          "native_run": 46068450710,
+          "gpu_run": 46068450792,
+          "native_artifact": 15232151355,
+          "native_artifact_sha256": "f3e6221afda66680b03761394e757bfe34813a2379d51cea4963a21f9996d1cc",
+          "gpu_artifact": 15232136596,
+          "gpu_artifact_sha256": "de165fbbf688366e0661afe6f0914e92cc88c2b78be557aed90158a97a8f4956",
+          "native_dll_sha256": "ccb18e372207ed63085f36916a4e86defd7c2fb1684c63418dd83f712c00723a",
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_activations": 5,
+          "gpu_settles": 0,
+          "gpu_post_edit_survey_tiles": 3,
+          "edited_provenance_tiles": 4,
+          "native_post_edit_survey_tiles": 6,
+          "native_reopen_post_edit_survey_tiles": 3,
+          "gpu_tick_p95_us": 4427,
+          "gpu_worker_p95_us": 1603,
+          "gpu_combined_refresh_p95_us": 6589,
+          "gpu_combined_refresh_p99_us": 10557,
+          "gpu_frame_p95_us": 48485,
+          "gpu_snapshot_max_us": 33565
         }
       }
     },
