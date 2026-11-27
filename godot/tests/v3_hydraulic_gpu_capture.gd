@@ -23,7 +23,7 @@ func _capture(name: String) -> bool:
 func _diagnose_seams(water: Node3D,camera: Camera3D,label: String) -> void:
     var nodes: Dictionary=water.get("_meshes")
     var tiles: Dictionary=water.get("_mesh_tiles")
-    for pixel: Vector2 in [Vector2(180.5,188.5),Vector2(180.5,189.5),Vector2(180.5,190.5),Vector2(513.5,47.5),Vector2(575.5,280.5),Vector2(590.5,283.5)]:
+    for pixel: Vector2 in [Vector2(180.5,188.5),Vector2(180.5,189.5),Vector2(180.5,190.5),Vector2(513.5,47.5),Vector2(575.5,280.5),Vector2(590.5,283.5),Vector2(289.5,456.5),Vector2(293.5,478.5),Vector2(301.5,459.5),Vector2(300.5,480.5)]:
         var origin:=camera.project_ray_origin(pixel)
         var ray:=camera.project_ray_normal(pixel)
         var evidence: Array=[]
@@ -36,7 +36,7 @@ func _diagnose_seams(water: Node3D,camera: Camera3D,label: String) -> void:
                 continue
             var q:=origin+ray*distance
             var tile: Vector3i=tiles[id]
-            if q.x<float(tile.x)-0.1 or q.x>float(tile.x+16)+0.1 or q.z<float(tile.z)-0.1 or q.z>float(tile.z+16)+0.1:
+            if q.x<float(tile.x)-1.01 or q.x>float(tile.x+16)+1.01 or q.z<float(tile.z)-1.01 or q.z>float(tile.z+16)+1.01:
                 continue
             var arrays: Array=node.mesh.surface_get_arrays(0)
             var vertices: PackedVector3Array=arrays[Mesh.ARRAY_VERTEX]
@@ -105,6 +105,16 @@ func _diagnose_cave_spots(runtime,tool: VoxelTool,camera: Camera3D) -> void:
             var wet: Dictionary=runtime.session.hydraulic_at(p-Vector3(0,0.05,0))
             evidence.append({"height":h,"point":str(p),"sdf":_sdf_at(tool,p),"wet":wet})
         print("V3_GPU_CAVE_SPOT_DIAG pixel=",pixel," ",JSON.stringify(evidence))
+    for x in range(-40,-33):
+        for z in range(33,40):
+            var p:=Vector3(x,4,z)
+            if not tool.is_area_editable(AABB(p-Vector3(0,5,0),Vector3(1,12,1))):
+                continue
+            var signs: String=""
+            for y in range(-1,11):
+                signs+="+" if tool.get_voxel_f(Vector3i(x,y,z))>0.1 else "-"
+            print("V3_GPU_CAVE_COLUMN x=",x," z=",z," y=-1..10 ",signs)
+
 
 func _visible_tiles(water: Node3D) -> Dictionary:
     var nodes: Dictionary=water.get("_meshes")
