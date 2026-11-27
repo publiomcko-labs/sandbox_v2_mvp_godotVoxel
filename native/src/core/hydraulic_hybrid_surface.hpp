@@ -385,10 +385,64 @@ inline std::map<core::Region,core::Region> dirty_groups(
     }
     return groups;
 }
+// Reconcile actual accepted neighboring patches at their common tile
+// edge. The original quad footprints and material/roof ownership remain
+// unchanged. One canonical owner emits only a vertical seam face, never
+// a horizontal apron or a new physical wet cell.
+using MaterialVertices=std::map<std::size_t,std::vector<Vertex>>;
+inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,const MaterialVertices& b,bool x_axis,int boundary) {
+    using Edge=std::array<Vertex,2>;
+    using Key=std::tuple<int,double,std::size_t>;
+    auto collect=[&](const MaterialVertices& src,bool lower_side){
+        std::map<Key,std::vector<Edge>> edges;
+        auto fixed=[&](const Vertex& v){return x_axis?v.x:v.z;};
+        auto along=[&](const Vertex& v){return x_axis?v.z:v.x;};
+        for(const auto &[slot,verts]:src)for(std::size_t i=0;i+5<verts.size();i+=6){
+            // build() produces one six-vertex horizontal quad per
+            // certified primary or bank footprint.
+            const std::array<Vertex,4> q{verts[i],verts[i+1],verts[i+2],verts[i+5]};
+            double lo=fixed(q[0]),hi=lo;
+            for(const auto &v:q){lo=std::min(lo,fixed(v));hi=std::max(hi,fixed(v));}
+            if(lower_side?hi!=boundary:lo!=boundary)continue;
+            if(hi-lo!=1.0)continue;
+            for(std::size_t n=0;n<4;++n){
+                auto u=q[n],v=q[(n+1)%4];
+                if(fixed(u)!=boundary||fixed(v)!=boundary||u.ceiling!=v.ceiling)continue;
+                if(along(u)>along(v))std::swap(u,v);
+                if(along(v)-along(u)!=1.0)continue;
+                edges[{static_cast<int>(along(u)),u.ceiling,slot}].push_back({u,v});
+            }
+        }
+        return edges;
+    };
+    const auto left=collect(a,true),right=collect(b,false);
+    for(const auto &[key,edges]:left){
+        const auto other=right.find(key);
+        // Ambiguous coincident layers are not joined.
+        if(edges.size()!=1||other==right.end()||other->second.size()!=1)continue;
+        auto u=edges.front(),v=other->second.front();
+        bool valid=true;
+        for(std::size_t n=0;n<2;++n){
+            const double floor=std::max(u[n].floor,v[n].floor);
+            const double cap=u[n].ceiling;
+            if(std::min(u[n].y,v[n].y)<floor||std::max(u[n].y,v[n].y)>=cap-0.001){valid=false;break;}
+            u[n].floor=v[n].floor=floor;
+        }
+        if(!valid)continue;
+        const double d0=u[0].y-v[0].y,d1=u[1].y-v[1].y;
+        if(std::abs(d0)<1e-7&&std::abs(d1)<1e-7)continue;
+        auto &out=dst[std::get<2>(key)];
+        if(d0*d1<0){
+            const double f=d0/(d0-d1);
+            Vertex mid{u[0].x+(u[1].x-u[0].x)*f,u[0].y+(u[1].y-u[0].y)*f,u[0].z+(u[1].z-u[0].z)*f,u[0].floor+(u[1].floor-u[0].floor)*f,u[0].ceiling};
+            out.insert(out.end(),{u[0],v[0],mid,mid,v[1],u[1]});
+        }else out.insert(out.end(),{u[0],v[0],v[1],u[0],v[1],u[1]});
+    }
+}
 class Renderer {
     std::map<core::Region,Input> presented_;
     // Exact accepted output cache; never cache a rejected revision as published.
-    std::map<core::Region,std::map<std::size_t,std::vector<Vertex>>> published_meshes_;
+    std::map<core::Region,MaterialVertices> published_meshes_,stitched_meshes_;
     std::optional<core::Region> cursor_;
     std::optional<std::future<std::vector<Batch>>> running_;
     std::map<core::Region,core::Region> running_groups_;
@@ -397,6 +451,13 @@ class Renderer {
 public:
     std::vector<Batch> poll(const std::map<core::Region,Input>& wanted) {
         std::vector<Batch> done;
+        std::set<core::Region> stitch_dirty;
+        std::map<core::Region,std::pair<std::uint64_t,std::size_t>> stitch_metrics;
+        auto mark_stitch=[&](core::Region k,const Input& in){
+            stitch_dirty.insert(k);
+            stitch_dirty.insert({k.x-in.geometry->nx,k.y,k.z});
+            stitch_dirty.insert({k.x,k.y,k.z-in.geometry->nz});
+        };
         if(running_&&running_->wait_for(std::chrono::seconds(0))==std::future_status::ready) {
             auto results=running_->get();running_.reset();
             const bool coherent=!results.empty()&&results.front().input.layered;
@@ -441,13 +502,34 @@ public:
                 // geometry. Advance the accepted input but avoid Godot churn.
                 auto old=published_meshes_.find(k);
                 if(coherent&&old!=published_meshes_.end()&&old->second==result.materials)continue;
-                if(coherent)published_meshes_.insert_or_assign(k,result.materials);
-                done.push_back(std::move(result));
+                if(coherent){
+                    published_meshes_.insert_or_assign(k,std::move(result.materials));
+                    mark_stitch(k,result.input);
+                    stitch_metrics[k]={result.build_us,result.fallback_columns};
+                }else done.push_back(std::move(result));
             }
             running_groups_.clear();
         }
         for(auto it=presented_.begin();it!=presented_.end();) {
-            if(!wanted.contains(it->first)){published_meshes_.erase(it->first);it=presented_.erase(it);}else ++it;
+            if(!wanted.contains(it->first)){
+                if(published_meshes_.contains(it->first))mark_stitch(it->first,it->second);
+                published_meshes_.erase(it->first);stitched_meshes_.erase(it->first);it=presented_.erase(it);
+            }else ++it;
+        }
+        for(auto k:stitch_dirty){
+            auto own=published_meshes_.find(k);if(own==published_meshes_.end())continue;
+            const auto &in=presented_.at(k);
+            const auto &g=*in.geometry;
+            MaterialVertices combined=own->second;
+            auto east=published_meshes_.find({k.x+g.nx,k.y,k.z});
+            if(east!=published_meshes_.end())stitch_tile_edge(combined,own->second,east->second,true,k.x+g.nx);
+            auto south=published_meshes_.find({k.x,k.y,k.z+g.nz});
+            if(south!=published_meshes_.end())stitch_tile_edge(combined,own->second,south->second,false,k.z+g.nz);
+            auto old=stitched_meshes_.find(k);
+            if(old!=stitched_meshes_.end()&&old->second==combined)continue;
+            stitched_meshes_.insert_or_assign(k,combined);
+            const auto m=stitch_metrics[k];
+            done.push_back({in,std::move(combined),m.first,m.second});
         }
         if(!running_) {
             std::vector<Input> jobs;

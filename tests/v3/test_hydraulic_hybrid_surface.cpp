@@ -186,6 +186,28 @@ int main(){
     auto replacement=left;replacement.origin={2,0,2};replacement.revision=2;
     known[replacement.origin]=std::make_shared<const tp::Result>(tp::extract(replacement));
     make_primary({2,0,2},1.8);verify_cache({{2,0,2}});
+    // I11b: independently accepted adjacent exposed quads may have
+    // different head elevations. Seal the actual common edge exactly
+    // once without changing either footprint, slot, or roof layer.
+    auto quad=[](double x,double y,double cap){
+        const hybrid::Vertex p0{x,y,0,0,cap},p1{x+1,y,0,0,cap},p2{x+1,y,1,0,cap},p3{x,y,1,0,cap};
+        return hybrid::MaterialVertices{{0,{p0,p1,p2,p0,p2,p3}}};
+    };
+    const auto west_patch=quad(1,1.86,8),east_patch=quad(2,1.93,8);
+    auto stitched=west_patch;
+    hybrid::stitch_tile_edge(stitched,west_patch,east_patch,true,2);
+    assert(stitched.at(0).size()==12);
+    for(std::size_t i=6;i<12;++i){
+        const auto &p=stitched.at(0)[i];assert(p.x==2&&p.z>=0&&p.z<=1&&(p.y==1.86||p.y==1.93)&&p.ceiling==8);
+    }
+    auto no_join=west_patch;
+    hybrid::stitch_tile_edge(no_join,west_patch,quad(2,1.93,3),true,2);
+    assert(no_join==west_patch);
+    hybrid::stitch_tile_edge(no_join,west_patch,quad(2,1.86,8),true,2);
+    assert(no_join==west_patch);
+    hybrid::stitch_tile_edge(no_join,west_patch,{},true,2);
+    assert(no_join==west_patch);
+    std::cout<<"V3_HYBRID_I11B_TILE_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I10B_INCREMENTAL_INPUT_PASS\n";
     std::cout<<"V3_HYBRID_I8_BANK_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I7_GROUPS_PASS\n";

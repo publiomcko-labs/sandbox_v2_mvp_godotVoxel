@@ -42,8 +42,8 @@ func _surface_evidence(runtime,water: Node3D,camera: Camera3D,center: Vector3) -
                 rows.append([v.x,v.y,v.z,uv[i].x,uv[i].y,screen.x,screen.y,-camera.to_local(v).z])
             patches.append({"tile":[tile.x,tile.y,tile.z],"slot":node.get_meta("liquid_slot"),"vertices":rows})
     var columns: Array=[]
-    for z in range(floori(center.z)-16,floori(center.z)+17):
-        for x in range(floori(center.x)-16,floori(center.x)+17):
+    for z in range(floori(center.z)-32,floori(center.z)+33):
+        for x in range(floori(center.x)-32,floori(center.x)+33):
             var p:=Vector3(x+0.5,0,z+0.5)
             var litres: int=runtime.session.hydraulic_column_mass(p)
             var layers: Array=[]
@@ -52,7 +52,7 @@ func _surface_evidence(runtime,water: Node3D,camera: Camera3D,center: Vector3) -
                     p.y=y+0.5
                     var wet: Dictionary=runtime.session.hydraulic_at(p)
                     if not wet.is_empty():
-                        layers.append([p.y,wet.get("level"),wet.get("liquid")])
+                        layers.append([p.y,wet.get("level"),wet.get("slot")])
             columns.append([x,z,litres,layers])
     var file:=FileAccess.open(capture_root.path_join("05-surface-evidence.log"),FileAccess.WRITE)
     if file==null:

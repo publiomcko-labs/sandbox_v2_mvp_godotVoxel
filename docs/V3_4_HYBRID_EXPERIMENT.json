@@ -286,8 +286,25 @@
           "gpu_buffer_updates": 1143
         },
         "i11a": {
-          "status": "DIAGNOSTIC_CANDIDATE_PENDING",
-          "focus": "world-space mesh and projection evidence for residual seam"
+          "status": "NATIVE_GPU_PASS_SEAM_LOCALIZED",
+          "commit": "7cda434851f19f09cc913010035af0cc6ddcdcdd",
+          "native_run": 46063369528,
+          "gpu_run": 46063369664,
+          "native_artifact": 15229422262,
+          "gpu_artifact": 15230420560,
+          "edge_x": -32,
+          "left_head_m": 1.86,
+          "right_head_m": 1.93,
+          "world_z_range": [
+            -80,
+            -69
+          ],
+          "gpu_combined_refresh_p95_us": 5021,
+          "gpu_frame_p95_us": 47186
+        },
+        "i11b": {
+          "status": "CANDIDATE_VALIDATION_PENDING",
+          "focus": "canonical vertical closure of accepted shared tile edges"
         }
       }
     },
