@@ -622,7 +622,7 @@
           "gpu_snapshot_max_us": 29334
         },
         "i22c": {
-          "status": "CORE_NATIVE_PASS_GPU_PENDING",
+          "status": "CORE_NATIVE_GPU_PASS_COLD_VISUAL_PARTIAL",
           "commit": "7dcefba2aac5482e039a6a2c97aafa804e3ac52a",
           "core_run": 46079910682,
           "native_run": 46079910662,
@@ -634,15 +634,41 @@
           "reopen_cold_litres": 26737,
           "reopen_visual_tiles": 1,
           "column_litres": 5159,
-          "global_litres": 11378442
+          "global_litres": 11378442,
+          "gpu_artifact": 15236582436,
+          "native_zip_sha256": "874ebc1930821c2cb83d4fe9f64521b0604b405e3f113a5bb03b86d8bb65e762",
+          "dll_sha256": "71263d0cca480f29a4bc6a3eafba159d91c8114df58905ba0de36550557e7e94",
+          "gpu_zip_sha256": "ac8061a6c9649c35cadf3f547e39f9caa363fc4049a94cfcd52cbfcc27aefa6d",
+          "gpu_frame_p95_us": 48249,
+          "gpu_tick_p95_us": 4866,
+          "gpu_refresh_p95_us": 6692,
+          "gpu_refresh_p99_us": 8496,
+          "gpu_snapshot_max_us": 29898
         },
         "i22d": {
-          "status": "CORE_COMPILE_FIX_PENDING_VALIDATION_RUNTIME_INTEGRATION_OPEN",
+          "status": "GCC_PASS_MSVC_SHADOW_WARNING_FIXED_RETEST_PENDING",
           "commit": "27b6c016543a62997183b1a1344fea89c904608b",
           "fix_commit": "ed50599b75082184b08d3850ccc07f699ffa9258",
           "failed_core_run": 46080159646,
           "failed_reason": "topology namespace alias missing",
-          "corrected_native_run": 46080357679
+          "corrected_native_run": 46080357679,
+          "corrected_core_run": 46080357739,
+          "ocean_regions": 121,
+          "cold_regions": 120,
+          "injected_litres": 3872000
+        },
+        "i22e": {
+          "commit": "18e90a0d49740edfc6f45b853db575737738028f",
+          "core_run": 46080522071,
+          "status": "GCC_PASS_MSVC_C4456"
+        },
+        "i22f": {
+          "commit": "4ab14c0edbb055364838e20f2442a6cd649f8444",
+          "test_fix": "5b9a4b4c4dd6379ae9e38439168e16393f6ae33b",
+          "core_run": 46080772250,
+          "native_run": 46080597329,
+          "gpu_run": 46080597349,
+          "status": "RUNTIME_CANDIDATE_VALIDATION_PENDING"
         }
       }
     },
