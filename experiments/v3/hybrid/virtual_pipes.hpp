@@ -105,13 +105,22 @@ public:
             indexes[i].push_back(columns_.size());
             columns_.push_back({s.x,s.z,topology::span_floor_mm(g,s),(g.origin.y+s.top*g.step)*1000,1,0,no_liquid});
         }
+        int top_mm=std::numeric_limits<int>::min();for(const auto &cell:columns_)top_mm=std::max(top_mm,cell.ceiling_mm);
         for(int z=0;z<g.nz;++z)for(int x=0;x<g.nx;++x)
             for(auto d:{core::Region{1,0,0},core::Region{0,0,1}}) {
                 if(x+d.x>=g.nx||z+d.z>=g.nz)continue;
                 const auto i=static_cast<std::size_t>(z*g.nx+x),j=static_cast<std::size_t>((z+d.z)*g.nx+x+d.x);
                 for(auto a:indexes[i])for(auto b:indexes[j]) {
                     const auto &u=columns_[a],&v=columns_[b];
-                    const double sill=std::max(u.floor(),v.floor()),soffit=std::min(u.ceiling(),v.ceiling());
+                    const auto coarse=[&](const Column& c){
+                        for(const auto &s:g.column_runs[static_cast<std::size_t>(c.z*g.nx+c.x)])
+                            if(topology::span_floor_mm(g,s)==c.floor_mm&&(g.origin.y+s.top)*1000==c.ceiling_mm)
+                                return double(g.origin.y+s.bottom);
+                        throw std::logic_error("R2 interval mapping");
+                    };
+                    const bool both_exposed=u.ceiling_mm==v.ceiling_mm&&u.ceiling_mm==top_mm;
+                    const double sill=both_exposed?std::max(u.floor(),v.floor()):std::max(coarse(u),coarse(v));
+                    const double soffit=std::min(u.ceiling(),v.ceiling());
                     if(sill<soffit)pipes_.push_back({a,b,sill,soffit,1,1,0,0,true});
                 }
             }
@@ -151,6 +160,47 @@ public:
             if(it==columns_.end())throw std::invalid_argument("R2 changed wet interval unsupported");
             seed(static_cast<std::size_t>(it-columns_.begin()),c.type,c.litres);
         }
+    }
+    // Stage a carve in the same horizontal footprint. Retain occupied
+    // overlap first, then displaced litres only in spatial descendants.
+    // Reject an incompatible edit rather than spreading into a dry cell.
+    bool remap_from(const Local& previous) {
+        std::map<std::pair<int,int>,std::vector<std::size_t>> index;
+        for(std::size_t i=0;i<columns_.size();++i)index[{columns_[i].x,columns_[i].z}].push_back(i);
+        struct Residual {std::size_t type;Litres left;std::vector<std::size_t> targets;};
+        std::vector<Residual> residuals;
+        for(const auto &old:previous.columns_)if(old.litres) {
+            Residual rem{old.type,old.litres,{}};
+            for(auto i:index[{old.x,old.z}]) {
+                const auto &c=columns_[i];
+                const int lo=std::max(old.floor_mm,c.floor_mm),hi=std::min(old.ceiling_mm,c.ceiling_mm);
+                if(lo>=hi)continue;
+                rem.targets.push_back(i);
+                const auto wet=std::max<Litres>(0,std::min<Litres>(hi,Litres(old.floor_mm)+old.litres)-lo);
+                const auto n=std::min({wet,rem.left,c.capacity()-c.litres});
+                if(n&&!receive(i,old.type,n))return false;
+                rem.left-=n;
+            }
+            residuals.push_back(std::move(rem));
+        }
+        for(auto &rem:residuals)for(auto i:rem.targets) {
+            const auto n=std::min(rem.left,columns_[i].capacity()-columns_[i].litres);
+            if(n&&!receive(i,rem.type,n))return false;
+            rem.left-=n;
+        }
+        for(const auto &rem:residuals)if(rem.left)return false;
+        // Retain momentum only on identical intervals and openings.
+        // Changed apertures restart their inertial state.
+        using Key=std::tuple<int,int,int,int>;
+        auto key=[](const Column& c){return Key{c.x,c.z,c.floor_mm,c.ceiling_mm};};
+        std::map<std::pair<Key,Key>,std::pair<double,double>> history;
+        for(const auto &p:previous.pipes_)if(p.enabled)
+            history.emplace(std::pair{key(previous.columns_[p.a]),key(previous.columns_[p.b])},std::pair{p.flux,p.credit});
+        for(auto &p:pipes_) {
+            auto it=history.find({key(columns_[p.a]),key(columns_[p.b])});
+            if(it!=history.end()){p.flux=it->second.first;p.credit=it->second.second;}
+        }
+        return mass()==previous.mass();
     }
     void close_crossing(int x) {
         for(auto &p:pipes_)if((columns_[p.a].x<x)!=(columns_[p.b].x<x)){p.enabled=false;p.flux=p.credit=0;}

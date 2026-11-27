@@ -175,7 +175,7 @@ class Coupler {
 public:
     Coupler(std::vector<Liquid> types,std::size_t active_limit=2,std::size_t tile_limit=8):
         types_(std::move(types)),active_limit_(active_limit),tile_limit_(tile_limit) {
-        if(types_.empty()||!active_limit_||active_limit_>tile_limit_||tile_limit_>64)throw std::invalid_argument("R3 limits");
+        if(types_.empty()||!active_limit_||active_limit_>tile_limit_||tile_limit_>128)throw std::invalid_argument("R3 limits");
     }
     const auto& tiles()const{return tiles_;}
     std::size_t active()const{std::size_t n=0;for(const auto &[k,t]:tiles_){(void)k;if(t.local)++n;}return n;}
@@ -186,7 +186,56 @@ public:
         const auto &t=tiles_.at(k);if(t.local)return t.local->mass();
         Litres sum=0;for(const auto &[id,v]:t.aggregate){(void)id;sum+=v.litres;}return sum;
     }
+    Litres initial()const{return initial_;}
     Litres injected()const{return injected_;}
+    std::size_t active_limit()const{return active_limit_;}
+    std::size_t tile_limit()const{return tile_limit_;}
+    const auto& interfaces()const{return interfaces_;}
+    // Explicit transfer from bootstrap Domain. Caller discards old owner.
+    static Coupler adopt(const Domain& domain,std::size_t active_limit=8,std::size_t tile_limit=96) {
+        Coupler out(domain.graph().types(),active_limit,tile_limit);
+        for(const auto &[k,t]:domain.tiles()) {
+            if(!out.publish(t.geometry))throw std::invalid_argument("R3 bootstrap capacity");
+            for(const auto &[local,id]:t.ids) {
+                const auto &v=domain.graph().volumes().at(id);
+                if(v.litres&&!out.seed(k,local,v.type,v.litres))throw std::logic_error("R3 bootstrap ownership");
+            }
+            out.tiles_.at(k).resident=t.available;
+        }
+        for(const auto &[id,o]:domain.oceans()) {
+            const auto &v=domain.graph().volumes().at(o.ocean);
+            if(!out.ocean({id,o.tile,o.anchor,v.type,v.ocean_level,o.anchor.y,o.area}))throw std::logic_error("R3 bootstrap ocean");
+        }
+        out.initial_=domain.graph().initial();out.injected_=domain.graph().injected();out.drained_=domain.graph().drained();
+        out.rebuild();out.verify();return out;
+    }
+    // Never collapse a front by aggregating a still-active window.
+    // Activate the receiving side of significant boundary discharge.
+    std::vector<core::Region> flow_candidates(double gradient=0.2)const {
+        std::set<core::Region> keys;
+        for(const auto &p:interfaces_) {
+            auto a=value(p.a),b=value(p.b);Owner from=p.a,to=p.b;
+            if(a.head<b.head){std::swap(a,b);std::swap(from,to);}
+            if(to.kind!=0||from.tile==to.tile||(!a.ocean&&!a.mass)||a.head<=p.sill||
+                a.head-std::max(b.head,p.sill)<gradient||(b.mass&&a.type!=b.type))continue;
+            keys.insert(to.tile);
+        }
+        return {keys.begin(),keys.end()};
+    }
+    std::optional<std::tuple<std::size_t,Litres,double,double>> sample(core::Vec3 p,core::Region k)const {
+        const auto it=tiles_.find(k);if(it==tiles_.end()||!it->second.resident)return {};
+        const auto &t=it->second;const auto *s=tp::span_at(*t.geometry,p);if(!s)return {};
+        const auto floor=tp::span_floor_mm(*t.geometry,*s)*0.001;
+        if(t.local) {
+            for(const auto &cell:t.local->columns())if(cell.x==s->x&&cell.z==s->z&&cell.floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cell.ceiling_mm==(k.y+s->top)*1000)
+                if(cell.litres&&p.y<cell.head())return std::tuple{cell.type,cell.litres,cell.head(),floor};
+            return {};
+        }
+        const auto v=t.aggregate.find(s->compartment);if(v==t.aggregate.end()||!v->second.litres)return {};
+        const double h=compartment(t,s->compartment).curve.level(v->second.litres);
+        if(p.y>=h)return {};
+        return std::tuple{v->second.type,v->second.litres,h,floor};
+    }
     Litres drained()const{return drained_;}
     bool publish(std::shared_ptr<const tp::Result> geometry) {
         if(!geometry||geometry->step!=1||tiles_.contains(geometry->origin)||tiles_.size()>=tile_limit_)return false;
@@ -227,20 +276,35 @@ public:
         auto &t=tiles_.at(key);if(!t.local||!t.resident)return false;
         t.phase=Phase::settling;t.stable_ticks=0;return true;
     }
-    void set_resident(core::Region key,bool resident) {tiles_.at(key).resident=resident;rebuild();}
+    void set_resident(core::Region key,bool resident) {
+        auto &t=tiles_.at(key);if(t.resident==resident)return;t.resident=resident;rebuild();
+    }
+    bool forget_dry(core::Region key) {
+        auto it=tiles_.find(key);
+        if(it==tiles_.end()||it->second.resident||it->second.local||tile_mass(key)||
+            std::any_of(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.tile==key;}))return false;
+        tiles_.erase(it);rebuild();verify();return true;
+    }
     bool replace_geometry(std::shared_ptr<const tp::Result> geometry) {
         auto &t=tiles_.at(geometry->origin);
-        if(geometry->revision<=t.geometry->revision||geometry->nx!=t.geometry->nx||geometry->nz!=t.geometry->nz||geometry->step!=1)return false;
+        if(geometry->revision<t.geometry->revision||geometry->nx!=t.geometry->nx||geometry->nz!=t.geometry->nz||geometry->step!=1)return false;
+        if(geometry->revision==t.geometry->revision) {
+            const auto &a=t.geometry->column_runs,&b=geometry->column_runs;
+            if(a.size()!=b.size())return false;
+            for(std::size_t i=0;i<a.size();++i){if(a[i].size()!=b[i].size())return false;for(std::size_t j=0;j<a[i].size();++j)
+                if(a[i][j].bottom!=b[i][j].bottom||a[i][j].top!=b[i][j].top||a[i][j].compartment!=b[i][j].compartment||tp::span_floor_mm(*t.geometry,a[i][j])!=tp::span_floor_mm(*geometry,b[i][j]))return false;}
+            t.geometry=std::move(geometry);t.resident=true;rebuild();return true;
+        }
         if(t.local) {
             Local staged(*geometry,types_);
-            try{staged.copy_unchanged(*t.local);}catch(const std::invalid_argument&){return false;}
+            if(!staged.remap_from(*t.local))return false;
             auto owners=mapping(*geometry,staged);
             t.local.emplace(std::move(staged));t.owners=std::move(owners);t.phase=Phase::local_active;t.stable_ticks=0;
         }else {
             auto remap=tp::remap(*t.geometry,*geometry,t.aggregate);if(!remap)return false;
             t.aggregate=std::move(remap->contents);
         }
-        t.geometry=std::move(geometry);t.epoch=++epoch_;rebuild();verify();return true;
+        t.geometry=std::move(geometry);t.resident=true;t.epoch=++epoch_;rebuild();verify();return true;
     }
     bool ocean(Ocean o) {
         if(o.id.empty()||o.type>=types_.size()||!std::isfinite(o.head)||!std::isfinite(o.sill)||
