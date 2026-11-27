@@ -280,6 +280,63 @@ func _wet_breach_probe(runtime,center: Vector3,radius: float) -> Variant:
                     return p
     return null
 
+func _move_during_flow(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: int) -> bool:
+    var previous: Array[Vector3]=[first]
+    var target: Variant=_next_shore_cut(runtime,tool,previous)
+    if target==null or runtime.submit_brush(target,false,3.0)!="accepted":
+        _fail("movement: no fresh wet shore edit")
+        return false
+    var start: Vector3=runtime.player.global_position
+    var before: Dictionary=runtime.session.hydraulic_report()
+    var route: Array[Vector3]=[Vector3(0,12,68),Vector3(64,12,68),Vector3(64,12,0),Vector3(0,12,-48),Vector3(-80,12,-16),Vector3(-80,12,40),start]
+    var travelled:=0.0
+    var steps:=0
+    var deadline:=Time.get_ticks_msec()+120000
+    for index in range(route.size()):
+        var waypoint: Vector3=route[index]
+        while runtime.player.global_position.distance_to(waypoint)>0.001:
+            var prior: Vector3=runtime.player.global_position
+            runtime.player.global_position=prior.move_toward(waypoint,0.9)
+            travelled+=prior.distance_to(runtime.player.global_position)
+            steps+=1
+            if not runtime.session.update_interest(runtime.player.global_position) or runtime.session.advance_ticks(50000000,4)<0:
+                _fail("movement scheduler: "+runtime.session.get_last_error())
+                return false
+            if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
+                _fail("movement hydraulic: "+runtime.session.get_last_error()+" "+str(runtime.session.hydraulic_report()))
+                return false
+            water.call("refresh")
+            var report: Dictionary=runtime.session.hydraulic_report()
+            if int(report["litres"])!=mass or int(water.call("get_report")["visible_meshes"])==0:
+                _fail("movement: mass or visible reservoir lost")
+                return false
+            if Time.get_ticks_msec()>deadline:
+                _fail("movement timeout "+str(report))
+                return false
+            await process_frame
+        print("V3_GPU_MOVEMENT_WAYPOINT index=",index," position=",waypoint," state=",runtime.session.hydraulic_report())
+        if index==0 and not await _capture("15-moving-shore"):
+            return false
+    for step in range(100):
+        if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
+            _fail("movement return: "+runtime.session.get_last_error())
+            return false
+        water.call("refresh")
+        await process_frame
+    var after: Dictionary=runtime.session.hydraulic_report()
+    if int(after["litres"])!=mass or int(after["moved"])<=int(before["moved"]) or int(after["pending_edit_tiles"])!=0:
+        _fail("movement did not finish with active transfer and exact mass "+str(after))
+        return false
+    if int(after["peak_volumes"])<=4096:
+        _fail("movement did not cross original volume budget "+str(after))
+        return false
+    for i in range(runtime.session.hydraulic_surfaces().size()+1):
+        water.call("refresh")
+    if not await _capture("16-return-to-lake"):
+        return false
+    print("V3_GPU_MOVEMENT_PASS distance_m=",travelled," steps=",steps," transfer_delta=",int(after["moved"])-int(before["moved"])," state=",after)
+    return true
+
 func _test() -> void:
     var write:=true
     if DisplayServer.get_name()=="headless" or OS.get_environment("V3_GPU_CAPTURE_ROOT").is_empty():
@@ -507,6 +564,8 @@ func _test() -> void:
         _diagnose_seams(water,camera,"equilibrated")
         print("V3_GPU_EQUILIBRATED_REPORT ",runtime.session.hydraulic_report()," ",water.call("get_report"))
         if not await _stress_shore(runtime,water,tool,cut,mass):
+            return
+        if not await _move_during_flow(runtime,water,tool,cut,mass):
             return
         # Dry excavation isolated from the surface source must not create mass.
         var prior:=int(runtime.session.hydraulic_report()["publications"])
