@@ -22,6 +22,8 @@ struct Snapshot {
     // Runtime SDF snapshots can certify a conservative sub-metre floor.
     // Legacy archives and synthetic binary fixtures default to coarse floors.
     bool refine_exposed=false;
+    std::vector<std::int16_t> render_sdf{};
+    int render_pad{};
     bool open(int x,int y,int z)const{
         return air.at(static_cast<std::size_t>((z*nx+x)*ny+y))==1;
     }
@@ -42,6 +44,8 @@ struct Result {
     std::vector<float> halo_floor{};
     std::vector<std::vector<Span>> halo_runs{};
     bool refine_exposed=false;
+    std::vector<std::int16_t> render_sdf{};
+    int render_pad{},render_ny{};
 };
 inline int span_floor_mm(const Result &r,const Span &s) {
     return s.floor_mm==std::numeric_limits<int>::min()?(r.origin.y+s.bottom*r.step)*1000:s.floor_mm;
@@ -65,6 +69,11 @@ inline Result extract(const Snapshot &s) {
     for(auto v:s.halo_air)if(v>1)throw std::invalid_argument("hydraulic visual halo classification");
     if(s.refine_exposed&&s.surface_floor.empty())throw std::invalid_argument("refined exposed floor requires SDF");
     Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor,s.halo_floor,{},s.refine_exposed};
+    if(!s.render_sdf.empty()) {
+        if(s.render_pad<0||s.render_pad>1||s.render_sdf.size()!=static_cast<std::size_t>((s.nx+1+2*s.render_pad)*(s.nz+1+2*s.render_pad)*(s.ny+1)))
+            throw std::invalid_argument("render SDF shape");
+        result.render_sdf=s.render_sdf;result.render_pad=s.render_pad;result.render_ny=s.ny;
+    }
     const auto mm=[&](int y){return (s.origin.y+y*s.step)*1000;};
     if(!s.halo_air.empty()) {
         result.halo_runs.resize(static_cast<std::size_t>((s.nx+2)*(s.nz+2)));

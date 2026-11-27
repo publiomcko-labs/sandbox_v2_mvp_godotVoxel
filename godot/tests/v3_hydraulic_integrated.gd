@@ -20,7 +20,7 @@ func _capture(name: String) -> bool:
 func _tile(p: Vector3) -> Vector3i:
     return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
 
-func _find_breach(runtime,tool: VoxelTool) -> Dictionary:
+func _find_breach(runtime,tool: VoxelTool,camera: Camera3D) -> Dictionary:
     # Search the whole certified shoreline. A radius-six carve may cross
     # a tile boundary, but both destination columns must have zero mass.
     # Do not select a point under an already wet vertical interval.
@@ -45,6 +45,11 @@ func _find_breach(runtime,tool: VoxelTool) -> Dictionary:
                             continue
                         if tool.get_voxel_f(Vector3i(near_probe.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(far_probe.floor()))>=-0.1:
                             continue
+                        if not OS.get_environment("V3_GPU_CAPTURE_ROOT").is_empty():
+                            camera.global_position=center+Vector3(0,18,20)
+                            camera.look_at(center,Vector3.UP)
+                            if not await _capture("02-before-breach"):
+                                return {}
                         if runtime.submit_brush(center,false,6.0)=="accepted":
                             return {"center":center,"near":near_probe,"far":far_probe,"donor":donor,"pre_edit_column_litres":[0,0]}
     return {}
@@ -114,7 +119,7 @@ func _test() -> void:
     tool.channel=VoxelBuffer.CHANNEL_SDF
     var breach: Dictionary={}
     for attempt in range(4):
-        breach=_find_breach(runtime,tool)
+        breach=await _find_breach(runtime,tool,camera)
         if not breach.is_empty():
             break
         for step in range(32):
@@ -146,7 +151,14 @@ func _test() -> void:
     if near_zero!=0 or far_zero!=0:
         _fail("instant horizontal wetting "+str([near_zero,far_zero]))
         return
-    if not await _capture("02-open-no-tick"):
+    while not bool(water.get("_hybrid_ready")):
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("edited visual publication")
+            return
+        await process_frame
+    if not await _capture("03-open-no-tick"):
         return
     var first_near:=-1
     var first_far:=-1
@@ -167,7 +179,7 @@ func _test() -> void:
         var now:=Time.get_ticks_usec()
         frames.append(now-previous)
         previous=now
-        if i==9 and not await _capture("03-transient"):
+        if i==9 and not await _capture("04-transient"):
             return
         if first_near>0 and first_far>first_near and i>=39:
             break
@@ -175,7 +187,7 @@ func _test() -> void:
         _fail("front did not progress near="+str(first_near)+" far="+str(first_far)+" "+str(runtime.session.hydraulic_report()))
         return
     print("V3_HYBRID_PROGRESSIVE_PASS threshold_l=20 near_tick=",first_near," far_tick=",first_far," mass=",mass)
-    if not await _capture("04-filled"):
+    if not await _capture("05-filled"):
         return
     var retained:=int(water.call("get_report")["meshes"])
     # Move within visible range without altering terrain; certified
@@ -188,12 +200,14 @@ func _test() -> void:
             _fail("movement mass/visibility")
             return
         await process_frame
-    if not await _capture("05-movement"):
+    if not await _capture("06-movement"):
         return
     runtime.player.global_position=Vector3(-4,12,28)
     if not _frame(runtime,water,0):
         return
-    if not await _capture("06-return"):
+    camera.global_position=Vector3(-4,48,48)
+    camera.look_at(Vector3(-4,0,23),Vector3.UP)
+    if not await _capture("07-return"):
         return
     frames.sort()
     var p95: int=frames[mini(frames.size()-1,ceili(float(frames.size())*0.95)-1)]

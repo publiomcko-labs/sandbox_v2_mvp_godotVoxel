@@ -335,7 +335,7 @@ public:
             if(domain_.tiles().size()>=256&&t==domain_.tiles().end())continue;
             if(!resident(tool,k))continue;
             const auto start=std::chrono::steady_clock::now();
-            auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),revision);
+            auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),revision,integrated_mode_);
             const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
             max_snapshot_us_=std::max(max_snapshot_us_,us);
             if(snapshot&&worker_.submit(std::move(*snapshot))){pending_[k]=revision;break;}

@@ -95,12 +95,23 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
                 const auto [dx,dz]=offsets[j];
                 const double floor=cell.floor_mm*0.001,ceiling=cell.ceiling_mm*0.001;
                 const int x=cell.x+dx,z=cell.z+dz;
-                const double clip=cell.ceiling_mm==exposed_ceiling?floor_at(x,z,floor)-1.35:floor-0.35;
+                const double clip=cell.ceiling_mm==exposed_ceiling?std::min(floor_at(x,z,floor)-1.35,floor-0.35):floor-0.35;
                 vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
             }
             auto &v=out.materials[cell.type];
             v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
         }
+        // SDF slice at the actual free-surface head, not the highest
+        // solid-to-air crossing (which may be an unrelated cave roof).
+        auto sdf_at=[&](int x,int z,double y) {
+            const int p=g.render_pad,w=g.nx+1+2*p;
+            const int lx=x-g.origin.x+p,lz=z-g.origin.z+p;
+            const double ly=(y-g.origin.y)/g.step;
+            if(lx<0||lx>=w||lz<0||lz>=g.nz+1+2*p||ly<0||ly>g.render_ny)return -4.0;
+            const int a=static_cast<int>(std::floor(ly)),b=std::min(a+1,g.render_ny);
+            const auto idx=static_cast<std::size_t>((lz*w+lx)*(g.render_ny+1));
+            return (g.render_sdf[idx+a]*(1-(ly-a))+g.render_sdf[idx+b]*(ly-a))/1024.0;
+        };
         // A single canonical donor per known bank column, and only
         // below its first certified higher air interval. This restores
         // the H14 partial-cell shoreline without flooding dry passages.
@@ -110,6 +121,66 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             const bool inside=x>=0&&x<g.nx&&z>=0&&z<g.nz;
             const auto &runs=inside?g.column_runs.at(static_cast<std::size_t>(z*g.nx+x)):
                 g.halo_runs.at(static_cast<std::size_t>((z+1)*(g.nx+2)+x+1));
+            if(!g.render_sdf.empty()) {
+                // Only partially obstructed cells. No extension into
+                // a certified dry interval or a fully open dry column.
+                const Cell* selected=nullptr;
+                std::array<double,4> field{};
+                std::array<bool,2> keep{};
+                constexpr int tris[2][3]={{0,1,2},{0,2,3}};
+                for(auto d:{std::pair{-1,0},std::pair{1,0},std::pair{0,-1},std::pair{0,1}}) {
+                    auto it=columns.find({wx+d.first,wz+d.second});if(it==columns.end())continue;
+                    for(auto c:it->second) {
+                        if(c->ceiling_mm!=exposed_ceiling)continue;
+                        bool dry_open=false;
+                        for(const auto &run:runs) {
+                            const double lo=inside?tp::span_floor_mm(g,run)*0.001:double(g.origin.y+run.bottom*g.step);
+                            if(lo<=c->head&&c->head<g.origin.y+run.top*g.step){dry_open=true;break;}
+                        }
+                        if(dry_open)continue;
+                        std::array<double,4> q{};
+                        for(std::size_t j=0;j<4;++j)q[j]=sdf_at(wx+offsets[j].first,wz+offsets[j].second,c->head);
+                        if(*std::min_element(q.begin(),q.end())>=0||*std::max_element(q.begin(),q.end())<=0)continue;
+                        const int e0=d.first<0?0:d.first>0?1:d.second<0?0:3;
+                        const int e1=d.first<0?3:d.first>0?2:d.second<0?1:2;
+                        if(std::max(q[e0],q[e1])<=0)continue;
+                        std::array<bool,2> k{};
+                        for(int n=0;n<2;++n){
+                            bool a=false,b=false;for(int j:tris[n]){a|=j==e0;b|=j==e1;}
+                            k[n]=a&&b;
+                        }
+                        if(std::max(q[0],q[2])>0&&(k[0]||k[1]))k={true,true};
+                        if(!selected||std::tie(c->floor_mm,c->x,c->z)<std::tie(selected->floor_mm,selected->x,selected->z)){
+                            selected=c;field=q;keep=k;
+                        }
+                    }
+                }
+                if(!selected||selected->x<g.origin.x||selected->x>=g.origin.x+g.nx||selected->z<g.origin.z||selected->z>=g.origin.z+g.nz)continue;
+                std::array<Vertex,4> verts;
+                for(std::size_t j=0;j<4;++j) {
+                    const auto [dx,dz]=offsets[j];
+                    const int xx=wx+dx,zz=wz+dz;
+                    const bool shared=xx>=selected->x&&xx<=selected->x+1&&zz>=selected->z&&zz<=selected->z+1;
+                    const double yy=shared?corner(*selected,xx,zz):selected->head;
+                    verts[j]={double(xx),yy-0.003,double(zz),std::min(yy-0.01,floor_at(xx,zz,selected->floor_mm*0.001)-1.35),selected->ceiling_mm*0.001};
+                }
+                auto &dst=out.materials[selected->type];
+                for(int n=0;n<2;++n)if(keep[n]) {
+                    std::vector<Vertex> poly;
+                    for(int j=0;j<3;++j) {
+                        const int a=tris[n][j],b=tris[n][(j+1)%3];
+                        if(field[a]>=0)poly.push_back(verts[a]);
+                        if((field[a]>=0)!=(field[b]>=0)) {
+                            const double t=field[a]/(field[a]-field[b]);
+                            auto mix=[&](double u,double v){return u+(v-u)*t;};
+                            const auto &u=verts[a],&v=verts[b];
+                            poly.push_back({mix(u.x,v.x),mix(u.y,v.y),mix(u.z,v.z),mix(u.floor,v.floor),u.ceiling});
+                        }
+                    }
+                    for(std::size_t j=1;j+1<poly.size();++j)dst.insert(dst.end(),{poly[0],poly[j],poly[j+1]});
+                }
+                continue;
+            }
             const Cell* donor=nullptr;int cap=exposed_ceiling;
             for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
                 if(!dx&&!dz)continue;

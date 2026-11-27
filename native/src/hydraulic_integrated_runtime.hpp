@@ -121,7 +121,7 @@ public:
             }
             const auto start=std::chrono::steady_clock::now();
             const auto wanted_revision=dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
-            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
+            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true);
             max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
             if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;break;}
         }
@@ -215,6 +215,16 @@ public:
             const auto &g=*t.geometry;J runs=J::array();
             for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
             geometry.push_back({{"key",{k.x,k.y,k.z}},{"revision",g.revision},{"runs",runs},{"floor",g.surface_floor},{"refined",g.refine_exposed}});
+            if(!g.render_sdf.empty()&&(model_.tile_mass(k)||t.local)){
+                constexpr char hex[]="0123456789abcdef";
+                std::string packed;packed.reserve(g.render_sdf.size()*4);
+                for(auto v:g.render_sdf){const auto u=static_cast<std::uint16_t>(v);for(int shift:{12,8,4,0})packed.push_back(hex[(u>>shift)&15]);}
+                geometry.back()["render_sdf"]=std::move(packed);geometry.back()["render_pad"]=g.render_pad;
+            }
+            if(!g.halo_runs.empty()){
+                J hr=J::array();for(const auto &col:g.halo_runs)for(const auto &s:col)hr.push_back({s.x,s.z,s.bottom,s.top});
+                geometry.back()["halo_runs"]=std::move(hr);geometry.back()["halo_floor"]=g.halo_floor;
+            }
         }
         for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
         for(const auto &k:activate_pending_)activate_pending.push_back({k.x,k.y,k.z});
@@ -233,6 +243,23 @@ public:
                 for(int y=lo;y<hi;++y){auto &air=s.air.at(static_cast<std::size_t>((z*16+x)*64+y));if(air)throw std::invalid_argument("hybrid archive duplicate run");air=1;}
             }
             s.surface_floor=row.at("floor").get<std::vector<float>>();s.refine_exposed=row.at("refined").get<bool>();
+            if(row.contains("render_sdf")){
+                s.render_pad=row.at("render_pad").get<int>();
+                if(s.render_pad<0||s.render_pad>1)throw std::invalid_argument("render archive pad");
+                const auto &packed=row.at("render_sdf").get_ref<const std::string&>();
+                const auto w=17+2*s.render_pad;
+                if(packed.size()!=static_cast<std::size_t>(w*w*65*4))throw std::invalid_argument("render archive shape");
+                auto nibble=[](char c){if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;throw std::invalid_argument("render archive hex");};
+                for(std::size_t q=0;q<packed.size();q+=4){int n=0;for(std::size_t j=0;j<4;++j)n=n*16+nibble(packed[q+j]);s.render_sdf.push_back(static_cast<std::int16_t>(n>=32768?n-65536:n));}
+            }
+            if(row.contains("halo_runs")){
+                s.halo_floor=row.at("halo_floor").get<std::vector<float>>();s.halo_air.resize(18*18*64);
+                for(const auto &v:row.at("halo_runs")){
+                    const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
+                    if(x< -1||x>16||z< -1||z>16||(x>=0&&x<16&&z>=0&&z<16)||lo<0||hi>64||lo>=hi)throw std::invalid_argument("render archive halo");
+                    for(int y=lo;y<hi;++y)s.halo_air.at(static_cast<std::size_t>(((z+1)*18+x+1)*64+y))=1;
+                }
+            }
             geometry.emplace(k,std::make_shared<const tp::Result>(tp::extract(s)));
         }
         auto model=experiment::Coupler::decode(j.at("coupler"),types,geometry);model.suspend_all();

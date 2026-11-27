@@ -11,7 +11,7 @@ namespace tp=topology;
 // plain C++ data only, suitable for off-thread topology extraction later.
 // It is a geometric classification, not an additional terrain store.
 inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::VoxelTool>& tool,
-        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision) {
+        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false) {
     using namespace godot;
     if(extent.x<1||extent.x>16||extent.z<1||extent.z>16||extent.y<1||extent.y>64||
         std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
@@ -29,6 +29,7 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
     snapshot.air.resize(static_cast<std::size_t>(extent.x*extent.y*extent.z));
     // Each corner is classified once; reuse between adjacent samples.
     std::vector<std::uint8_t> corners(static_cast<std::size_t>(size.x*size.y*size.z));
+    if(render){snapshot.render_pad=pad;snapshot.render_sdf.resize(corners.size());}
     auto index=[&](int x,int y,int z){return static_cast<std::size_t>((z*size.x+x)*size.y+y);};
     std::vector<float> floors(static_cast<std::size_t>(size.x*size.z));
     for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x) {
@@ -37,6 +38,7 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
         for(int y=0;y<size.y;++y) {
             const double sdf=buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF);
             corners[index(x,y,z)]=sdf>0.1?1:0;
+            if(render)snapshot.render_sdf[index(x,y,z)]=static_cast<std::int16_t>(std::lround(std::clamp(sdf,-4.0,4.0)*1024));
             if(y&&previous<=0.0&&sdf>0.0)
                 floor=origin.y+y-1+std::clamp(-previous/(sdf-previous),0.0,1.0);
             previous=sdf;
