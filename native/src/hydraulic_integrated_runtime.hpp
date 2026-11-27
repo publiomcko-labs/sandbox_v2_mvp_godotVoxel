@@ -18,7 +18,8 @@ class IntegratedRuntime {
     std::map<std::string,std::tuple<std::uint64_t,std::uint64_t,std::uint64_t>> source_attempts_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
-    std::set<core::Region> group_,activate_pending_,visual_invalidated_;
+    std::set<core::Region> group_,activate_pending_,visual_invalidated_,construction_pending_;
+    std::uint64_t wet_preflights_{},wet_preflight_rejections_{},construction_commits_{};
     hybrid::LayeredInputCache surface_cache_;
     EditProvenance provenance_;
     std::set<core::Region> pending_survey_;
@@ -126,7 +127,7 @@ public:
     explicit IntegratedRuntime(const Domain& bootstrap,std::size_t surveyed=0):model_(experiment::Coupler::adopt(bootstrap)),sources_(bootstrap.seeded()),pristine_survey_tiles_(surveyed){}
     IntegratedRuntime(experiment::Coupler model,std::set<std::string> sources):model_(std::move(model)),sources_(std::move(sources)){}
     const auto& model()const{return model_;}
-    bool allows_edit(core::Vec3 p,double radius,bool add) {
+    bool allows_edit(core::Vec3 p,double radius,bool add,const godot::Ref<godot::VoxelTool>& tool,std::uint64_t next_revision,bool exact_brush) {
         if(!core::valid_point(p)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
         std::size_t needed=0,new_tiles=0;
         const auto keys=affected(p,radius);
@@ -136,22 +137,40 @@ public:
             auto it=model_.tiles().find(k);
             if(it==model_.tiles().end()) {if(near_wet){++needed;++new_tiles;}continue;}
             if(!it->second.resident||dirty_.contains(k))return false;
-            if(add&&model_.tile_mass(k))return false;
-            if(!add&&near_wet&&!it->second.local)++needed;
+            if(near_wet&&!it->second.local)++needed;
         }
         if(needed+model_.active()>model_.active_limit()||new_tiles+model_.tiles().size()>model_.tile_limit())return false;
-        // Activate BEFORE terrain mutation so the old column occupation is
-        // preserved when a newly carved interval joins the same basin.
-        if(!add&&near_wet)for(auto k:keys)if(model_.tiles().contains(k)&&!activate(k))return false;
+        if(!near_wet)return true;
+        ++wet_preflights_;
+        auto reject=[&](){++wet_preflight_rejections_;return false;};
+        if(!exact_brush||tool.is_null()||!dirty_.empty()||next_revision!=revision_+1)return reject();
+        // Bounded, edit-only staging; immutable geometry shared. No
+        // live owner changes on a rejected or deferred terrain command.
+        auto staged=model_;
+        for(auto k:keys)if(staged.tiles().contains(k)&&!staged.tiles().at(k).local&&!staged.activate(k))return reject();
+        const BrushPreview preview{godot::Vector3(p.x,p.y,p.z),radius,add};
+        for(auto k:keys)if(staged.tiles().contains(k)){
+            auto snapshot=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),next_revision,true,false,&preview);
+            if(!snapshot)return reject();
+            auto geometry=std::make_shared<const tp::Result>(tp::extract(*snapshot));
+            if(!staged.replace_geometry(geometry,add))return reject();
+        }
+        if(staged.mass()!=model_.mass())throw std::logic_error("hydraulic preflight ledger");
         return true;
     }
-    void edited(core::Vec3 p,double radius,std::uint64_t rev) {
+    void edited(core::Vec3 p,double radius,std::uint64_t rev,bool add) {
         if(dirty_.empty())group_.clear();
         revision_=rev;
         const auto keys=affected(p,radius);
         provenance_.record(rev,keys);
         bool near_wet=false;for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
+        // Accepted command only. The old hydraulic geometry is immutable
+        // until the authoritative post-edit snapshots are published.
+        if(near_wet)for(auto k:keys)if(model_.tiles().contains(k)&&!activate(k))
+            throw std::logic_error("preflight activation mismatch");
+        if(add&&near_wet)++construction_commits_;
         for(auto k:keys) {
+            if(add&&near_wet&&model_.tiles().contains(k))construction_pending_.insert(k);
             visual_invalidated_.insert(k);
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
             else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
@@ -179,12 +198,12 @@ public:
                     for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){evict=q;break;}
                     if(evict)model_.forget_dry(*evict);
                 }
-                if(exists?model_.replace_geometry(geometry):model_.publish(geometry)) {
+                if(exists?model_.replace_geometry(geometry,construction_pending_.contains(k)):model_.publish(geometry)) {
                     if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
                     if(activate_pending_.contains(k)&&!activate(k)){
                         model_.set_resident(k,false);blocked_[k]=rev;
                     }else {
-                        activate_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;
+                        activate_pending_.erase(k);construction_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;
                     }
                 }else blocked_[k]=rev;
             }
@@ -322,6 +341,7 @@ public:
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
         d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
+        d["wet_preflights"]=static_cast<int64_t>(wet_preflights_);d["wet_preflight_rejections"]=static_cast<int64_t>(wet_preflight_rejections_);d["construction_commits"]=static_cast<int64_t>(construction_commits_);
         d["edit_group_revision"]=static_cast<int64_t>(revision_);
         Array group;for(auto k:group_)group.push_back(Vector3i(k.x,k.y,k.z));d["edit_group_tiles"]=group;
         int64_t active=0,near_count=0,wet=0,intervals=0,local_bytes=0;
@@ -334,7 +354,7 @@ public:
         return d;
     }
     nlohmann::json encode()const {
-        using J=nlohmann::json;J geometry=J::array(),dirty=J::array(),activate_pending=J::array();
+        using J=nlohmann::json;J geometry=J::array(),dirty=J::array(),activate_pending=J::array(),construction_pending=J::array();
         for(const auto &[k,t]:model_.tiles()){
             const auto &g=*t.geometry;J runs=J::array();
             for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
@@ -352,7 +372,8 @@ public:
         }
         for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
         for(const auto &k:activate_pending_)activate_pending.push_back({k.x,k.y,k.z});
-        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"provenance",provenance_.encode()},{"dirty",dirty},{"activate_pending",activate_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_},{"activations",activations_},{"settles",settles_},{"suspended_reclaims",suspended_reclaims_}};
+        for(const auto &k:construction_pending_)construction_pending.push_back({k.x,k.y,k.z});
+        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"provenance",provenance_.encode()},{"dirty",dirty},{"activate_pending",activate_pending},{"construction_pending",construction_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_},{"activations",activations_},{"settles",settles_},{"suspended_reclaims",suspended_reclaims_}};
     }
     static std::unique_ptr<IntegratedRuntime> decode(const nlohmann::json& j,const std::vector<Liquid>& types) {
         if(j.at("schema")!="v3-hybrid-runtime-1"||!j.at("geometry").is_array()||j.at("geometry").size()>128)throw std::invalid_argument("hybrid runtime archive");
@@ -393,6 +414,11 @@ public:
             core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};
             if(!out->dirty_.contains(k))throw std::invalid_argument("hybrid pending owner");
             out->activate_pending_.insert(k);
+        }
+        if(j.contains("construction_pending"))for(const auto &v:j.at("construction_pending")){
+            core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};
+            if(!out->dirty_.contains(k)||!out->model_.tiles().contains(k))throw std::invalid_argument("hybrid construction pending");
+            out->construction_pending_.insert(k);
         }
         out->revision_=j.at("revision").get<std::uint64_t>();
         out->provenance_=EditProvenance::decode(j.value("provenance",nlohmann::json(nullptr)),out->revision_);

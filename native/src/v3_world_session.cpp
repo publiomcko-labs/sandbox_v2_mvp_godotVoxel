@@ -61,10 +61,8 @@ sc::ApplyResult material_brush(WorldBootstrap *world,const sc::Brush &b) {
     tool->copy(origin,buffer,mask,false);
     bool changed=false;
     for(int z=0;z<size.z;++z) for(int x=0;x<size.x;++x) for(int y=0;y<size.y;++y) {
-        const double shape=Vector3(origin+Vector3i(x,y,z)).distance_to(center)-b.radius_m;
-        if(shape>1) continue;
         const double old=buffer->get_voxel_f(x,y,z,sdf);
-        const double next=b.add?std::min(old,shape):std::max(old,-shape);
+        const double next=sandbox::hydraulic::brush_sdf(Vector3(origin+Vector3i(x,y,z)),{center,b.radius_m,b.add},old);
         if(next==old) continue;
         const auto raw=buffer->get_voxel(x,y,z,sdf);
         buffer->set_voxel_f(next,x,y,z,sdf);
@@ -376,11 +374,19 @@ String V3WorldSession::submit_material(WorldBootstrap *world,int64_t command,con
 String V3WorldSession::submit_impl(WorldBootstrap *world,int64_t command,const Vector3 &center,bool add,double radius,int slot) {
     if(!state_ || !state_->store.is_open() || !world || !state_->bound_world ||
        state_->bound_world!=world->get_instance_id() || command<=0) return "rejected";
-    if(state_->hydraulic&&!state_->hydraulic->allows_edit({center.x,center.y,center.z},radius,add))return "rejected";
+    if(state_->hydraulic){
+        Ref<VoxelTool> tool;
+        if(state_->hydraulic->integrated_mode()){
+            auto *terrain=Object::cast_to<VoxelLodTerrain>(world->get_node_or_null(NodePath("Terrain")));
+            if(!terrain)return "rejected";
+            tool=terrain->get_voxel_tool();
+        }
+        if(!state_->hydraulic->allows_edit({center.x,center.y,center.z},radius,add,tool,state_->core->revision()+1,slot>=0))return "rejected";
+    }
     state_->adapter.world=world;
     const auto r=state_->core->submit({static_cast<uint64_t>(command),{center.x,center.y,center.z},radius,add,slot});
     state_->adapter.world=nullptr;
-    if(state_->hydraulic&&r==sc::CommandResult::accepted)state_->hydraulic->edited({center.x,center.y,center.z},radius,state_->core->revision());
+    if(state_->hydraulic&&r==sc::CommandResult::accepted)state_->hydraulic->edited({center.x,center.y,center.z},radius,state_->core->revision(),add);
     return String(status_name(r));
 }
 Dictionary V3WorldSession::peek_terrain_event() const {

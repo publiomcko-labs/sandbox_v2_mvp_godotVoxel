@@ -465,10 +465,33 @@
           "conflict": "hydro:lava_pool initial mass unchanged; root exposed floor eligibility or ownership conflict; no source injection"
         },
         "i17b": {
-          "status": "CANDIDATE_VALIDATION_PENDING",
+          "status": "CORE_NATIVE_GPU_PASS_LATE_SOURCES_RUNTIME_OCEAN_COVERAGE_OPEN",
           "focus": "explicit finite-volume source profile and source diagnostics",
           "lava_volume_litres": 64000,
-          "hydro_mod_version": "1.1.0"
+          "hydro_mod_version": "1.1.0",
+          "commit": "1c8f18f303b7d38a288c2e94c55082f9093cb483",
+          "core_run": 46071719588,
+          "native_run": 46071719645,
+          "gpu_run": 46071719636,
+          "native_artifact": 15233307432,
+          "native_artifact_sha256": "1cc4f20480f546e37f62fc454493f82cf10b2634e9780503245e28286b9b3c87",
+          "gpu_artifact": 15233870118,
+          "gpu_artifact_sha256": "dfa1e86360200f85903c7832891ddc00bd747b29e46f34dce3bfe240d20234c4",
+          "finite_initial_litres": 11378442,
+          "ocean_injected_write": 9,
+          "ocean_injected_reopen": 18,
+          "source_count": 3,
+          "gpu_water_litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_tick_p95_us": 4417,
+          "gpu_combined_refresh_p95_us": 6423,
+          "gpu_combined_refresh_p99_us": 8650,
+          "gpu_frame_p95_us": 49487
+        },
+        "i18": {
+          "status": "CANDIDATE_VALIDATION_PENDING",
+          "focus": "exact VoxelTool brush preflight and conservative wet construction displacement"
         }
       }
     },

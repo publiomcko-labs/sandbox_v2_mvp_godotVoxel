@@ -243,8 +243,8 @@ public:
     const auto &profile()const{return profile_;}
     // Conservative initial edit policy: no construction in a wet tile;
     // no carving that could merge different liquids in the same tile.
-    bool allows_edit(core::Vec3 center,double radius,bool add) {
-        if(integrated_)return integrated_->allows_edit(center,radius,add);
+    bool allows_edit(core::Vec3 center,double radius,bool add,const godot::Ref<godot::VoxelTool>& tool={},std::uint64_t next_revision=0,bool exact_brush=false) {
+        if(integrated_)return integrated_->allows_edit(center,radius,add,tool,next_revision,exact_brush);
         if(integrated_mode_)return false;
         if(!core::valid_point(center)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});
@@ -261,8 +261,8 @@ public:
         }
         return true;
     }
-    void edited(core::Vec3 center,double radius,std::uint64_t revision) {
-        if(integrated_){integrated_->edited(center,radius,revision);return;}
+    void edited(core::Vec3 center,double radius,std::uint64_t revision,bool add=false) {
+        if(integrated_){integrated_->edited(center,radius,revision,add);return;}
         if(edited_tiles_.empty())edit_group_.clear();
         edit_group_revision_=revision;
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});

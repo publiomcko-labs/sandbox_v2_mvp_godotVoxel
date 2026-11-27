@@ -434,7 +434,7 @@ public:
             std::any_of(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.tile==key;}))return false;
         tiles_.erase(it);surface_changes_.insert(key);rebuild();verify();return true;
     }
-    bool replace_geometry(std::shared_ptr<const tp::Result> geometry) {
+    bool replace_geometry(std::shared_ptr<const tp::Result> geometry,bool displace=false) {
         auto &t=tiles_.at(geometry->origin);
         if(geometry->revision<t.geometry->revision||geometry->nx!=t.geometry->nx||geometry->nz!=t.geometry->nz||geometry->step!=1)return false;
         if(geometry->revision==t.geometry->revision) {
@@ -446,7 +446,7 @@ public:
         }
         if(t.local) {
             Local staged(*geometry,types_);
-            if(!staged.remap_from(*t.local))return false;
+            if(!staged.remap_from(*t.local,displace))return false;
             auto owners=mapping(*geometry,staged);
             t.local.emplace(std::move(staged));t.owners=std::move(owners);t.phase=Phase::local_active;t.stable_ticks=0;
         }else {

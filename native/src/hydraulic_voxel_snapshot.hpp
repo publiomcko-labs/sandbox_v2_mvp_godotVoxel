@@ -9,11 +9,18 @@
 
 namespace sandbox::hydraulic {
 namespace tp=topology;
+// Same quantized SDF operation used by the authoritative material brush.
+struct BrushPreview {godot::Vector3 center;double radius;bool add;};
+inline double brush_sdf(const godot::Vector3& point,const BrushPreview& brush,double old){
+    const double shape=point.distance_to(brush.center)-brush.radius;
+    if(shape>1)return old;
+    return brush.add?std::min(old,shape):std::max(old,-shape);
+}
 // Must be called on the engine main thread. The returned snapshot owns
 // plain C++ data only, suitable for off-thread topology extraction later.
 // It is a geometric classification, not an additional terrain store.
 inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::VoxelTool>& tool,
-        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false,bool pristine_survey=false) {
+        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false,bool pristine_survey=false,const BrushPreview* preview=nullptr) {
     using namespace godot;
     if(extent.x<1||extent.x>16||extent.z<1||extent.z>16||extent.y<1||extent.y>64||
         std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
@@ -30,7 +37,16 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
     const int pad=halo?1:0;
     const auto size=halo?halo_size:core_size;
     Ref<VoxelBuffer> buffer;buffer.instantiate();buffer->create(size.x,size.y,size.z);
-    tool->copy(halo?halo_origin:origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
+    const auto copy_origin=halo?halo_origin:origin;
+    tool->copy(copy_origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
+    if(preview){
+        if(pristine_survey)throw std::invalid_argument("preview requires authoritative resident data");
+        for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x)for(int y=0;y<size.y;++y){
+            const double old=buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF);
+            const double next=brush_sdf(Vector3(copy_origin+Vector3i(x,y,z)),*preview,old);
+            if(next!=old)buffer->set_voxel_f(next,x,y,z,VoxelBuffer::CHANNEL_SDF);
+        }
+    }
     tp::Snapshot snapshot{{origin.x,origin.y,origin.z},extent.x,extent.y,extent.z,1,revision,{}};
     snapshot.air.resize(static_cast<std::size_t>(extent.x*extent.y*extent.z));
     // Each corner is classified once; reuse between adjacent samples.

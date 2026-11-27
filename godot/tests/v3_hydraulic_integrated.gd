@@ -247,11 +247,68 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
     print("V3_HYBRID_SOURCES_PASS phase=",("reopen" if reopen else "write")," initial=",finite," state=",after)
     runtime.request_close()
 
+func _barrier(runtime,water: Node3D) -> void:
+    var initial: Dictionary=runtime.session.hydraulic_report()
+    var mass:=int(initial["litres"])
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var tile:=_tile(runtime.player.global_position)
+    var center:=Vector3.ZERO
+    var accepted:=false
+    for dz in range(-1,2):
+        for dx in range(-1,2):
+            var k:=tile+Vector3i(dx*16,0,dz*16)
+            for z in range(k.z+4,k.z+12,2):
+                for x in range(k.x+4,k.x+12,2):
+                    for y in range(-8,3):
+                        var p:=Vector3(x+0.5,y+0.5,z+0.5)
+                        var wet: Dictionary=runtime.session.hydraulic_at(p)
+                        if wet.is_empty() or float(wet["level"])-p.y<0.5 or tool.get_voxel_f(Vector3i(p.floor()))<0.1:
+                            continue
+                        if runtime.submit_brush(p,true,2.0)=="accepted":
+                            center=p
+                            accepted=true
+                            break
+                    if accepted:
+                        break
+                if accepted:
+                    break
+            if accepted:
+                break
+        if accepted:
+            break
+    if not accepted:
+        _fail("no admissible wet construction "+str(runtime.session.hydraulic_report()))
+        return
+    var deadline:=Time.get_ticks_msec()+30000
+    while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("barrier publication "+str(runtime.session.hydraulic_report()))
+            return
+        await process_frame
+    var blocked: Dictionary=runtime.session.hydraulic_report()
+    if int(blocked["litres"])!=mass or int(blocked["construction_commits"])!=1 or int(blocked["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty() or tool.get_voxel_f(Vector3i(center.floor()))>=0:
+        _fail("barrier displacement "+str(blocked))
+        return
+    for i in range(25):
+        if not _frame(runtime,water,50000000):
+            return
+        await process_frame
+    var state: Dictionary=runtime.session.hydraulic_report()
+    if int(state["litres"])!=mass or int(state["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty():
+        _fail("barrier retained solid "+str(state))
+        return
+    print("V3_HYBRID_BARRIER_PASS mass=",mass," center=",center," state=",state)
+    runtime.request_close()
+
 func _test() -> void:
     var args:=OS.get_cmdline_user_args()
     var reopen: bool="--phase=reopen" in args
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
+    var barrier: bool="--phase=barrier" in args
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
     if not runtime.running:
@@ -285,6 +342,9 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if barrier:
+        await _barrier(runtime,water)
         return
     if sources:
         await _sources(runtime,water,"--phase=sources-reopen" in args)

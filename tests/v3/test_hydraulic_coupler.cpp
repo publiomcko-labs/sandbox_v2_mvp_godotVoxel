@@ -103,6 +103,20 @@ int main(){
     auto late_save=Coupler::decode(late.encode(),types,{{ka,ba},{kb,bb}});
     assert(late_save.encode()==late.encode());
     std::cout<<"V3_HYBRID_I17_LATE_BASIN_PASS mass="<<late.mass()<<"\n";
+    // A solid wall deletes complete wet intervals. Only surviving
+    // previously wet recipients can accept displaced mass.
+    tp::Snapshot wall{{0,0,0},4,8,4,1,2,std::vector<std::uint8_t>(4*8*4,1)};
+    for(int z=0;z<4;++z)for(int y=0;y<8;++y)wall.air[static_cast<std::size_t>((z*4+2)*8+y)]=0;
+    const auto wall_geom=std::make_shared<const tp::Result>(tp::extract(wall));
+    Coupler barrier(types,1,1);assert(barrier.publish(a)&&barrier.seed(ka,a->compartments.front().id,0,16000)&&barrier.activate(ka));
+    assert(!barrier.replace_geometry(wall_geom)&&barrier.mass()==16000);
+    assert(barrier.replace_geometry(wall_geom,true)&&barrier.mass()==16000&&barrier.column_mass(ka,2,1)==0);
+    const auto before_wall=barrier.encode();
+    auto solid=wall;solid.revision=3;std::fill(solid.air.begin(),solid.air.end(),0);
+    assert(!barrier.replace_geometry(std::make_shared<const tp::Result>(tp::extract(solid)),true)&&barrier.encode()==before_wall);
+    for(int i=0;i<40;++i)barrier.tick();
+    assert(barrier.mass()==16000&&barrier.column_mass(ka,2,1)==0);
+    std::cout<<"V3_HYBRID_I18_BARRIER_PASS mass="<<barrier.mass()<<"\n";
     // Explicit ocean source and sink, no infinite volume in resident state.
     Coupler sea(types,1,1);assert(sea.publish(a));
     assert(sea.ocean({"sea",ka,{0.5,0.1,0.5},0,2,0,1}));

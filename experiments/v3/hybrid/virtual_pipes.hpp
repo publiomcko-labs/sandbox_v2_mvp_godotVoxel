@@ -171,19 +171,20 @@ public:
     // Stage a carve in the same horizontal footprint. Retain occupied
     // overlap first, then displaced litres only in spatial descendants.
     // Reject an incompatible edit rather than spreading into a dry cell.
-    bool remap_from(const Local& previous) {
+    bool remap_from(const Local& previous,bool displace=false) {
         std::map<std::pair<int,int>,std::vector<std::size_t>> index;
         for(std::size_t i=0;i<columns_.size();++i)index[{columns_[i].x,columns_[i].z}].push_back(i);
-        struct Residual {std::size_t type;Litres left;std::vector<std::size_t> targets;};
+        struct Residual {std::size_t old_index,type;Litres left;std::vector<std::size_t> targets;};
         std::vector<Residual> residuals;
-        for(const auto &old:previous.columns_)if(old.litres) {
-            Residual rem{old.type,old.litres,{}};
+        for(std::size_t old_index=0;old_index<previous.columns_.size();++old_index){
+            const auto &old=previous.columns_[old_index];if(!old.litres)continue;
+            Residual rem{old_index,old.type,old.litres,{}};
             for(auto i:index[{old.x,old.z}]) {
                 const auto &c=columns_[i];
                 const int lo=std::max(old.floor_mm,c.floor_mm),hi=std::min(old.ceiling_mm,c.ceiling_mm);
                 if(lo>=hi)continue;
-                rem.targets.push_back(i);
                 const auto wet=std::max<Litres>(0,std::min<Litres>(hi,Litres(old.floor_mm)+old.litres)-lo);
+                if(!displace||wet>0)rem.targets.push_back(i);
                 const auto n=std::min({wet,rem.left,c.capacity()-c.litres});
                 if(n&&!receive(i,old.type,n))return false;
                 rem.left-=n;
@@ -194,6 +195,47 @@ public:
             const auto n=std::min(rem.left,columns_[i].capacity()-columns_[i].litres);
             if(n&&!receive(i,rem.type,n))return false;
             rem.left-=n;
+        }
+        if(displace&&std::any_of(residuals.begin(),residuals.end(),[](const auto &v){return v.left>0;})){
+            // Displaced mass may go only to surviving wet descendants
+            // connected by submerged openings in the PRE-edit state.
+            // Construction cannot initialize a new dry interval.
+            std::vector<std::size_t> parent(previous.columns_.size());
+            std::iota(parent.begin(),parent.end(),std::size_t(0));
+            auto root=[&](std::size_t i){while(parent[i]!=i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+            for(const auto &p:previous.pipes_){
+                const auto &a=previous.columns_[p.a],&b=previous.columns_[p.b];
+                if(p.enabled&&a.litres&&b.litres&&a.type==b.type&&std::min(a.head(),b.head())>p.sill&&p.soffit>p.sill)
+                    parent[root(p.a)]=root(p.b);
+            }
+            struct Displaced {std::size_t type=no_liquid;Litres amount{};std::set<std::size_t> recipients;};
+            std::map<std::size_t,Displaced> groups;
+            for(auto &rem:residuals){
+                auto &group=groups[root(rem.old_index)];group.type=rem.type;group.amount+=rem.left;
+                for(auto i:rem.targets)if(columns_[i].litres&&columns_[i].type==rem.type)group.recipients.insert(i);
+                rem.left=0;
+            }
+            for(auto &[key,group]:groups){
+                (void)key;if(!group.amount)continue;
+                if(group.recipients.empty())return false;
+                int lo=std::numeric_limits<int>::max(),hi=std::numeric_limits<int>::min();
+                for(auto i:group.recipients){lo=std::min(lo,columns_[i].floor_mm);hi=std::max(hi,columns_[i].ceiling_mm);}
+                auto room=[&](std::size_t i,int mm){
+                    const auto &c=columns_[i];
+                    return std::max<Litres>(0,std::clamp(Litres(mm-c.floor_mm)*c.area_m2,Litres(0),c.capacity())-c.litres);
+                };
+                auto free_at=[&](int mm){Litres sum=0;for(auto i:group.recipients)sum+=room(i,mm);return sum;};
+                if(free_at(hi)<group.amount)return false;
+                while(lo<hi){const int mid=lo+(hi-lo)/2;if(free_at(mid)>=group.amount)hi=mid;else lo=mid+1;}
+                // Deterministic common-head displacement; residual integer
+                // litres use stable interval order. No cross-tile teleport.
+                for(int mm:{lo-1,lo})for(auto i:group.recipients){
+                    const auto n=std::min(group.amount,room(i,mm));
+                    if(n&&!receive(i,group.type,n))return false;
+                    group.amount-=n;
+                }
+                if(group.amount)return false;
+            }
         }
         for(const auto &rem:residuals)if(rem.left)return false;
         // Retain momentum only on identical intervals and openings.

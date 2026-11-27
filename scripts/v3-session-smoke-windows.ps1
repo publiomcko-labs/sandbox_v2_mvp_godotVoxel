@@ -217,6 +217,16 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
         Get-Content $stderr
         if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_SOURCES_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw "Hybrid $phase failed" }
     }
+    $env:V3_WORLD_ID='hybrid_barrier_fixture'
+    $stdout=Join-Path $results 'hybrid-barrier.stdout.log'
+    $stderr=Join-Path $results 'hybrid-barrier.stderr.log'
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_integrated.gd','--','--phase=barrier') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (!$p.WaitForExit(180000)) { $p.Kill(); $p.WaitForExit(); throw 'Hybrid barrier timeout' }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_BARRIER_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw 'Hybrid barrier failed' }
     Remove-Item Env:V3_HYBRID_SOLVER
     Write-Host "V3_HYBRID_INTEGRATED_E2E_PASS mass=$hybridMass"
 }
