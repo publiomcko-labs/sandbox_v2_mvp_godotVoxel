@@ -4,6 +4,8 @@
 #include <godot_cpp/classes/voxel_tool.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
+#include <cstring>
 
 namespace sandbox::hydraulic {
 namespace tp=topology;
@@ -31,12 +33,29 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
     std::vector<std::uint8_t> corners(static_cast<std::size_t>(size.x*size.y*size.z));
     if(render){snapshot.render_pad=pad;snapshot.render_sdf.resize(corners.size());}
     auto index=[&](int x,int y,int z){return static_cast<std::size_t>((z*size.x+x)*size.y+y);};
+    // Locked Voxel Tools v1.7 (2ac9f5f): dense CHANNEL_SDF uses
+    // Z/X/Y layout and signed normalized 16-bit samples, scale 0.002f.
+    // One channel copy avoids 23k GDExtension calls per halo tile.
+    // Preserve the original API for other channel depths and H14.
+    PackedByteArray raw;
+    if(render&&buffer->get_channel_depth(VoxelBuffer::CHANNEL_SDF)==VoxelBuffer::DEPTH_16_BIT)
+        raw=buffer->get_channel_as_byte_array(VoxelBuffer::CHANNEL_SDF);
+    bool bulk=static_cast<std::size_t>(raw.size())==corners.size()*sizeof(std::int16_t);
+    auto decode=[&](std::size_t i)->double {
+        std::int16_t value{};
+        std::memcpy(&value,raw.ptr()+i*sizeof(value),sizeof(value));
+        return std::max(static_cast<float>(value)/32767.f,-1.f)*(1.f/0.002f);
+    };
+    // Guard ABI/format/layout drift against the authoritative engine API.
+    if(bulk)for(const auto &p:{Vector3i(0,0,0),Vector3i(size.x-1,size.y-1,size.z-1),
+            Vector3i(size.x/2,size.y/2,size.z/2),Vector3i(size.x-1,size.y/3,0),Vector3i(0,size.y/2,size.z-1)})
+        if(decode(index(p.x,p.y,p.z))!=buffer->get_voxel_f(p.x,p.y,p.z,VoxelBuffer::CHANNEL_SDF)){bulk=false;break;}
     std::vector<float> floors(static_cast<std::size_t>(size.x*size.z));
     for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x) {
         double previous=0.0;
         double floor=origin.y;
         for(int y=0;y<size.y;++y) {
-            const double sdf=buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF);
+            const double sdf=bulk?decode(index(x,y,z)):buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF);
             corners[index(x,y,z)]=sdf>0.1?1:0;
             if(render)snapshot.render_sdf[index(x,y,z)]=static_cast<std::int16_t>(std::lround(std::clamp(sdf,-4.0,4.0)*1024));
             if(y&&previous<=0.0&&sdf>0.0)

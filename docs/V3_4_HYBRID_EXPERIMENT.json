@@ -205,7 +205,19 @@
           "gpu_snapshot_max_us": 29428
         },
         "i8": {
-          "status": "CANDIDATE_VALIDATION_PENDING"
+          "status": "CORE_NATIVE_GPU_PASS_GEOMETRY_PARTIAL",
+          "commit": "02fad900c2aa65b8364d3276a23b8fd58a0cd756",
+          "core_run": 46057094945,
+          "native_run": 46057094866,
+          "gpu_run": 46057094799,
+          "gpu_artifact": 15227291999,
+          "gpu_builds": 1369,
+          "gpu_tick_p95_us": 3121,
+          "gpu_combined_refresh_p95_us": 6005,
+          "gpu_snapshot_max_us": 30640
+        },
+        "i8b": {
+          "status": "CANDIDATE"
         }
       }
     },
