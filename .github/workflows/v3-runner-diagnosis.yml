@@ -1,0 +1,35 @@
+name: Read-only interactive runner diagnosis
+on:
+  push:
+    branches: [v3/hydraulic]
+    paths: ['.github/workflows/v3-runner-diagnosis.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: [self-hosted, interactive-gpu]
+    timeout-minutes: 3
+    steps:
+      - name: Inspect only runner service, task and session state
+        shell: powershell -NoProfile -File {0}
+        run: |
+          $root='C:\actios-runner-org1'
+          Write-Host "HOST=$env:COMPUTERNAME JOB_SESSION=$((Get-Process -Id $PID).SessionId)"
+          $services=@(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' -and $_.PathName -like "*$root*" })
+          Write-Host "MATCHED_SERVICES=$($services.Count)"
+          $services | Select-Object Name,State,StartMode,ProcessId | ConvertTo-Json -Compress | Write-Host
+          $tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -eq 'GitHub-A7-Interactive-Runner' -or @($_.Actions | Where-Object { $_.Arguments -like "*$root*" -or $_.WorkingDirectory -eq $root }).Count -gt 0 })
+          Write-Host "MATCHED_TASKS=$($tasks.Count)"
+          foreach($t in $tasks) {
+            $info=Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue
+            [pscustomobject]@{Name=$t.TaskName;Path=$t.TaskPath;State=[string]$t.State;LogonType=[string]$t.Principal.LogonType;RunLevel=[string]$t.Principal.RunLevel;LastRun=$info.LastRunTime;LastResult=$info.LastTaskResult;NextRun=$info.NextRunTime} | ConvertTo-Json -Compress | Write-Host
+          }
+          $p=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('Runner.Listener.exe','Runner.Worker.exe','RunnerService.exe','RunnerService') -and $_.ExecutablePath -like "$root*" })
+          $p | Select-Object Name,ProcessId,ParentProcessId,SessionId,CreationDate | ConvertTo-Json -Compress | Write-Host
+          Write-Host "DESKTOP_SESSION_IDS=$(@(Get-Process explorer -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SessionId -Unique) -join ',')"
+          foreach($s in $services) {
+            $events=Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Service Control Manager';Id=7036,7040,7031,7034;StartTime=(Get-Date).AddDays(-8)} -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*$($s.Name)*" -or ($s.DisplayName -and $_.Message -like "*$($s.DisplayName)*") } | Select-Object -First 15
+            foreach($e in $events) { [pscustomobject]@{Time=$e.TimeCreated;Id=$e.Id;Message=$e.Message} | ConvertTo-Json -Compress | Write-Host }
+          }
+          Write-Host 'RUNNER_DIAGNOSIS_READ_ONLY_COMPLETE'
