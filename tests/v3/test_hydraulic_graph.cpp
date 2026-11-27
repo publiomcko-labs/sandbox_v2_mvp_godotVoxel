@@ -75,6 +75,27 @@ int main(){
     broad.invalidate_portal(1,2);
     assert(broad.tick().moved==0&&broad.finite()==780000);
     std::cout<<"V3_HYDRAULIC_WIDE_CONTACT_PASS accelerated_wet narrow_and_dry_unchanged exact_mass\n";
+    // Presentation may share only a certified near-equilibrium plane.
+    // The group spread is bounded, even on chains of small differences.
+    Graph heads({{"water",1,1000},{"lava",10,2800}});
+    heads.add_volume({1,0,tank(),40000});
+    heads.add_volume({2,0,tank(),41000});
+    heads.add_volume({3,0,tank(),42000});
+    heads.add_volume({4,0,tank(),41000});
+    heads.add_volume({5,1,tank(),41000});
+    heads.add_volume({6,0,tank(),0});
+    heads.add_portal({1,1,2,0,20,0.62,true,1,10});
+    heads.add_portal({2,2,3,0,20,0.62,true,1,10});
+    heads.add_portal({3,2,4,4.2,20,0.62,true,1,5});
+    heads.add_portal({4,2,5,0,20,0.62,true,1,10});
+    heads.add_portal({5,2,6,0,20,0.62,true,1,10});
+    const auto visual=heads.presentation_heads({1,2,3,4,5,6});
+    assert(visual.at(1)==visual.at(2)&&std::abs(visual.at(1)-4.05)<1e-8);
+    assert(visual.at(3)==4.2&&visual.at(4)==4.1&&visual.at(5)==4.1&&!visual.contains(6));
+    assert(heads.volumes().at(1).litres==40000&&heads.volumes().at(2).litres==41000);
+    heads.invalidate_portal(1,2);
+    assert(heads.presentation_heads({1,2}).at(1)==4.0);
+    std::cout<<"V3_HYDRAULIC_SHARED_PLANE_PASS bounded_group_head no_mass_mutation no_closed_sill\n";
     // Volume count does not determine the tick work: 4096 dormant bodies,
     // one opening, one portal visit. A billion litres is still one node.
     Graph scale({{"water",1,1000}});

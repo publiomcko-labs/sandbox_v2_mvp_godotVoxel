@@ -97,3 +97,11 @@ Workflow gráfico em 9b7e9e05fff2158fd34335dbf3fe5ba8a4ee9a66, run 45913076460: 
 ## H8 — levantamento da fronteira inicial e apron SDF integral (candidato)
 
 Capturas reais H7 15163875674: contorno inicial termina em linhas retas de tile; após edição há margens angulares e costuras. H8 inicia levantamento 3x3 e segue fronteiras expostas abaixo do nível da fonte antes de inicializar a massa, até janela 7x7 (fallback limitado registrado por seed_boundary_caps); não injeta após a inicialização. A extensão visual SDF usa o footprint integral da coluna vizinha com quatro zero crossings próprios e teto no primeiro intervalo aberto, escolhendo um único doador determinístico por coluna. Sem mudança de física após seed, sem simulação celular e sem novo acesso voxel. Dados arquivados sem SDF mantêm fallback H7. Ainda não estende apron entre tiles independentes. Testes e comparação gráfica pendentes.
+
+### H8 resultado
+
+Contratos 45919696977 e integração 45919697028 SUCCESS; 10.007.000 L conservados inclusive reopen, 4 passos observados para breach, tick headless 144us. GPU 45919727181, artefato 15164216795: quatro capturas, grupo editado com 1 swap/8 holds, zero perda. Comparação por segmentação aproximada RGB e polígono 1.5px: maior segmento inicial H7 364.6px, H8 223px; extensão aumentou significativamente, porém reta artificial no extremo e fissuras internas após edição continuam. seed_boundary_caps=1; não aprovado visualmente como final.
+
+## H9 — plano visual compartilhado e levantamento estendido (candidato)
+
+Compartimentos expostos molhados do mesmo líquido, conectados por abertura real submersa >=1m de largura, podem compartilhar uma altura visual de equilíbrio (spread de todo o grupo <=15cm, deslocamento individual <=7.5cm; margem de 2.5cm em soleira/teto). Sem modificar litros, altura física, portais ou saves; grupos não atravessam fronteira indisponível, parede, queda grande ou líquidos diferentes. Evita cortina visual redundante quando a diferença renderizada desaparece. A expansão inicial segue fronteira até raio de cinco tiles, máximo 64 tiles e headroom de 3200 volumes para novas expansões. Ainda é protótipo limitado; fallback explícito pode truncar um lago extenso, e o custo da aquisição precisa de acompanhamento. Contrato de grupos, cadeia, parede e massa. Validação e captura pendentes.

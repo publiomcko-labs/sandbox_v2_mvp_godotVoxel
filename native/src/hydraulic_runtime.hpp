@@ -54,7 +54,7 @@ class Runtime {
         }
         return false;
     }
-    std::map<Id,godot::PackedVector3Array> visible_flows()const {
+    std::map<Id,godot::PackedVector3Array> visible_flows(const std::map<Id,double> &heads)const {
         using namespace godot;
         std::map<Id,PackedVector3Array> out;
         const auto &graph=domain_.graph();
@@ -66,6 +66,7 @@ class Runtime {
             const auto &a=graph.volumes().at(f.from),&b=graph.volumes().at(f.to);
             if(a.ocean||b.ocean||!a.litres||a.level()-b.level()<0.08||
                 a.level()<=p->second.sill_m)continue;
+            if(heads.contains(f.from)&&heads.contains(f.to)&&heads.at(f.from)-heads.at(f.to)<0.08)continue;
             candidates.push_back(f);
         }
         std::sort(candidates.begin(),candidates.end(),[](const auto &a,const auto &b){
@@ -132,7 +133,8 @@ class Runtime {
             else {
                 // Start with the near field, then follow only below-head
                 // exposed boundary spans of the reached component.
-                // Bound the initial source survey to seven by seven tiles.
+                // Follow the source valley farther when resident, bounded
+                // by 64 surveyed tiles and the graph capacity headroom.
                 auto &window=seed_windows_[id];
                 if(window.empty())for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)
                     window.insert({k.x+x*side,base,k.z+z*side});
@@ -144,7 +146,8 @@ class Runtime {
                 if(!frontier.empty()) {
                     bool expanded=false;
                     for(const auto &q:frontier)
-                        if(std::abs(q.x-k.x)<=3*side&&std::abs(q.z-k.z)<=3*side&&window.size()<49)
+                        if(std::abs(q.x-k.x)<=5*side&&std::abs(q.z-k.z)<=5*side&&window.size()<64&&
+                            domain_.graph().volumes().size()<3200)
                             expanded=window.insert(q).second||expanded;
                     if(!expanded) {
                         // Explicitly bounded fallback for a very large
@@ -263,11 +266,18 @@ public:
     }
     godot::Array surfaces()const {
         godot::Array out;
-        const auto flows=visible_flows();
+        std::set<Id> exposed;
+        for(const auto &[k,t]:domain_.tiles())if(t.available&&visual_tile(k,t))for(const auto &c:t.geometry->compartments) {
+            const auto id=t.ids.at(c.id);
+            if(domain_.graph().volumes().at(id).litres&&std::any_of(c.spans.begin(),c.spans.end(),
+                [](const auto &s){return s.top==height;}))exposed.insert(id);
+        }
+        const auto heads=domain_.graph().presentation_heads(exposed);
+        const auto flows=visible_flows(heads);
         for(const auto &[k,t]:domain_.tiles())if(visual_tile(k,t))for(const auto &[local,id]:t.ids) {
             (void)k;(void)local;const auto &v=domain_.graph().volumes().at(id);
             if(!v.litres)continue;
-            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(v.level());row.push_back(godot::Vector3i(k.x,k.y,k.z));
+            godot::Array row;row.push_back(static_cast<int64_t>(id));row.push_back(static_cast<int64_t>(v.type));row.push_back(heads.contains(id)?heads.at(id):v.level());row.push_back(godot::Vector3i(k.x,k.y,k.z));
             if(auto it=flows.find(id);it!=flows.end())row.push_back(it->second);
             out.push_back(row);
         }

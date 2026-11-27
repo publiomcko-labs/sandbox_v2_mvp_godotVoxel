@@ -175,6 +175,50 @@ public:
             throw std::invalid_argument("hydraulic mass ledger");
         initial_=initial;injected_=injected;drained_=drained;
     }
+    // Numerical surface continuity only. Join exposed, wet volumes over
+    // a certified submerged aperture when the full group head spread is
+    // small. Never change any litres or extend through an unavailable
+    // opening, a dry receiver, a different liquid, or a large drop.
+    std::map<Id,double> presentation_heads(const std::set<Id>& exposed,double tolerance=0.15)const {
+        struct Group {Id parent{};double lo{},hi{},sill{},soffit{};};
+        std::map<Id,Group> groups;
+        for(auto id:exposed) {
+            const auto &v=volumes_.at(id);
+            if(v.ocean||!v.litres)continue;
+            const auto level=v.level();
+            groups.emplace(id,Group{id,level,level,-1e9,1e9});
+        }
+        auto root=[&](Id id) {
+            while(groups.at(id).parent!=id) {
+                auto &g=groups.at(id);g.parent=groups.at(g.parent).parent;id=g.parent;
+            }
+            return id;
+        };
+        for(const auto &[id,entry]:groups) {
+            (void)entry;
+            for(auto pid:adjacency_.at(id)) {
+                const auto &p=portals_.at(pid);
+                if(!p.available||p.opening_height_m<=0||p.area_m2/p.opening_height_m<0.99)continue;
+                const Id other=p.a==id?p.b:p.a;
+                if(other<=id||!groups.contains(other)||volumes_.at(id).type!=volumes_.at(other).type)continue;
+                auto a=root(id),b=root(other);
+                if(a==b)continue;
+                const auto ga=groups.at(a),gb=groups.at(b);
+                const double lo=std::min(ga.lo,gb.lo),hi=std::max(ga.hi,gb.hi);
+                const double sill=std::max({ga.sill,gb.sill,p.sill_m});
+                const double soffit=std::min({ga.soffit,gb.soffit,p.sill_m+p.opening_height_m});
+                if(hi-lo>tolerance||lo<=sill+0.025||hi>=soffit-0.025)continue;
+                if(a>b)std::swap(a,b);
+                groups.at(a)={a,lo,hi,sill,soffit};groups.at(b).parent=a;
+            }
+        }
+        std::map<Id,double> out;
+        for(const auto &[id,entry]:groups) {
+            (void)entry;const auto &group=groups.at(root(id));
+            out.emplace(id,(group.lo+group.hi)*0.5);
+        }
+        return out;
+    }
     Report tick(std::size_t budget=256) {
         Report r;
         if(budget>portal_count_limit)throw std::invalid_argument("portal budget");
