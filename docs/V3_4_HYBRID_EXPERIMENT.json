@@ -714,8 +714,27 @@
             "commit": "8c0bee64c635228fcd8c823a0364eb4a4301d1f5",
             "native_run": 46082956119,
             "gpu_run": 46082956189,
-            "status": "PENDING_VALIDATION",
-            "remote_finite_basin": "OPEN"
+            "status": "NATIVE_GPU_PASS_REGRESSION_REMOTE_BASIN_OPEN",
+            "remote_finite_basin": "OPEN",
+            "native_conclusion": "success",
+            "gpu_conclusion": "success",
+            "native_artifact": 15238041249,
+            "gpu_artifact": 15237966549,
+            "native_zip_sha256": "ab8ca1e2aa12591146d81e6dca2ad716031c43b11c3d824895acd66283008fa0",
+            "dll_sha256": "3b37b84a2dadf466a335dfdd1f58085f7f9c3a0f2b681120e75b25833fe6bfeb",
+            "gpu_zip_sha256": "4906e1d39a79b598a0acc49824221ada4e2760b86f8cf1bd67da2445343b54da",
+            "nonresident_sources": 2,
+            "ocean_acquisitions": 12,
+            "ocean_initial_injection_litres": 1848317,
+            "integrated_mass_litres": 13226759,
+            "lifecycle_mass_litres": 11378442,
+            "lifecycle_freed_bytes": 71472,
+            "gpu_mass_litres": 11378442,
+            "gpu_frame_p95_us": 52252,
+            "gpu_tick_p95_us": 4937,
+            "gpu_snapshot_max_us": 40814,
+            "gpu_refresh_p95_us": 6944,
+            "gpu_refresh_p99_us": 9625
           }
         }
       }
