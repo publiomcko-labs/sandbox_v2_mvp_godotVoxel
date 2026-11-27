@@ -146,7 +146,12 @@
           "native_run": 45995308441,
           "core_run": 45995307789,
           "gpu_run": 45995369956,
-          "status": "PENDING"
+          "status": "PHYSICS_PASS_GEOMETRY_REGRESSION",
+          "native_artifact": 15196310354,
+          "gpu_artifact": 15195553074,
+          "gpu_tick_p95_us": 3052,
+          "gpu_combined_refresh_p95_us": 1767,
+          "mask_b2_only": 10268
         }
       }
     },

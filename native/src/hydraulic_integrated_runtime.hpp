@@ -155,10 +155,13 @@ public:
     std::map<core::Region,hybrid::Input> inputs()const {
         std::map<core::Region,hybrid::Input> out;
         for(const auto &[k,t]:model_.tiles())if(!dirty_.contains(k)&&model_.tile_mass(k)) {
-            hybrid::Input in{k,t.geometry,{},height,{}};
+            hybrid::Input in{k,t.geometry,{},height,{}};in.layered=true;
             auto add=[&](int x,int z,int floor,int ceiling,std::size_t type,double head) {
                 if(head<=floor*0.001||head>=ceiling*0.001-0.001)return;
-                in.cells.push_back({k.x+x,k.z+z,floor,ceiling,type,head,{head,head,head,head}});
+                // Quantize only render heads, retain nonzero shallow
+                // occupancy and the exact interval bounds.
+                const double visual=std::clamp(std::round(head*100.0)/100.0,floor*0.001+0.0001,ceiling*0.001-0.001);
+                in.cells.push_back({k.x+x,k.z+z,floor,ceiling,type,visual,{visual,visual,visual,visual}});
             };
             if(t.local)for(const auto &c:t.local->columns()) {
                 if(c.litres)add(c.x,c.z,c.floor_mm,c.ceiling_mm,c.type,c.head());
@@ -169,11 +172,19 @@ public:
             }
             if(!in.cells.empty())out.emplace(k,std::move(in));
         }
+        // A known dry target tile owns its adjacent bank surface, even
+        // when it contains no hydraulic mass. Never synthesize unknown.
+        std::set<core::Region> banks;
+        for(const auto &[k,in]:out){(void)in;for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
+            core::Region q{k.x+dx*side,base,k.z+dz*side};if(!out.contains(q)&&!dirty_.contains(q)&&model_.tiles().contains(q))banks.insert(q);
+        }}
+        for(auto k:banks){hybrid::Input in{k,model_.tiles().at(k).geometry,{},height,{}};in.layered=true;out.emplace(k,std::move(in));}
         // Only the one-column wet halo is copied between neighboring
         // render tiles. No solver ownership or LOD0 residency is involved.
         for(auto &[k,in]:out)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
             if(!dx&&!dz)continue;
             auto n=out.find({k.x+dx*side,base,k.z+dz*side});if(n==out.end())continue;
+            in.adjacent_geometry.insert(n->first);
             for(const auto &cell:n->second.cells)if(cell.x>=k.x-1&&cell.x<=k.x+side&&cell.z>=k.z-1&&cell.z<=k.z+side)
                 in.neighbors.push_back(cell);
         }

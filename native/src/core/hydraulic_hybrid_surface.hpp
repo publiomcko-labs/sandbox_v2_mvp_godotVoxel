@@ -28,7 +28,9 @@ struct Input {
     std::vector<Wet> wet;
     int exposed_top{};
     std::vector<Cell> cells{},neighbors{};
-    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors;}
+    bool layered=false;
+    std::set<core::Region> adjacent_geometry{};
+    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors&&layered==o.layered&&adjacent_geometry==o.adjacent_geometry;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{};};
 struct Batch {
@@ -50,7 +52,7 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
     const auto start=std::chrono::steady_clock::now();
     Batch out{std::move(input),{},0,0};
     const auto &g=*out.input.geometry;
-    if(!out.input.cells.empty()) {
+    if(out.input.layered||!out.input.cells.empty()) {
         constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
         std::map<std::pair<int,int>,std::vector<const Cell*>> columns;
         for(const auto &c:out.input.cells)columns[{c.x,c.z}].push_back(&c);
@@ -121,93 +123,70 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             const bool inside=x>=0&&x<g.nx&&z>=0&&z<g.nz;
             const auto &runs=inside?g.column_runs.at(static_cast<std::size_t>(z*g.nx+x)):
                 g.halo_runs.at(static_cast<std::size_t>((z+1)*(g.nx+2)+x+1));
-            if(!g.render_sdf.empty()) {
-                // Only partially obstructed cells. No extension into
-                // a certified dry interval or a fully open dry column.
-                const Cell* selected=nullptr;
-                std::array<double,4> field{};
-                std::array<bool,2> keep{};
-                constexpr int tris[2][3]={{0,1,2},{0,2,3}};
-                for(auto d:{std::pair{-1,0},std::pair{1,0},std::pair{0,-1},std::pair{0,1}}) {
-                    auto it=columns.find({wx+d.first,wz+d.second});if(it==columns.end())continue;
-                    for(auto c:it->second) {
-                        if(c->ceiling_mm!=exposed_ceiling)continue;
-                        bool dry_open=false;
-                        for(const auto &run:runs) {
-                            const double lo=inside?tp::span_floor_mm(g,run)*0.001:double(g.origin.y+run.bottom*g.step);
-                            if(lo<=c->head&&c->head<g.origin.y+run.top*g.step){dry_open=true;break;}
-                        }
-                        if(dry_open)continue;
-                        std::array<double,4> q{};
-                        for(std::size_t j=0;j<4;++j)q[j]=sdf_at(wx+offsets[j].first,wz+offsets[j].second,c->head);
-                        if(*std::min_element(q.begin(),q.end())>=0||*std::max_element(q.begin(),q.end())<=0)continue;
-                        const int e0=d.first<0?0:d.first>0?1:d.second<0?0:3;
-                        const int e1=d.first<0?3:d.first>0?2:d.second<0?1:2;
-                        if(std::max(q[e0],q[e1])<=0)continue;
-                        std::array<bool,2> k{};
-                        for(int n=0;n<2;++n){
-                            bool a=false,b=false;for(int j:tris[n]){a|=j==e0;b|=j==e1;}
-                            k[n]=a&&b;
-                        }
-                        if(std::max(q[0],q[2])>0&&(k[0]||k[1]))k={true,true};
-                        if(!selected||std::tie(c->floor_mm,c->x,c->z)<std::tie(selected->floor_mm,selected->x,selected->z)){
-                            selected=c;field=q;keep=k;
-                        }
-                    }
-                }
-                if(!selected||selected->x<g.origin.x||selected->x>=g.origin.x+g.nx||selected->z<g.origin.z||selected->z>=g.origin.z+g.nz)continue;
-                std::array<Vertex,4> verts;
-                for(std::size_t j=0;j<4;++j) {
-                    const auto [dx,dz]=offsets[j];
-                    const int xx=wx+dx,zz=wz+dz;
-                    const bool shared=xx>=selected->x&&xx<=selected->x+1&&zz>=selected->z&&zz<=selected->z+1;
-                    const double yy=shared?corner(*selected,xx,zz):selected->head;
-                    verts[j]={double(xx),yy-0.003,double(zz),std::min(yy-0.01,floor_at(xx,zz,selected->floor_mm*0.001)-1.35),selected->ceiling_mm*0.001};
-                }
-                auto &dst=out.materials[selected->type];
-                for(int n=0;n<2;++n)if(keep[n]) {
-                    std::vector<Vertex> poly;
-                    for(int j=0;j<3;++j) {
-                        const int a=tris[n][j],b=tris[n][(j+1)%3];
-                        if(field[a]>=0)poly.push_back(verts[a]);
-                        if((field[a]>=0)!=(field[b]>=0)) {
-                            const double t=field[a]/(field[a]-field[b]);
-                            auto mix=[&](double u,double v){return u+(v-u)*t;};
-                            const auto &u=verts[a],&v=verts[b];
-                            poly.push_back({mix(u.x,v.x),mix(u.y,v.y),mix(u.z,v.z),mix(u.floor,v.floor),u.ceiling});
-                        }
-                    }
-                    for(std::size_t j=1;j+1<poly.size();++j)dst.insert(dst.end(),{poly[0],poly[j],poly[j+1]});
-                }
-                continue;
+            // The known target owns its bank, including a dry tile
+            // beside water. A donor owns only a certified halo target
+            // for which no separate target mesh exists.
+            if(!inside){
+                core::Region target=g.origin;
+                if(x<0)target.x-=g.nx;else if(x>=g.nx)target.x+=g.nx;
+                if(z<0)target.z-=g.nz;else if(z>=g.nz)target.z+=g.nz;
+                if(out.input.adjacent_geometry.contains(target))continue;
             }
             const Cell* donor=nullptr;int cap=exposed_ceiling;
-            for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
+            bool slice_only=false;
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
                 if(!dx&&!dz)continue;
                 auto it=columns.find({wx+dx,wz+dz});if(it==columns.end())continue;
                 for(auto c:it->second) {
                     if(c->ceiling_mm!=exposed_ceiling)continue;
-                    int candidate_cap=exposed_ceiling;bool open=false;
-                    for(const auto &s:runs) {
-                        const int low=(g.origin.y+s.bottom)*1000,high=(g.origin.y+s.top)*1000;
-                        if(low<=c->floor_mm&&c->floor_mm<high){open=true;break;}
-                        if(low>c->floor_mm)candidate_cap=std::min(candidate_cap,low);
+                    const int coarse=static_cast<int>(std::ceil(c->floor_mm*0.001))*1000;
+                    int candidate_cap=exposed_ceiling;bool open=false,head_open=false;
+                    for(const auto &run:runs) {
+                        const int low=(g.origin.y+run.bottom*g.step)*1000,high=(g.origin.y+run.top*g.step)*1000;
+                        const int actual=inside?tp::span_floor_mm(g,run):low;
+                        if(low<=coarse&&coarse<high)open=true;
+                        if(low>coarse)candidate_cap=std::min(candidate_cap,low);
+                        if(actual<=c->head*1000&&c->head*1000<high)head_open=true;
                     }
-                    if(open||c->head>=candidate_cap*0.001||candidate_cap<=c->floor_mm)continue;
-                    if(!donor||std::tie(c->floor_mm,c->x,c->z)<std::tie(donor->floor_mm,donor->x,donor->z)){
-                        donor=c;cap=candidate_cap;
+                    // Never extend across a certified open dry column.
+                    if(head_open)continue;
+                    const bool solid_bank=!open&&c->head<candidate_cap*0.001&&candidate_cap>coarse;
+                    bool slice=false;
+                    if(!solid_bank&&!g.render_sdf.empty()&&std::abs(dx)+std::abs(dz)==1){
+                        std::array<double,4> q{};
+                        for(std::size_t k=0;k<4;++k)q[k]=sdf_at(wx+offsets[k].first,wz+offsets[k].second,c->head);
+                        const int e0=dx<0?0:dx>0?1:dz<0?0:3;
+                        const int e1=dx<0?3:dx>0?2:dz<0?1:2;
+                        // All positive corners must belong to the
+                        // donor-connected component, not a diagonal cave.
+                        bool reach[4]={};reach[e0]=q[e0]>0;reach[e1]=q[e1]>0;
+                        for(int n=0;n<4;++n)for(int k=0;k<4;++k)
+                            if(q[k]>0&&(reach[(k+1)%4]||reach[(k+3)%4]))reach[k]=true;
+                        bool disconnected=false;for(int k=0;k<4;++k)if(q[k]>0&&!reach[k])disconnected=true;
+                        slice=!disconnected&&std::max(q[e0],q[e1])>0&&*std::min_element(q.begin(),q.end())<0;
+                        if(slice){
+                            candidate_cap=exposed_ceiling;
+                            for(const auto &run:runs){const int low=(g.origin.y+run.bottom*g.step)*1000;if(low>c->head*1000)candidate_cap=std::min(candidate_cap,low);}
+                        }
+                    }
+                    if(!solid_bank&&!slice)continue;
+                    if(!donor||std::tuple{slice,c->floor_mm,c->x,c->z}<std::tuple{slice_only,donor->floor_mm,donor->x,donor->z}){
+                        donor=c;cap=candidate_cap;slice_only=slice;
                     }
                 }
             }
             if(!donor)continue;
-            // Only the tile owning the donor may emit this apron, even
-            // across a tile edge. Unknown terrain never gets an apron.
-            if(donor->x<g.origin.x||donor->x>=g.origin.x+g.nx||donor->z<g.origin.z||donor->z>=g.origin.z+g.nz)continue;
+            if(!inside&&(donor->x<g.origin.x||donor->x>=g.origin.x+g.nx||donor->z<g.origin.z||donor->z>=g.origin.z+g.nz))continue;
+            // Use the certified solid band as support, then let the
+            // actual opaque terrain LOD clip it. Exact SDF contour clipping
+            // at LOD0 is not equivalent to the rendered terrain boundary.
             std::array<Vertex,4> vertices;
-            for(std::size_t j=0;j<4;++j){
-                const auto [dx,dz]=offsets[j];
-                vertices[j]={double(wx+dx),donor->head-0.003,double(wz+dz),
-                    floor_at(wx+dx,wz+dz,donor->floor_mm*0.001)-1.35,cap*0.001};
+            for(std::size_t k=0;k<4;++k){
+                const auto [dx,dz]=offsets[k];const int xx=wx+dx,zz=wz+dz;
+                const bool shared=xx>=donor->x&&xx<=donor->x+1&&zz>=donor->z&&zz<=donor->z+1;
+                const double y=shared?corner(*donor,xx,zz):donor->head;
+                const double floor=floor_at(xx,zz,donor->floor_mm*0.001)-1.35;
+                vertices[k]={double(xx),y-0.003,double(zz),slice_only?std::min(floor,y-0.01):floor,cap*0.001};
             }
             auto &v=out.materials[donor->type];v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
         }
@@ -288,26 +267,29 @@ public:
         std::vector<Batch> done;
         if(running_&&running_->wait_for(std::chrono::seconds(0))==std::future_status::ready) {
             auto results=running_->get();running_.reset();
+            const bool coherent=!results.empty()&&results.front().input.layered;
+            bool rejected=false;
+            std::vector<Batch> accepted;
             for(auto &result:results) {
                 const auto it=wanted.find(result.input.tile);
-                if(it==wanted.end()||it->second.geometry!=result.input.geometry)continue;
+                if(it==wanted.end()||it->second.geometry!=result.input.geometry){rejected=true;continue;}
                 // Drop obsolete wet membership, not merely the changing
                 // head: a dry column cannot be resurrected by a worker.
-                if(it->second.wet.size()!=result.input.wet.size())continue;
+                if(it->second.wet.size()!=result.input.wet.size()){rejected=true;continue;}
                 bool same_members=true;
                 for(std::size_t i=0;i<it->second.wet.size();++i) {
                     const auto &a=it->second.wet[i],&b=result.input.wet[i];
                     if(a.id!=b.id||a.type!=b.type){same_members=false;break;}
                 }
-                if(!same_members)continue;
+                if(!same_members){rejected=true;continue;}
                 auto membership=[](const Cell& a){return std::tuple{a.x,a.z,a.floor_mm,a.ceiling_mm,a.type};};
                 std::set<std::tuple<int,int,int,int,std::size_t>> current;
                 for(const auto &cell:it->second.cells)current.insert(membership(cell));
                 for(const auto &cell:result.input.cells)if(!current.contains(membership(cell))){same_members=false;break;}
-                if(!same_members)continue;
-                presented_.insert_or_assign(result.input.tile,result.input);
-                done.push_back(std::move(result));
+                if(!same_members){rejected=true;continue;}
+                accepted.push_back(std::move(result));
             }
+            if(!coherent||!rejected)for(auto &result:accepted){presented_.insert_or_assign(result.input.tile,result.input);done.push_back(std::move(result));}
         }
         for(auto it=presented_.begin();it!=presented_.end();) {
             if(!wanted.contains(it->first))it=presented_.erase(it);else ++it;
@@ -319,13 +301,14 @@ public:
             auto first=cursor_?wanted.upper_bound(*cursor_):wanted.begin();
             for(auto it=first;it!=wanted.end();++it)order.push_back(it->first);
             for(auto it=wanted.begin();it!=first;++it)order.push_back(it->first);
-            for(int pass=0;pass<2&&jobs.size()<4;++pass)for(const auto &k:order) {
+            const std::size_t limit=!wanted.empty()&&wanted.begin()->second.layered?128:4;
+            for(int pass=0;pass<2&&jobs.size()<limit;++pass)for(const auto &k:order) {
                 const auto &in=wanted.at(k);
                 auto old=presented_.find(k);
                 const bool new_geometry=old==presented_.end()||old->second.geometry!=in.geometry;
                 if((pass==0&&!new_geometry)||(pass==1&&new_geometry))continue;
                 if(old!=presented_.end()&&old->second.same(in))continue;
-                jobs.push_back(in);cursor_=k;if(jobs.size()==4)break;
+                jobs.push_back(in);cursor_=k;if(jobs.size()==limit)break;
             }
             // No concurrent task owns the cache here. Evict tiles no
             // longer in the presentation working set, including dry tiles.
