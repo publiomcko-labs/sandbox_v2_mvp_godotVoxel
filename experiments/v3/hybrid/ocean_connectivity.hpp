@@ -5,6 +5,7 @@
 #include <set>
 #include <optional>
 #include <map>
+#include <nlohmann/json.hpp>
 
 namespace sandbox::hydraulic::experiment {
 namespace tp = sandbox::hydraulic::topology;
@@ -60,6 +61,30 @@ struct OceanReach {
             for(auto next:edges[id])add(next);
         }
         return result;
+    }
+    bool matches(const tp::Result& g,std::uint64_t rev)const {
+        return key==g.origin&&geometry_revision==g.revision&&world_revision==rev;
+    }
+    nlohmann::json encode()const {
+        return {{"source",source},{"world_revision",world_revision},{"geometry_revision",geometry_revision},
+            {"key",{key.x,key.y,key.z}},{"head",head},{"ceiling",ceiling},{"compartments",compartments}};
+    }
+    static OceanReach decode(const nlohmann::json& j,const tp::Result& g) {
+        const auto &k=j.at("key");
+        OceanReach proof{j.at("source").get<std::string>(),j.at("world_revision").get<std::uint64_t>(),
+            j.at("geometry_revision").get<std::uint64_t>(),{k.at(0).get<int>(),k.at(1).get<int>(),k.at(2).get<int>()},
+            j.at("head").get<double>(),j.at("ceiling").get<int>(),{}};
+        const auto &ids=j.at("compartments");
+        if(proof.source.empty()||!std::isfinite(proof.head)||proof.head>=proof.ceiling||
+            proof.geometry_revision>proof.world_revision||!proof.matches(g,proof.world_revision)||
+            !ids.is_array()||ids.empty()||ids.size()>g.compartments.size())throw std::invalid_argument("ocean proof archive");
+        for(const auto &id:ids){
+            auto n=id.get<Id>();auto c=std::find_if(g.compartments.begin(),g.compartments.end(),[&](const auto &v){return v.id==n;});
+            if(c==g.compartments.end()||c->spans.empty()||c->curve.at_level(proof.head)<=0||
+                !std::all_of(c->spans.begin(),c->spans.end(),[&](const auto &s){return g.origin.y+s.top*g.step==proof.ceiling;})||
+                !proof.compartments.insert(n).second)throw std::invalid_argument("ocean proof compartment");
+        }
+        return proof;
     }
     std::set<core::Region> frontier(const tp::Result& g)const {
         std::set<core::Region> result;

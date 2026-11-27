@@ -25,6 +25,7 @@ struct CoupledTile {
     std::uint64_t epoch{};
     unsigned stable_ticks{};
     bool resident=true;
+    std::map<std::string,OceanReach> ocean_reach;
 };
 // Restricted R3 proof: regional aggregate curves + bounded local windows.
 // No engine dependency, no global per-column simulation, no double owner.
@@ -215,6 +216,7 @@ public:
         if(types_.empty()||!active_limit_||active_limit_>tile_limit_||tile_limit_>128)throw std::invalid_argument("R3 limits");
     }
     const auto& tiles()const{return tiles_;}
+    const auto& oceans()const{return oceans_;}
     std::size_t active()const{std::size_t n=0;for(const auto &[k,t]:tiles_){(void)k;if(t.local)++n;}return n;}
     Litres mass()const{
         Litres sum=cold_mass_;for(const auto &[k,t]:tiles_){(void)k;if(t.local)sum+=t.local->mass();else for(const auto &[id,v]:t.aggregate){(void)id;sum+=v.litres;}}return sum;
@@ -398,6 +400,12 @@ public:
     // an explicit source ledger. Existing wet owners and local fronts are
     // never reset to the head; they continue through the physical solver.
     // The caller owns the world revision/provenance certificate.
+    bool remember_ocean(const OceanReach& proof,std::uint64_t world_revision) {
+        const auto it=tiles_.find(proof.key);
+        if(it==tiles_.end()||proof.compartments.empty()||!proof.matches(*it->second.geometry,world_revision)||
+            std::none_of(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.id==proof.source&&o.head==proof.head;}))return false;
+        it->second.ocean_reach.insert_or_assign(proof.source,proof);return true;
+    }
     bool acquire_ocean(const OceanReach& proof,std::uint64_t world_revision,bool pristine) {
         if(!pristine||proof.world_revision!=world_revision||proof.compartments.empty())return false;
         const auto source=std::find_if(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.id==proof.source&&o.head==proof.head;});
@@ -423,6 +431,7 @@ public:
         for(const auto &[id,content]:additions)tile.aggregate.emplace(id,content);
         injected_+=total;
         if(total)surface_changes_.insert(proof.key);
+        if(!remember_ocean(proof,world_revision))throw std::logic_error("ocean proof lost");
         verify();return true;
     }
     bool activate(core::Region key) {
@@ -488,7 +497,7 @@ public:
             auto remap=tp::remap(*t.geometry,*geometry,t.aggregate);if(!remap)return false;
             t.aggregate=std::move(remap->contents);
         }
-        surface_changes_.insert(geometry->origin);t.geometry=std::move(geometry);t.resident=true;t.epoch=++epoch_;rebuild();verify();return true;
+        surface_changes_.insert(geometry->origin);t.ocean_reach.clear();t.geometry=std::move(geometry);t.resident=true;t.epoch=++epoch_;rebuild();verify();return true;
     }
     bool ocean(Ocean o) {
         if(o.id.empty()||o.type>=types_.size()||!std::isfinite(o.head)||!std::isfinite(o.sill)||
@@ -556,7 +565,8 @@ public:
             for(std::size_t i=0;i<t.local->columns().size();++i){const auto &c=t.local->columns()[i];if(c.litres)content.push_back({i,types_.at(c.type).id,c.litres});}
             for(const auto &p:t.local->pipes())pipes.push_back({p.flux,p.credit});
         }else for(const auto &[id,v]:t.aggregate)if(v.litres)content.push_back({id,types_.at(v.type).id,v.litres});
-        return {{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
+        J reach=J::array();for(const auto &[id,proof]:t.ocean_reach){(void)id;reach.push_back(proof.encode());}
+        return {{"ocean_reach",reach},{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
             {"phase",static_cast<int>(t.phase)},{"resident",t.resident},{"stable",t.stable_ticks},{"content",content},{"pipes",pipes}};
     }
     bool can_archive(core::Region k)const {
@@ -636,6 +646,14 @@ public:
                 throw std::invalid_argument("R3 archive phase");
             t.phase=static_cast<Phase>(phase);t.resident=row.at("resident").get<bool>();
             t.epoch=row.at("epoch").get<std::uint64_t>();t.stable_ticks=row.at("stable").get<unsigned>();
+            if(row.contains("ocean_reach")){
+                const auto &proofs=row.at("ocean_reach");
+                if(!proofs.is_array()||proofs.size()>64)throw std::invalid_argument("ocean proof count");
+                for(const auto &encoded:proofs){
+                    auto proof=OceanReach::decode(encoded,*g);
+                    if(!t.ocean_reach.emplace(proof.source,std::move(proof)).second)throw std::invalid_argument("duplicate ocean proof");
+                }
+            }
         }
         for(const auto &row:j.at("oceans")){
             const auto &a=row.at("anchor");

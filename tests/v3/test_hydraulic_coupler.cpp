@@ -174,16 +174,22 @@ int main(){
     assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000&&extended.initial()==0);
     assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000);
     auto previous=a;
+    nlohmann::json archived_ocean;
     for(int x=1;x<=120;++x){
         auto next=flat(x*4);
         auto reached=OceanReach::extend("extended",2,8,1,*next,std::nullopt,{{previous.get(),&proof}});
         assert(reached.compartments.size()==1);
         assert(OceanReach::extend("extended",2,8,2,*next,std::nullopt,{{previous.get(),&proof}}).compartments.empty());
         assert(extended.publish(next)&&extended.acquire_ocean(reached,1,true));
-        extended.set_resident(next->origin,false);assert(extended.detach_cold(next->origin));
+        extended.set_resident(next->origin,false);archived_ocean=extended.encode_tile(next->origin);assert(extended.detach_cold(next->origin));
         proof=std::move(reached);previous=std::move(next);
     }
     assert(extended.tiles().size()==1&&extended.cold_count()==120&&extended.mass()==121*32000&&extended.injected()==extended.mass());
+    auto reopened_ocean=Coupler::decode(extended.encode(),types,{{ka,a}});
+    auto archived_view=reopened_ocean.inspect_cold(previous,archived_ocean);
+    assert(archived_view&&archived_view->first.ocean_reach.at("extended").encode()==proof.encode());
+    assert(reopened_ocean.restore_cold(previous,archived_ocean)&&reopened_ocean.mass()==extended.mass());
+    assert(reopened_ocean.tiles().at(previous->origin).ocean_reach.at("extended").matches(*previous,1));
     tp::Snapshot roof{{484,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
     for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=0;y<2;++y)
         roof.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
