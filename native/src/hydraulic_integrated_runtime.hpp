@@ -13,6 +13,11 @@ class IntegratedRuntime {
     std::unique_ptr<persistence::HydraulicRegionStore> cold_store_;
     std::uint64_t cold_evictions_{},cold_restores_{},cold_visual_reads_{};
     std::map<core::Region,hybrid::Input> cold_visible_;
+    std::map<core::Region,std::map<std::string,experiment::OceanReach>> cold_ocean_;
+    std::set<core::Region> ocean_interest_,ocean_dirty_,ocean_examined_;
+    std::optional<core::Region> ocean_search_center_;
+    std::optional<std::uint64_t> ocean_revision_;
+    std::uint64_t ocean_certifications_{},ocean_acquisitions_{};
     std::optional<core::Region> cold_scan_center_;
     std::size_t cold_scan_cursor_{};
     int cold_scan_radius_{};
@@ -58,6 +63,7 @@ class IntegratedRuntime {
         return std::abs(k.x-center_.x)<=view_distance_+side&&std::abs(k.z-center_.z)<=view_distance_+side;
     }
     bool interested(core::Region k)const {
+        if(ocean_interest_.contains(k))return true;
         if(dirty_.contains(k)||source_interest_.contains(k))return true;
         if(std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side)return true;
         if(std::abs(k.x-center_.x)>view_distance_+side||std::abs(k.z-center_.z)>view_distance_+side)return false;
@@ -82,9 +88,10 @@ class IntegratedRuntime {
             const auto k=key(anchor);
             // Visible mod anchors are surveyed regardless of LOD0 residency.
             // Only an anchor/window is scheduled, not every tile in the view.
-            if(std::hypot(anchor.x-position.x,anchor.z-position.z)>view_distance_){source_windows_.erase(id);source_attempts_.erase(id);continue;}
-            ++visible_sources_pending_;
             const bool ocean=rule.at("source_kind")=="fixed_head_ocean";
+            const bool in_view=std::hypot(anchor.x-position.x,anchor.z-position.z)<=view_distance_;
+            if(!in_view&&!ocean){source_windows_.erase(id);source_attempts_.erase(id);continue;}
+            if(in_view)++visible_sources_pending_;
             const bool volume=rule.contains("volume_litres");
             auto &window=source_windows_[id];
             if(window.empty()){
@@ -134,9 +141,98 @@ class IntegratedRuntime {
                     continue;
                 }
             }
-            if(accepted){if(!model_.tiles().at(k).resident)++nonresident_source_discoveries_;--visible_sources_pending_;sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
+            if(accepted){if(!model_.tiles().at(k).resident)++nonresident_source_discoveries_;if(in_view)--visible_sources_pending_;if(ocean)ocean_changed(k);sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
             else {source_conflicts_.insert(id);source_diagnostics_[id]="wet/local owner or invalid capacity at certified anchor";}
         }
+    }
+    static std::array<core::Region,4> adjacent(core::Region k) {
+        return {{{k.x-side,base,k.z},{k.x+side,base,k.z},{k.x,base,k.z-side},{k.x,base,k.z+side}}};
+    }
+    void ocean_changed(core::Region k) {
+        if(model_.oceans().empty())return;
+        if(model_.tiles().contains(k))ocean_dirty_.insert(k);
+        for(auto q:adjacent(k))if(model_.tiles().contains(q))ocean_dirty_.insert(q);
+    }
+    bool certified_geometry(core::Region k,const tp::Result& g,std::uint64_t rev)const {
+        return !dirty_.contains(k)&&provenance_.certifies(k,g.revision,rev);
+    }
+    // Maintain only a bounded hot work queue plus current visible proof
+    // witnesses. A global revision change invalidates every older path.
+    // No search over all previously visited regions.
+    void advance_ocean(std::uint64_t rev) {
+        if(model_.oceans().empty()){ocean_interest_.clear();ocean_dirty_.clear();return;}
+        if(!ocean_revision_||*ocean_revision_!=rev){
+            ocean_revision_=rev;ocean_dirty_.clear();ocean_examined_.clear();ocean_interest_.clear();
+            for(const auto &[k,t]:model_.tiles()){(void)t;ocean_dirty_.insert(k);}
+        }
+        if(!ocean_search_center_||*ocean_search_center_!=center_){
+            ocean_search_center_=center_;ocean_examined_.clear();
+        }
+        auto distance=[&](core::Region k){return std::abs(k.x-center_.x)+std::abs(k.z-center_.z);};
+        for(int budget=0;budget<4&&!ocean_dirty_.empty();++budget){
+            auto next=std::min_element(ocean_dirty_.begin(),ocean_dirty_.end(),[&](auto a,auto b){return distance(a)<distance(b);});
+            const auto k=*next;ocean_dirty_.erase(next);
+            const auto it=model_.tiles().find(k);
+            if(it==model_.tiles().end()||!certified_geometry(k,*it->second.geometry,rev))continue;
+            const auto &g=*it->second.geometry;
+            for(const auto &source:model_.oceans()){
+                std::optional<Id> root;
+                if(source.tile==k)root=tp::compartment_at(g,source.anchor);
+                std::vector<experiment::OceanReach::Neighbor> neighbors;
+                for(auto q:adjacent(k)){
+                    if(auto n=model_.tiles().find(q);n!=model_.tiles().end()){
+                        const auto p=n->second.ocean_reach.find(source.id);
+                        if(p!=n->second.ocean_reach.end()&&certified_geometry(q,*n->second.geometry,rev))neighbors.emplace_back(n->second.geometry.get(),&p->second);
+                    }else if(auto v=cold_visible_.find(q);v!=cold_visible_.end()&&cold_ocean_.contains(q)){
+                        const auto &proofs=cold_ocean_.at(q);const auto p=proofs.find(source.id);
+                        if(p!=proofs.end()&&certified_geometry(q,*v->second.geometry,rev))neighbors.emplace_back(v->second.geometry.get(),&p->second);
+                    }
+                }
+                auto proof=experiment::OceanReach::extend(source.id,source.head,base+height,rev,g,root,neighbors);
+                const auto previous=it->second.ocean_reach.find(source.id);
+                if(previous!=it->second.ocean_reach.end()&&previous->second.matches(g,rev)){
+                    proof.compartments.insert(previous->second.compartments.begin(),previous->second.compartments.end());
+                    if(proof.compartments==previous->second.compartments)continue;
+                }
+                if(proof.compartments.empty())continue;
+                // The anchor remains a physical source/sink. Only pristine
+                // newly reached aggregate regions may be initialized at
+                // fixed head. Edited or local regions must fill by flow.
+                if(k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
+                    if(!model_.acquire_ocean(proof,rev,true))continue;
+                    ++ocean_acquisitions_;
+                }else if(!model_.remember_ocean(proof,rev))continue;
+                ++ocean_certifications_;
+                for(auto q:adjacent(k))if(model_.tiles().contains(q))ocean_dirty_.insert(q);
+            }
+            if(ocean_interest_.contains(k))ocean_examined_.insert(k);
+        }
+        // Explore only toward the current view (or within it), not toward
+        // the whole unbounded world. Limit remote search work per view.
+        std::map<core::Region,core::Region> frontier;
+        auto add_frontier=[&](const tp::Result& g,const auto& proofs){
+            for(const auto &[id,proof]:proofs){
+                (void)id;if(!proof.matches(g,rev))continue;
+                for(auto q:proof.frontier(g)){
+                    if(!core::valid_point({double(q.x),double(q.y),double(q.z)})||
+                        model_.tiles().contains(q)||cold_visible_.contains(q)||ocean_examined_.contains(q))continue;
+                    if(!visible(q)&&(distance(q)>=distance(g.origin)||ocean_examined_.size()>=128))continue;
+                    frontier.try_emplace(q,g.origin);
+                }
+            }
+        };
+        for(const auto &[k,t]:model_.tiles())if(certified_geometry(k,*t.geometry,rev))add_frontier(*t.geometry,t.ocean_reach);
+        for(const auto &[k,proofs]:cold_ocean_){
+            auto v=cold_visible_.find(k);if(v!=cold_visible_.end()&&certified_geometry(k,*v->second.geometry,rev))add_frontier(*v->second.geometry,proofs);
+        }
+        std::vector<core::Region> ordered;for(const auto &[k,parent]:frontier){(void)parent;ordered.push_back(k);}
+        std::sort(ordered.begin(),ordered.end(),[&](auto a,auto b){return distance(a)<distance(b);});
+        ocean_interest_.clear();
+        for(std::size_t i=0;i<std::min<std::size_t>(4,ordered.size());++i){
+            ocean_interest_.insert(ordered[i]);ocean_interest_.insert(frontier.at(ordered[i]));
+        }
+        // Keep pending topology candidates until they have been processed.
+        for(auto k:ocean_dirty_)if(model_.tiles().contains(k)&&!visible(k))ocean_interest_.insert(k);
     }
     static nlohmann::json encode_geometry(core::Region k,const experiment::CoupledTile& t,bool retain_render) {
         using J=nlohmann::json;
@@ -204,6 +300,7 @@ class IntegratedRuntime {
             return in;
     }
     void clear_cold_visual(core::Region k) {
+        cold_ocean_.erase(k);
         if(cold_visible_.erase(k))visual_invalidated_.insert(k);
     }
     // Bounded spatial scan: no global directory enumeration or cold owner index.
@@ -211,7 +308,7 @@ class IntegratedRuntime {
     void acquire_cold_visual(std::uint64_t rev) {
         for(auto it=cold_visible_.begin();it!=cold_visible_.end();){
             if(!visible(it->first)||!provenance_.certifies(it->first,it->second.geometry->revision,rev)){
-                visual_invalidated_.insert(it->first);it=cold_visible_.erase(it);
+                cold_ocean_.erase(it->first);visual_invalidated_.insert(it->first);it=cold_visible_.erase(it);
             }else ++it;
         }
         if(!cold_store_||!model_.cold_count())return;
@@ -232,7 +329,9 @@ class IntegratedRuntime {
             auto decoded=model_.inspect_cold(std::move(geometry),row.at("owner"));
             if(!decoded||decoded->second!=row.at("mass").get<Litres>())throw std::logic_error("cold visual owner");
             if(auto input=owner_input(k,decoded->first)){
-                cold_visible_.emplace(k,std::move(*input));visual_invalidated_.insert(k);
+                cold_visible_.emplace(k,std::move(*input));
+                if(!decoded->first.ocean_reach.empty())cold_ocean_.insert_or_assign(k,decoded->first.ocean_reach);
+                ocean_changed(k);visual_invalidated_.insert(k);
             }
             ++cold_visual_reads_;break;
         }
@@ -242,7 +341,7 @@ class IntegratedRuntime {
     }
     bool reclaimable(core::Region k,bool pressure=false)const {
         return model_.can_archive(k)&&!dirty_.contains(k)&&!pending_.contains(k)&&
-            !near_player(k)&&!source_interest_.contains(k)&&(!interested(k)||pressure)&&
+            !near_player(k)&&!source_interest_.contains(k)&&!ocean_interest_.contains(k)&&(!interested(k)||pressure)&&
             ((!model_.tile_mass(k)&&!model_.tiles().at(k).local)||cold_store_);
     }
     bool archive_owner(core::Region k,bool pressure=false) {
@@ -251,10 +350,12 @@ class IntegratedRuntime {
         try{
             const auto &t=model_.tiles().at(k);
             auto visual=visible(k)?owner_input(k,t):std::nullopt;
+            auto reach=t.ocean_reach;
             cold_store_->put(k,encode_geometry(k,t,true),model_.encode_tile(k),amount);
             if(!model_.detach_cold(k)||!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))
                 throw std::logic_error("cold detach ledger");
-            if(visual){cold_visible_.insert_or_assign(k,std::move(*visual));visual_invalidated_.insert(k);}
+            if(visual){cold_visible_.insert_or_assign(k,std::move(*visual));if(!reach.empty())cold_ocean_.insert_or_assign(k,std::move(reach));visual_invalidated_.insert(k);}
+            ocean_dirty_.erase(k);
             ++cold_evictions_;return true;
         }catch(...){cold_store_->poison();throw;}
     }
@@ -282,6 +383,7 @@ class IntegratedRuntime {
             cold_store_->erase(k,row.at("mass").get<Litres>());
             if(!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))throw std::logic_error("cold restore ledger");
             clear_cold_visual(k);
+            ocean_changed(k);
             ++cold_restores_;++publications_;return true;
         }catch(...){cold_store_->poison();throw;}
     }
@@ -360,6 +462,7 @@ public:
         if(provenance_.revision()!=rev)provenance_.invalidate(rev);
         view_distance_=std::clamp(view_distance,16.0,4096.0);
         discover_sources(rules,rev,tool,p);
+        advance_ocean(rev);
         for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k))){
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
@@ -387,7 +490,7 @@ public:
                     }else {
                         if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
                         if(streamed)++stream_survey_tiles_;
-                        activate_pending_.erase(k);construction_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;
+                        activate_pending_.erase(k);construction_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;ocean_changed(k);
                     }
                 }else blocked_[k]=rev;
             }
@@ -395,6 +498,7 @@ public:
         // Same Voxel Tools snapshots as H14; one acquisition per frame,
         // cached wet geometry survives loss of LOD0 residency.
         std::set<core::Region> candidates=source_interest_;
+        candidates.insert(ocean_interest_.begin(),ocean_interest_.end());
         for(const auto &[k,r]:dirty_){(void)r;candidates.insert(k);}
         for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)candidates.insert({center_.x+x*16,base,center_.z+z*16});
         for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)||t.local)
@@ -410,7 +514,7 @@ public:
         // geometry. Near-player, wet-front and source-window candidates
         // share the same bounded priority queue.
         if(model_.cold_count())for(auto k:ordered){
-            if(!model_.tiles().contains(k)&&(near_player(k)||source_interest_.contains(k)||resident(tool,k))&&cold_contains(k)){
+            if(!model_.tiles().contains(k)&&(near_player(k)||source_interest_.contains(k)||ocean_interest_.contains(k)||resident(tool,k))&&cold_contains(k)){
                 if(restore_owner(k,rev))break;
             }
         }
@@ -559,6 +663,7 @@ public:
         d["cold_tiles"]=static_cast<int64_t>(model_.cold_count());d["cold_litres"]=model_.cold_mass();
         d["cold_evictions"]=static_cast<int64_t>(cold_evictions_);d["cold_restores"]=static_cast<int64_t>(cold_restores_);
         d["cold_visual_tiles"]=static_cast<int64_t>(cold_visible_.size());d["cold_visual_reads"]=static_cast<int64_t>(cold_visual_reads_);
+        d["ocean_certifications"]=static_cast<int64_t>(ocean_certifications_);d["ocean_acquisitions"]=static_cast<int64_t>(ocean_acquisitions_);d["ocean_frontier_tiles"]=static_cast<int64_t>(ocean_interest_.size());d["ocean_checked_tiles"]=static_cast<int64_t>(ocean_examined_.size());
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
