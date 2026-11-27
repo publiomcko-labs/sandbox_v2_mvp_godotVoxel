@@ -426,7 +426,7 @@ public:
         // construction from invalidated geometry.
         for(const auto &k:edited_tiles_)if(!wanted.contains(k)&&domain_.tiles().contains(k)&&wet_tile(domain_.tiles().at(k)))
             keys.push_back(Vector3i(k.x,k.y,k.z));
-        if(integrated_)for(const auto &[k,rev]:integrated_->dirty()){(void)rev;keys.push_back(Vector3i(k.x,k.y,k.z));}
+        if(integrated_)for(const auto &[k,rev]:integrated_->dirty()){(void)rev;if(integrated_->retained_wet(k))keys.push_back(Vector3i(k.x,k.y,k.z));}
         for(auto &batch:done) {
             Dictionary row;
             const auto k=batch.input.tile;

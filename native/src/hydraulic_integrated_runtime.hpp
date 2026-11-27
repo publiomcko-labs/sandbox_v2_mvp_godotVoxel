@@ -144,56 +144,28 @@ public:
     // averaged compartment head. Aggregate tiles keep B2 bank support.
     std::map<core::Region,hybrid::Input> inputs()const {
         std::map<core::Region,hybrid::Input> out;
-        std::map<std::pair<int,int>,std::vector<hybrid::Cell>> wet;
         for(const auto &[k,t]:model_.tiles())if(!dirty_.contains(k)&&model_.tile_mass(k)) {
             hybrid::Input in{k,t.geometry,{},height,{}};
-            if(t.local) {
-                for(const auto &c:t.local->columns())if(c.litres&&c.head()<c.ceiling()-0.001) {
-                    hybrid::Cell cell{k.x+c.x,k.z+c.z,c.floor_mm,c.ceiling_mm,c.type,c.head(),{c.head(),c.head(),c.head(),c.head()}};
-                    wet[{cell.x,cell.z}].push_back(cell);in.cells.push_back(cell);
-                }
-            }else {
-                for(const auto &c:t.geometry->compartments) {
-                    auto v=t.aggregate.find(c.id);if(v==t.aggregate.end()||!v->second.litres)continue;
-                    const auto h=c.curve.level(v->second.litres);
-                    in.wet.push_back({c.id,c.id,v->second.type,h,h});
-                    for(const auto &s:c.spans) {
-                        const auto floor=tp::span_floor_mm(*t.geometry,s),ceiling=(k.y+s.top)*1000;
-                        if(h<=floor*0.001||h>=ceiling*0.001-0.001)continue;
-                        wet[{k.x+s.x,k.z+s.z}].push_back({k.x+s.x,k.z+s.z,floor,ceiling,v->second.type,h,{h,h,h,h}});
-                    }
-                }
+            auto add=[&](int x,int z,int floor,int ceiling,std::size_t type,double head) {
+                if(head<=floor*0.001||head>=ceiling*0.001-0.001)return;
+                in.cells.push_back({k.x+x,k.z+z,floor,ceiling,type,head,{head,head,head,head}});
+            };
+            if(t.local)for(const auto &c:t.local->columns()) {
+                if(c.litres)add(c.x,c.z,c.floor_mm,c.ceiling_mm,c.type,c.head());
+            }else for(const auto &c:t.geometry->compartments) {
+                auto v=t.aggregate.find(c.id);if(v==t.aggregate.end()||!v->second.litres)continue;
+                const auto h=c.curve.level(v->second.litres);
+                for(const auto &s:c.spans)add(s.x,s.z,tp::span_floor_mm(*t.geometry,s),(k.y+s.top)*1000,v->second.type,h);
             }
-            if(!in.wet.empty()||!in.cells.empty())out.emplace(k,std::move(in));
+            if(!in.cells.empty())out.emplace(k,std::move(in));
         }
-        // A canonical corner component among the four incident cells.
-        // Connect only shared faces with both heads inside an open interval.
-        // Aggregate boundaries pin the shared height to the aggregate sheet.
-        constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
-        for(auto &[k,in]:out)for(auto &cell:in.cells)for(std::size_t j=0;j<4;++j) {
-            const auto [dx,dz]=offsets[j];const int x=cell.x+dx,z=cell.z+dz;
-            std::vector<const hybrid::Cell*> group;
-            for(int a=x-1;a<=x;++a)for(int b=z-1;b<=z;++b)
-                if(auto it=wet.find({a,b});it!=wet.end())for(const auto &v:it->second)
-                    if(v.type==cell.type&&std::min(v.head,cell.head)>std::max(v.floor_mm,cell.floor_mm)*0.001&&
-                        std::max(v.head,cell.head)<std::min(v.ceiling_mm,cell.ceiling_mm)*0.001-0.001)
-                        group.push_back(&v);
-            // Traverse cardinal connectivity, not diagonal coincidence.
-            std::set<std::size_t> component;
-            for(std::size_t i=0;i<group.size();++i)if(group[i]->x==cell.x&&group[i]->z==cell.z&&group[i]->floor_mm==cell.floor_mm)component.insert(i);
-            bool changed=true;
-            while(changed){changed=false;for(std::size_t i=0;i<group.size();++i)if(!component.contains(i))for(auto n:component) {
-                const auto &a=*group[i],&b=*group[n];
-                if(std::abs(a.x-b.x)+std::abs(a.z-b.z)==1&&std::min(a.head,b.head)>std::max(a.floor_mm,b.floor_mm)*0.001&&
-                    std::max(a.head,b.head)<std::min(a.ceiling_mm,b.ceiling_mm)*0.001-0.001){component.insert(i);changed=true;break;}
-            }}
-            double sum=0,pinned=0,lo=-1e9,hi=1e9;std::size_t count=0,pins=0;
-            for(auto n:component){const auto &v=*group[n];sum+=v.head;++count;
-                lo=std::max(lo,v.floor_mm*0.001+0.0001);hi=std::min(hi,v.ceiling_mm*0.001-0.002);
-                const auto t=model_.tiles().find(key({v.x+0.5,0,v.z+0.5}));
-                if(t!=model_.tiles().end()&&!t->second.local){pinned+=v.head;++pins;}
-            }
-            if(count&&lo<=hi)cell.corners[j]=std::clamp(pins?pinned/double(pins):sum/double(count),lo,hi);
+        // Only the one-column wet halo is copied between neighboring
+        // render tiles. No solver ownership or LOD0 residency is involved.
+        for(auto &[k,in]:out)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
+            if(!dx&&!dz)continue;
+            auto n=out.find({k.x+dx*side,base,k.z+dz*side});if(n==out.end())continue;
+            for(const auto &cell:n->second.cells)if(cell.x>=k.x-1&&cell.x<=k.x+side&&cell.z>=k.z-1&&cell.z<=k.z+side)
+                in.neighbors.push_back(cell);
         }
         return out;
     }
@@ -205,6 +177,7 @@ public:
         return rows;
     }
     const auto& dirty()const{return dirty_;}
+    bool retained_wet(core::Region k)const{return model_.tiles().contains(k)&&model_.tile_mass(k)>0;}
     godot::Dictionary report()const {
         using namespace godot;Dictionary d;
         d["solver"]="hybrid";d["litres"]=model_.mass();d["initial"]=model_.initial();d["injected"]=model_.injected();d["drained"]=model_.drained();
@@ -217,13 +190,13 @@ public:
         d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
         d["edit_group_revision"]=static_cast<int64_t>(revision_);
         Array group;for(auto k:group_)group.push_back(Vector3i(k.x,k.y,k.z));d["edit_group_tiles"]=group;
-        int64_t active=0,near=0,wet=0,intervals=0;
+        int64_t active=0,near_count=0,wet=0,intervals=0;
         for(const auto &[k,t]:model_.tiles()){
-            if(t.resident){++active;if(std::abs(k.x-center_.x)<=16&&std::abs(k.z-center_.z)<=16)++near;}
+            if(t.resident){++active;if(std::abs(k.x-center_.x)<=16&&std::abs(k.z-center_.z)<=16)++near_count;}
             if(model_.tile_mass(k))++wet;
             if(t.local)intervals+=static_cast<int64_t>(t.local->columns().size());
         }
-        d["active_tiles"]=active;d["near_active_tiles"]=near;d["visible_wet_tiles"]=wet;d["local_intervals"]=intervals;
+        d["active_tiles"]=active;d["near_active_tiles"]=near_count;d["visible_wet_tiles"]=wet;d["local_intervals"]=intervals;
         return d;
     }
     nlohmann::json encode()const {

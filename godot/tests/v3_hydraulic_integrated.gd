@@ -69,7 +69,7 @@ func _test() -> void:
     runtime.player.global_position=Vector3(-4,12,28)
     var camera: Camera3D=runtime.player.get_node("Camera3D")
     camera.global_position=Vector3(-4,48,48)
-    camera.look_at(Vector3(-4,0,23))
+    camera.look_at(Vector3(-4,0,23),Vector3.UP)
     var deadline:=Time.get_ticks_msec()+90000
     while true:
         if not _frame(runtime,water,0):
@@ -182,7 +182,7 @@ func _test() -> void:
     if not await _capture("06-return"):
         return
     frames.sort()
-    var p95:=frames[mini(frames.size()-1,ceili(frames.size()*0.95)-1)]
+    var p95: int=frames[mini(frames.size()-1,ceili(float(frames.size())*0.95)-1)]
     var state: Dictionary=runtime.session.hydraulic_report()
     if int(state["local_active"])<=0 or int(state["moved"])<=0 or not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("mid-flow or dry cave "+str(state))

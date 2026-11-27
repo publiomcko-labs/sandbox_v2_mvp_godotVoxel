@@ -27,8 +27,8 @@ struct Input {
     std::shared_ptr<const tp::Result> geometry;
     std::vector<Wet> wet;
     int exposed_top{};
-    std::vector<Cell> cells{};
-    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells;}
+    std::vector<Cell> cells{},neighbors{};
+    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{};};
 struct Batch {
@@ -52,16 +52,93 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
     const auto &g=*out.input.geometry;
     if(!out.input.cells.empty()) {
         constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
+        std::map<std::pair<int,int>,std::vector<const Cell*>> columns;
+        for(const auto &c:out.input.cells)columns[{c.x,c.z}].push_back(&c);
+        for(const auto &c:out.input.neighbors)columns[{c.x,c.z}].push_back(&c);
+        auto connected=[](const Cell& a,const Cell& b) {
+            return a.type==b.type&&std::abs(a.x-b.x)+std::abs(a.z-b.z)==1&&
+                std::min(a.head,b.head)>std::max(a.floor_mm,b.floor_mm)*0.001&&
+                std::max(a.head,b.head)<std::min(a.ceiling_mm,b.ceiling_mm)*0.001-0.001;
+        };
+        // Canonical connected component at each world-space corner. A
+        // cell on the opposite tile boundary computes identical values.
+        auto corner=[&](const Cell& cell,int x,int z) {
+            std::vector<const Cell*> candidates;
+            for(int a=x-1;a<=x;++a)for(int b=z-1;b<=z;++b) {
+                auto it=columns.find({a,b});if(it==columns.end())continue;
+                for(auto c:it->second)if(c->type==cell.type)candidates.push_back(c);
+            }
+            std::sort(candidates.begin(),candidates.end(),[](const auto *a,const auto *b){
+                return std::tie(a->x,a->z,a->floor_mm,a->ceiling_mm)<std::tie(b->x,b->z,b->floor_mm,b->ceiling_mm);
+            });
+            std::set<std::size_t> members;
+            for(std::size_t i=0;i<candidates.size();++i)if(candidates[i]==&cell)members.insert(i);
+            bool changed=true;
+            while(changed){changed=false;for(std::size_t i=0;i<candidates.size();++i)if(!members.contains(i))for(auto j:members)
+                if(connected(*candidates[i],*candidates[j])){members.insert(i);changed=true;break;}}
+            double sum=0,lo=-1e9,hi=1e9;
+            for(auto i:members){const auto &c=*candidates[i];sum+=c.head;lo=std::max(lo,c.floor_mm*0.001+0.0001);hi=std::min(hi,c.ceiling_mm*0.001-0.002);}
+            return members.empty()||lo>hi?cell.head:std::clamp(sum/double(members.size()),lo,hi);
+        };
+        auto floor_at=[&](int x,int z,double fallback) {
+            const int lx=x-g.origin.x,lz=z-g.origin.z;
+            if(!g.halo_floor.empty()&&lx>=-1&&lx<=g.nx+1&&lz>=-1&&lz<=g.nz+1)
+                return double(g.halo_floor.at(static_cast<std::size_t>((lz+1)*(g.nx+3)+lx+1)));
+            if(!g.surface_floor.empty()&&lx>=0&&lx<=g.nx&&lz>=0&&lz<=g.nz)
+                return double(g.surface_floor.at(static_cast<std::size_t>(lz*(g.nx+1)+lx)));
+            return fallback;
+        };
+        const int exposed_ceiling=(g.origin.y+out.input.exposed_top)*1000;
         for(const auto &cell:out.input.cells) {
             std::array<Vertex,4> vertices;
             for(std::size_t j=0;j<4;++j) {
                 const auto [dx,dz]=offsets[j];
                 const double floor=cell.floor_mm*0.001,ceiling=cell.ceiling_mm*0.001;
-                const auto x=cell.x+dx,z=cell.z+dz;
-                vertices[j]={double(x),cell.corners[j],double(z),floor-0.35,ceiling};
+                const int x=cell.x+dx,z=cell.z+dz;
+                const double clip=cell.ceiling_mm==exposed_ceiling?floor_at(x,z,floor)-1.35:floor-0.35;
+                vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
             }
             auto &v=out.materials[cell.type];
             v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
+        }
+        // A single canonical donor per known bank column, and only
+        // below its first certified higher air interval. This restores
+        // the H14 partial-cell shoreline without flooding dry passages.
+        const int pad=g.halo_runs.empty()?0:1;
+        if(!g.surface_floor.empty())for(int z=-pad;z<g.nz+pad;++z)for(int x=-pad;x<g.nx+pad;++x) {
+            const int wx=g.origin.x+x,wz=g.origin.z+z;
+            const bool inside=x>=0&&x<g.nx&&z>=0&&z<g.nz;
+            const auto &runs=inside?g.column_runs.at(static_cast<std::size_t>(z*g.nx+x)):
+                g.halo_runs.at(static_cast<std::size_t>((z+1)*(g.nx+2)+x+1));
+            const Cell* donor=nullptr;int cap=exposed_ceiling;
+            for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
+                if(!dx&&!dz)continue;
+                auto it=columns.find({wx+dx,wz+dz});if(it==columns.end())continue;
+                for(auto c:it->second) {
+                    if(c->ceiling_mm!=exposed_ceiling)continue;
+                    int candidate_cap=exposed_ceiling;bool open=false;
+                    for(const auto &s:runs) {
+                        const int low=(g.origin.y+s.bottom)*1000,high=(g.origin.y+s.top)*1000;
+                        if(low<=c->floor_mm&&c->floor_mm<high){open=true;break;}
+                        if(low>c->floor_mm)candidate_cap=std::min(candidate_cap,low);
+                    }
+                    if(open||c->head>=candidate_cap*0.001||candidate_cap<=c->floor_mm)continue;
+                    if(!donor||std::tie(c->floor_mm,c->x,c->z)<std::tie(donor->floor_mm,donor->x,donor->z)){
+                        donor=c;cap=candidate_cap;
+                    }
+                }
+            }
+            if(!donor)continue;
+            // Only the tile owning the donor may emit this apron, even
+            // across a tile edge. Unknown terrain never gets an apron.
+            if(donor->x<g.origin.x||donor->x>=g.origin.x+g.nx||donor->z<g.origin.z||donor->z>=g.origin.z+g.nz)continue;
+            std::array<Vertex,4> vertices;
+            for(std::size_t j=0;j<4;++j){
+                const auto [dx,dz]=offsets[j];
+                vertices[j]={double(wx+dx),donor->head-0.003,double(wz+dz),
+                    floor_at(wx+dx,wz+dz,donor->floor_mm*0.001)-1.35,cap*0.001};
+            }
+            auto &v=out.materials[donor->type];v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
         }
         out.build_us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
         return out;
@@ -131,6 +208,7 @@ inline std::map<core::Region,Input> snapshot(const Domain& domain,int exposed_to
 // geometry is never published, even if it finished after an edit.
 class Renderer {
     std::map<core::Region,Input> presented_;
+    std::optional<core::Region> cursor_;
     std::optional<std::future<std::vector<Batch>>> running_;
     // The async task is sole writer; shared lifetime survives destruction.
     std::shared_ptr<std::map<core::Region,CachedTile>> cache_=std::make_shared<std::map<core::Region,CachedTile>>();
@@ -151,11 +229,10 @@ public:
                     if(a.id!=b.id||a.type!=b.type){same_members=false;break;}
                 }
                 if(!same_members)continue;
-                if(it->second.cells.size()!=result.input.cells.size())continue;
-                for(std::size_t i=0;i<it->second.cells.size();++i) {
-                    const auto &a=it->second.cells[i],&b=result.input.cells[i];
-                    if(a.x!=b.x||a.z!=b.z||a.floor_mm!=b.floor_mm||a.ceiling_mm!=b.ceiling_mm||a.type!=b.type){same_members=false;break;}
-                }
+                auto membership=[](const Cell& a){return std::tuple{a.x,a.z,a.floor_mm,a.ceiling_mm,a.type};};
+                std::set<std::tuple<int,int,int,int,std::size_t>> current;
+                for(const auto &cell:it->second.cells)current.insert(membership(cell));
+                for(const auto &cell:result.input.cells)if(!current.contains(membership(cell))){same_members=false;break;}
                 if(!same_members)continue;
                 presented_.insert_or_assign(result.input.tile,result.input);
                 done.push_back(std::move(result));
@@ -167,12 +244,17 @@ public:
         if(!running_) {
             std::vector<Input> jobs;
             // First missing/revised tiles, then changed heads.
-            for(int pass=0;pass<2&&jobs.size()<4;++pass)for(const auto &[k,in]:wanted) {
+            std::vector<core::Region> order;
+            auto first=cursor_?wanted.upper_bound(*cursor_):wanted.begin();
+            for(auto it=first;it!=wanted.end();++it)order.push_back(it->first);
+            for(auto it=wanted.begin();it!=first;++it)order.push_back(it->first);
+            for(int pass=0;pass<2&&jobs.size()<4;++pass)for(const auto &k:order) {
+                const auto &in=wanted.at(k);
                 auto old=presented_.find(k);
                 const bool new_geometry=old==presented_.end()||old->second.geometry!=in.geometry;
                 if((pass==0&&!new_geometry)||(pass==1&&new_geometry))continue;
                 if(old!=presented_.end()&&old->second.same(in))continue;
-                jobs.push_back(in);if(jobs.size()==4)break;
+                jobs.push_back(in);cursor_=k;if(jobs.size()==4)break;
             }
             // No concurrent task owns the cache here. Evict tiles no
             // longer in the presentation working set, including dry tiles.
