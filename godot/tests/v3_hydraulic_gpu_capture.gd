@@ -18,6 +18,52 @@ func _capture(name: String) -> bool:
     print("V3_GPU_CAPTURE_PASS name=",name," size=",image.get_size())
     return true
 
+# Diagnostic of the exact fixed-camera pixels lost in H9/H10. Inspect
+# actual visible meshes and their shader clipping, not only graph rows.
+func _diagnose_seams(water: Node3D,camera: Camera3D,label: String) -> void:
+    var nodes: Dictionary=water.get("_meshes")
+    var tiles: Dictionary=water.get("_mesh_tiles")
+    for pixel: Vector2 in [Vector2(180.5,188.5),Vector2(180.5,189.5),Vector2(180.5,190.5),Vector2(513.5,47.5),Vector2(575.5,280.5),Vector2(590.5,283.5)]:
+        var origin:=camera.project_ray_origin(pixel)
+        var ray:=camera.project_ray_normal(pixel)
+        var evidence: Array=[]
+        for id: int in nodes:
+            var node: MeshInstance3D=nodes[id]
+            if not node.visible or absf(ray.y)<0.0001:
+                continue
+            var distance:=(node.global_position.y-origin.y)/ray.y
+            if distance<=0.0:
+                continue
+            var q:=origin+ray*distance
+            var tile: Vector3i=tiles[id]
+            if q.x<float(tile.x)-0.1 or q.x>float(tile.x+16)+0.1 or q.z<float(tile.z)-0.1 or q.z>float(tile.z+16)+0.1:
+                continue
+            var arrays: Array=node.mesh.surface_get_arrays(0)
+            var vertices: PackedVector3Array=arrays[Mesh.ARRAY_VERTEX]
+            var uv: PackedVector2Array=arrays[Mesh.ARRAY_TEX_UV]
+            var hits: Array=[]
+            var p:=Vector2(q.x,q.z)
+            for i in range(0,vertices.size(),3):
+                var a:=Vector2(vertices[i].x,vertices[i].z)
+                var b:=Vector2(vertices[i+1].x,vertices[i+1].z)-a
+                var c:=Vector2(vertices[i+2].x,vertices[i+2].z)-a
+                var d:=p-a
+                var det:=b.cross(c)
+                if absf(det)<0.000001:
+                    continue
+                var v:=d.cross(c)/det
+                var w:=b.cross(d)/det
+                var u:=1.0-v-w
+                if minf(u,minf(v,w))< -0.00001:
+                    continue
+                var clip: Vector2=uv[i]*u+uv[i+1]*v+uv[i+2]*w
+                hits.append({"floor":clip.x,"ceiling":clip.y,"discard":q.y>=clip.y-0.001 or q.y<clip.x})
+            if not hits.is_empty():
+                evidence.append({"id":id,"tile":str(tile),"head":q.y,"xz":str(p),"hits":hits})
+            elif absf(q.x-roundf(q.x))<0.15 or absf(q.z-roundf(q.z))<0.15:
+                evidence.append({"id":id,"tile":str(tile),"head":q.y,"xz":str(p),"hits":[]})
+        print("V3_GPU_SEAM_DIAG ",label," pixel=",pixel," ",JSON.stringify(evidence))
+
 func _test() -> void:
     var write:=true
     if DisplayServer.get_name()=="headless" or OS.get_environment("V3_GPU_CAPTURE_ROOT").is_empty():
@@ -164,6 +210,7 @@ func _test() -> void:
         print("V3_GPU_EDIT_POINT=",cut)
         if not await _capture("02-before-edit"):
             return
+        _diagnose_seams(water,camera,"before")
         if runtime.submit_brush(cut,false,3.0)!="accepted":
             _fail("wet floor excavation rejected")
             return
@@ -219,6 +266,7 @@ func _test() -> void:
         print("V3_GPU_GROUP_PASS ",group)
         if not await _capture("04-settled-edit"):
             return
+        _diagnose_seams(water,camera,"settled")
         var after: Dictionary=runtime.session.hydraulic_report()
         if int(after["litres"])!=mass or int(after["ticks"])!=before_ticks+20 or int(after["moved"])<=0:
             _fail("transfer "+str(after))
