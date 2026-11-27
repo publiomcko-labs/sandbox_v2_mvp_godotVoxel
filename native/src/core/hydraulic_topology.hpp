@@ -15,6 +15,10 @@ struct Snapshot {
     // Optional presentation-only SDF zero crossings at shared XZ vertices.
     // No liquid state, capacity or topology depends on these heights.
     std::vector<float> surface_floor{};
+    // Optional one-column geometric halo. Ring only; interior entries in
+    // halo_air are unused. It never creates compartments or portals.
+    std::vector<float> halo_floor{};
+    std::vector<std::uint8_t> halo_air{};
     bool open(int x,int y,int z)const{
         return air.at(static_cast<std::size_t>((z*nx+x)*ny+y))==1;
     }
@@ -32,6 +36,8 @@ struct Result {
     std::vector<Boundary> boundaries;
     std::vector<std::vector<Span>> column_runs;
     std::vector<float> surface_floor{};
+    std::vector<float> halo_floor{};
+    std::vector<std::vector<Span>> halo_runs{};
 };
 inline Result extract(const Snapshot &s) {
     if(s.nx<1||s.nx>32||s.nz<1||s.nz>32||s.ny<1||s.ny>128||
@@ -43,7 +49,27 @@ inline Result extract(const Snapshot &s) {
         throw std::invalid_argument("hydraulic visual floor size");
     for(auto h:s.surface_floor)if(!std::isfinite(h)||h<s.origin.y||h>s.origin.y+s.ny*s.step)
         throw std::invalid_argument("hydraulic visual floor range");
-    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor};
+    if(s.halo_floor.empty()!=s.halo_air.empty()||(!s.halo_floor.empty()&&
+        (s.halo_floor.size()!=static_cast<std::size_t>((s.nx+3)*(s.nz+3))||
+         s.halo_air.size()!=static_cast<std::size_t>((s.nx+2)*(s.nz+2)*s.ny))))
+        throw std::invalid_argument("hydraulic visual halo size");
+    for(auto h:s.halo_floor)if(!std::isfinite(h)||h<s.origin.y||h>s.origin.y+s.ny*s.step)
+        throw std::invalid_argument("hydraulic visual halo floor");
+    for(auto v:s.halo_air)if(v>1)throw std::invalid_argument("hydraulic visual halo classification");
+    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor,s.halo_floor,{}};
+    if(!s.halo_air.empty()) {
+        result.halo_runs.resize(static_cast<std::size_t>((s.nx+2)*(s.nz+2)));
+        for(int z=-1;z<=s.nz;++z)for(int x=-1;x<=s.nx;++x) {
+            if(x>=0&&x<s.nx&&z>=0&&z<s.nz)continue;
+            const auto index=static_cast<std::size_t>((z+1)*(s.nx+2)+x+1);
+            for(int y=0;y<s.ny;) {
+                if(!s.halo_air[index*s.ny+y]){++y;continue;}
+                const int bottom=y;
+                while(y<s.ny&&s.halo_air[index*s.ny+y])++y;
+                result.halo_runs[index].push_back({x,z,bottom,y,0});
+            }
+        }
+    }
     std::vector<Span> spans;
     std::vector<std::vector<std::size_t>> columns(static_cast<std::size_t>(s.nx*s.nz));
     auto column=[&](int x,int z)->auto&{return columns[static_cast<std::size_t>(z*s.nx+x)];};

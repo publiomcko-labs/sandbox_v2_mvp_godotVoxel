@@ -1,7 +1,7 @@
 #pragma once
 #include "hydraulic_topology.hpp"
 namespace sandbox::hydraulic::surface {
-struct Point {double x{},z{},floor{};};
+struct Point {double x{},z{},floor{},offset{};};
 struct Patch {int ceiling{};std::vector<Point> vertices;};
 struct FlowFace {double x0{},z0{},x1{},z1{},bottom{},top{};};
 // Presentation geometry for an actual directed portal, using only its
@@ -131,10 +131,17 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
         }
     }
     if(!g.surface_floor.empty()) {
+        const int pad=g.halo_runs.empty()?0:1;
         auto vertex=[&](int x,int z) {
-            return Point{double(x),double(z),g.surface_floor.at(static_cast<std::size_t>(z*(g.nx+1)+x))};
+            const auto floor=pad?g.halo_floor.at(static_cast<std::size_t>((z+1)*(g.nx+3)+x+1)):
+                g.surface_floor.at(static_cast<std::size_t>(z*(g.nx+1)+x));
+            // A tiny depth bias keeps overlapping certified bank aprons
+            // below primary surfaces and admits the exact sill elevation.
+            return Point{double(x),double(z),floor,-0.003};
         };
-        for(int z=0;z<g.nz;++z)for(int x=0;x<g.nx;++x) {
+        for(int z=-pad;z<g.nz+pad;++z)for(int x=-pad;x<g.nx+pad;++x) {
+            const auto &target=inside(x,z)?column(x,z):
+                g.halo_runs.at(static_cast<std::size_t>((z+1)*(g.nx+2)+x+1));
             // Only the upper solid band: never cover a known lower air
             // interval at the donor floor or join unrelated cave levels.
             const topology::Span* donor=nullptr;
@@ -145,7 +152,7 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
                     if(v.top!=top)continue;
                     int candidate_cap=ceiling;
                     bool blocked=false;
-                    for(const auto &n:column(x,z)) {
+                    for(const auto &n:target) {
                         if(n.top==top&&n.compartment==v.compartment){blocked=true;break;}
                         if(n.bottom<=v.bottom&&v.bottom<n.top){blocked=true;break;}
                         if(n.bottom>v.bottom)candidate_cap=std::min(candidate_cap,g.origin.y+n.bottom*g.step);

@@ -342,7 +342,7 @@ public:
             PackedVector3Array vertices;PackedVector2Array uv;
             const bool exposed=std::any_of(c.spans.begin(),c.spans.end(),[](const auto &s){return s.top==height;});
             for(const auto &patch:surface::build(*t.geometry,c,height))for(auto p:patch.vertices) {
-                vertices.push_back(Vector3(k.x+p.x*t.geometry->step,0,k.z+p.z*t.geometry->step));
+                vertices.push_back(Vector3(k.x+p.x*t.geometry->step,p.offset,k.z+p.z*t.geometry->step));
                 // Exposed basin banks may extend into solid by one sample.
                 // Roofed intervals keep the conservative lower clip.
                 uv.push_back(Vector2(p.floor-(exposed?1.35:0.35),patch.ceiling));

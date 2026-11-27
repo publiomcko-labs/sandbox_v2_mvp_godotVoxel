@@ -179,6 +179,26 @@ int main(){
     for(const auto &patch:precise_patches)for(auto p:patch.vertices)
         if(p.x==2&&p.z==2&&p.floor==1.0)full_corner=true;
     assert(full_corner);
+    auto halo=precise;
+    halo.halo_floor.assign(25,0.5f);
+    halo.halo_air.assign(4*4*8,0);
+    // Outside left cell has a certified higher exposed interval. The
+    // opposite side is open at donor floor and must not get an apron.
+    for(int y=4;y<8;++y)halo.halo_air[static_cast<std::size_t>((1*4+0)*8+y)]=1;
+    for(int y=1;y<8;++y)halo.halo_air[static_cast<std::size_t>((0*4+1)*8+y)]=1;
+    const auto hg=tp::extract(halo);
+    assert(hg.compartments.size()==pg.compartments.size()&&hg.openings.size()==pg.openings.size());
+    assert(hg.compartments.front().curve.capacity()==pg.compartments.front().curve.capacity());
+    bool halo_bank=false;
+    for(const auto &patch:surface::build(hg,hg.compartments.front(),8))
+        for(std::size_t i=0;i<patch.vertices.size();i+=3) {
+            const auto a=patch.vertices[i],b=patch.vertices[i+1],d=patch.vertices[i+2];
+            for(auto p:{a,b,d})if(p.x==-1&&p.z==1&&patch.ceiling==4&&p.floor==0.5&&p.offset==-0.003)halo_bank=true;
+            const double x=(a.x+b.x+d.x)/3,z=(a.z+b.z+d.z)/3;
+            assert(!(x>0&&x<1&&z<0)); // no extension through open halo column
+        }
+    assert(halo_bank);
+    std::cout<<"V3_HYDRAULIC_HALO_BANK_PASS cross_tile_certified_sill unchanged_physics\n";
     std::cout<<"V3_HYDRAULIC_FULL_SDF_APRON_PASS complete_adjacent_column actual_corners\n";
     bool corner_apron=false;
     for(const auto &patch:full)for(auto p:patch.vertices)if(p.x>1&&p.z>1)corner_apron=true;

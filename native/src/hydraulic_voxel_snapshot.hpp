@@ -17,16 +17,20 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
         std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
         std::abs(std::int64_t(origin.z))>1000000)
         throw std::invalid_argument("hydraulic voxel snapshot bounds");
-    const auto size=extent+Vector3i(1,1,1);
-    if(tool.is_null()||!tool->is_area_editable(AABB(Vector3(origin),Vector3(size))))return {};
+    const auto core_size=extent+Vector3i(1,1,1);
+    if(tool.is_null()||!tool->is_area_editable(AABB(Vector3(origin),Vector3(core_size))))return {};
+    const auto halo_origin=origin-Vector3i(1,0,1),halo_size=extent+Vector3i(3,1,3);
+    const bool halo=tool->is_area_editable(AABB(Vector3(halo_origin),Vector3(halo_size)));
+    const int pad=halo?1:0;
+    const auto size=halo?halo_size:core_size;
     Ref<VoxelBuffer> buffer;buffer.instantiate();buffer->create(size.x,size.y,size.z);
-    tool->copy(origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
+    tool->copy(halo?halo_origin:origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
     tp::Snapshot snapshot{{origin.x,origin.y,origin.z},extent.x,extent.y,extent.z,1,revision,{}};
     snapshot.air.resize(static_cast<std::size_t>(extent.x*extent.y*extent.z));
     // Each corner is classified once; reuse between adjacent samples.
     std::vector<std::uint8_t> corners(static_cast<std::size_t>(size.x*size.y*size.z));
     auto index=[&](int x,int y,int z){return static_cast<std::size_t>((z*size.x+x)*size.y+y);};
-    snapshot.surface_floor.resize(static_cast<std::size_t>(size.x*size.z));
+    std::vector<float> floors(static_cast<std::size_t>(size.x*size.z));
     for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x) {
         double previous=0.0;
         double floor=origin.y;
@@ -38,13 +42,22 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
             previous=sdf;
         }
         if(previous<=0.0)floor=origin.y+extent.y;
-        snapshot.surface_floor[static_cast<std::size_t>(z*size.x+x)]=static_cast<float>(floor);
+        floors[static_cast<std::size_t>(z*size.x+x)]=static_cast<float>(floor);
     }
-    for(int z=0;z<extent.z;++z)for(int x=0;x<extent.x;++x)for(int y=0;y<extent.y;++y) {
+    snapshot.surface_floor.resize(static_cast<std::size_t>(core_size.x*core_size.z));
+    for(int z=0;z<core_size.z;++z)for(int x=0;x<core_size.x;++x)
+        snapshot.surface_floor[static_cast<std::size_t>(z*core_size.x+x)]=floors[static_cast<std::size_t>((z+pad)*size.x+x+pad)];
+    if(halo) {
+        snapshot.halo_floor=std::move(floors);
+        snapshot.halo_air.resize(static_cast<std::size_t>((extent.x+2)*(extent.z+2)*extent.y));
+    }
+    for(int z=-pad;z<extent.z+pad;++z)for(int x=-pad;x<extent.x+pad;++x)for(int y=0;y<extent.y;++y) {
         bool open=true;
         for(int dx=0;dx<=1;++dx)for(int dy=0;dy<=1;++dy)for(int dz=0;dz<=1;++dz)
-            open=open&&corners[index(x+dx,y+dy,z+dz)]!=0;
-        snapshot.air[static_cast<std::size_t>((z*extent.x+x)*extent.y+y)]=open?1:0;
+            open=open&&corners[index(x+pad+dx,y+dy,z+pad+dz)]!=0;
+        if(x>=0&&x<extent.x&&z>=0&&z<extent.z)
+            snapshot.air[static_cast<std::size_t>((z*extent.x+x)*extent.y+y)]=open?1:0;
+        else snapshot.halo_air[static_cast<std::size_t>(((z+1)*(extent.x+2)+x+1)*extent.y+y)]=open?1:0;
     }
     return snapshot;
 }
