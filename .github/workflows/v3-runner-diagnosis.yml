@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Inspect only runner service, task and session state
-        shell: powershell -NoProfile -File {0}
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
         run: |
           $root='C:\actios-runner-org1'
           Write-Host "HOST=$env:COMPUTERNAME JOB_SESSION=$((Get-Process -Id $PID).SessionId)"
