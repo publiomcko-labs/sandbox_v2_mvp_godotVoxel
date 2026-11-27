@@ -22,6 +22,16 @@ int main(){
     assert(domain.tiles().at(ka).aggregate.empty()&&domain.tiles().at(kc).aggregate.empty());
     for(int i=0;i<10;++i)domain.tick();
     assert(domain.tile_mass(kb)>0&&domain.mass()==mass);
+    // A receiving tile is promoted before the first local discharge,
+    // so a remote column remains dry during the initial boundary tick.
+    Coupler frontier(types,2,2);
+    assert(frontier.publish(a)&&frontier.publish(b)&&frontier.seed(ka,a->compartments.front().id,0,32000));
+    assert(frontier.activate(ka));
+    assert(frontier.local_front_candidates()==std::vector<sandbox::core::Region>{kb});
+    assert(frontier.activate(kb)&&frontier.tile_mass(kb)==0);
+    frontier.tick();
+    assert(frontier.tile_mass(kb)>0&&frontier.column_mass(kb,3,0)==0&&frontier.mass()==32000);
+    std::cout<<"V3_HYBRID_I13_FRONT_ACTIVATION_PASS\n";
     // Versioned mid-flow round trip; same geometry checkpoint, flux and
     // ledger retained. Continue original and reopened identically.
     const auto saved=domain.encode().dump();

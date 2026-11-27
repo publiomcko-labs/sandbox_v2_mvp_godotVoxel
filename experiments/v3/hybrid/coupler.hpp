@@ -232,6 +232,28 @@ public:
         }
         return {keys.begin(),keys.end()};
     }
+    // A local front must enter a receiving aggregate tile via the
+    // actual boundary intervals, not instant compartment equalization.
+    // Rank resident recipients by total prospective local discharge.
+    std::vector<core::Region> local_front_candidates(double gradient=0.05)const {
+        std::map<core::Region,double> scores;
+        for(const auto &p:interfaces_) {
+            Owner from=p.a,to=p.b;auto a=value(from),b=value(to);
+            if(a.head<b.head){std::swap(a,b);std::swap(from,to);}
+            if(from.kind!=1||to.kind!=0||from.tile==to.tile||!a.mass||
+                (b.type!=no_liquid&&b.type!=a.type)||a.mass==a.capacity||b.mass==b.capacity)continue;
+            const double dh=a.head-std::max(b.head,p.sill);
+            const double area=std::max(0.0,std::min(a.head,p.soffit)-p.sill)*p.width;
+            if(dh<gradient||area<=0)continue;
+            scores[to.tile]+=area*std::sqrt(dh)/types_.at(a.type).viscosity;
+        }
+        std::vector<core::Region> result;
+        for(const auto &[k,score]:scores){(void)score;result.push_back(k);}
+        std::sort(result.begin(),result.end(),[&](auto a,auto b){
+            return scores.at(a)!=scores.at(b)?scores.at(a)>scores.at(b):a<b;
+        });
+        return result;
+    }
     // Diagnostic occupancy of a whole XZ column, including every Y
     // interval. -1 denotes uncertified/nonresident geometry.
     Litres column_mass(core::Region k,int x,int z)const {

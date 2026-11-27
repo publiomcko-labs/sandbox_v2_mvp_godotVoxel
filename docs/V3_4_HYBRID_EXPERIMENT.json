@@ -345,8 +345,27 @@
           "filled_mask_added": 0
         },
         "i12b": {
+          "status": "CORE_NATIVE_GPU_PASS_SERRATION_FIXED_RECTILINEAR_PHYSICAL_FRONT_REMAINS",
+          "focus": "normalized front field and exact deep-water fast path",
+          "commit": "0effff321947cf111de376183dcbe3911ee2be04",
+          "core_run": 46066695889,
+          "native_run": 46066695962,
+          "gpu_run": 46066695808,
+          "native_artifact": 15231097254,
+          "gpu_artifact": 15231262068,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_worker_p95_us": 1567,
+          "gpu_combined_refresh_p95_us": 6698,
+          "gpu_combined_refresh_p99_us": 8296,
+          "gpu_frame_p95_us": 56759,
+          "filled_mask_removed": 735,
+          "filled_mask_added": 0
+        },
+        "i13": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "normalized front field and exact deep-water fast path"
+          "focus": "local front promotion before boundary discharge"
         }
       }
     },

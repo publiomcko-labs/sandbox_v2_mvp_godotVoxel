@@ -135,6 +135,13 @@ public:
         // Do not step a partial revision cohort. This preserves the front
         // on the previous certified geometry until all edited tiles arrive.
         if(!dirty_.empty())return;
+        // Expand a live front before the boundary transfer. Retain one
+        // emergency slot for edits; no limit increase or blocked flow.
+        if(model_.active()+1<model_.active_limit()){
+            for(auto k:model_.local_front_candidates()){
+                if(activate(k))break;
+            }
+        }
         if(ticks_%10==0&&model_.active()<model_.active_limit()/2) {
             for(auto k:model_.flow_candidates(0.35))if(model_.active()<model_.active_limit()/2)activate(k);
         }

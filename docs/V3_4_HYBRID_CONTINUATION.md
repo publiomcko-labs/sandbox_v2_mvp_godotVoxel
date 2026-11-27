@@ -10,6 +10,8 @@ Branch: `exp/v3-hydraulic-hybrid` only. Runtime candidate `130882eee10a5f99a6ede
 ## I12 / I12b progress
 I12 runtime `4707eeaac52886977ca86978dfc516e9274b9206` passed core/native/GPU, but seven real captures show serration and performance regression (refresh p95 6.956ms vs I11b 5.687ms). See RESULTS and EXPERIMENT for IDs/hashes. I12b corrects inconsistent signed-field units and skips exact deep-water cases; validation pending. Launcher stays at I11b until geometry and cost are qualified.
 
+I12b core/native/GPU passed; serration resolved but residual long straight front maps to aggregate tile boundary (z=-64, 83 L/column next to dry region). I13 prioritizes local promotion before boundary discharge; candidate pending validation. Do not treat I12b as geometric/performance pass; launcher stays I11b.
+
 ## Next actions in order
 1. Focal seam validated. Next geometry problem: shallow local and aggregate fronts use full 1m quads (5L strip at X=-33, Z=-80..-70). Reconstruct subcell visible footprint using certified SDF/actual free-surface intersection and connected wet donor geometry, preserving real shallow occupation, layer caps and Voxel Tools terrain authority. Explicitly update the six-vertex assumption in stitch_tile_edge if using arbitrary polygons; do not simply hide shallow physical mass or use global mask. Validate actual breach and static lake, with exact ledger and no dry cave leak.
 2. Complete static geometry/support versus dynamic height/depth/flow separation; I10a reuses fixed-count buffers but native still builds full changed quads and I11b adds main-thread seam assembly. Profile, retain only measured improvements. Avoid global scans, preserve coherent edit groups and stale-revision rejection.
