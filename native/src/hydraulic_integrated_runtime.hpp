@@ -1,5 +1,6 @@
 #pragma once
 #include "hydraulic_voxel_snapshot.hpp"
+#include "core/hydraulic_provenance.hpp"
 #include "core/hydraulic_worker.hpp"
 #include "core/hydraulic_hybrid_surface.hpp"
 #include "../../experiments/v3/hybrid/coupler.hpp"
@@ -14,6 +15,9 @@ class IntegratedRuntime {
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
     std::set<core::Region> group_,activate_pending_,visual_invalidated_;
     hybrid::LayeredInputCache surface_cache_;
+    EditProvenance provenance_;
+    std::set<core::Region> pending_survey_;
+    std::uint64_t visual_survey_tiles_{},post_edit_survey_tiles_{};
     std::vector<std::uint64_t> tick_samples_;
     std::size_t pristine_survey_tiles_=0;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
@@ -70,20 +74,25 @@ public:
         if(dirty_.empty())group_.clear();
         revision_=rev;
         const auto keys=affected(p,radius);
+        provenance_.record(rev,keys);
         bool near_wet=false;for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
         for(auto k:keys) {
             visual_invalidated_.insert(k);
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
             else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
-            worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
+            worker_.invalidate(k);pending_.erase(k);pending_survey_.erase(k);blocked_.erase(k);
         }
     }
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed) {
         center_=key(p);
+        if(provenance_.revision()!=rev)provenance_.invalidate(rev);
         for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k)))model_.set_resident(k,false);
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
-            if(interested(k)&&resident(tool,k)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
+            const bool surveyed=pending_survey_.erase(k)>0;
+            const bool loaded=resident(tool,k);
+            const bool certified=surveyed&&!dirty_.contains(k)&&result->revision==0&&provenance_.pristine(k,rev);
+            if(interested(k)&&(loaded||certified)&&(!surveyed||certified)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
                 auto geometry=std::make_shared<const tp::Result>(std::move(*result));
                 const bool exists=model_.tiles().contains(k);
                 if(!exists&&model_.tiles().size()>=model_.tile_limit()) {
@@ -92,6 +101,7 @@ public:
                     if(evict)model_.forget_dry(*evict);
                 }
                 if(exists?model_.replace_geometry(geometry):model_.publish(geometry)) {
+                    if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
                     if(activate_pending_.contains(k)&&!activate(k)){
                         model_.set_resident(k,false);blocked_[k]=rev;
                     }else {
@@ -114,19 +124,23 @@ public:
             if(dirty_.contains(a)!=dirty_.contains(b))return dirty_.contains(a);
             return std::abs(a.x-center_.x)+std::abs(a.z-center_.z)<std::abs(b.x-center_.x)+std::abs(b.z-center_.z);
         });
-        if(pending_.size()<2)for(auto k:ordered) {
+        bool acquired=false;
+        if(pending_.size()<2)for(int pass=0;pass<2&&!acquired;++pass)for(auto k:ordered) {
             auto it=model_.tiles().find(k);
             if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
-            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev)||!resident(tool,k))continue;
+            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev))continue;
+            const bool loaded=resident(tool,k);
+            const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
+            if((pass==0&&!loaded)||(pass==1&&!survey))continue;
             if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
                 bool can_reclaim=false;for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){can_reclaim=true;break;}
                 if(!can_reclaim)continue;
             }
             const auto start=std::chrono::steady_clock::now();
-            const auto wanted_revision=dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
-            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true);
+            const auto wanted_revision=survey?0:dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
+            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
             max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
-            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;break;}
+            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);acquired=true;break;}
         }
         constexpr std::uint64_t period=50000000;
         debt_=std::min(debt_+std::min(elapsed,period*2),period*2);
@@ -216,6 +230,8 @@ public:
         d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
         d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
+        d["visual_survey_tiles"]=static_cast<int64_t>(visual_survey_tiles_);d["post_edit_survey_tiles"]=static_cast<int64_t>(post_edit_survey_tiles_);
+        d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());
         d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
@@ -252,7 +268,7 @@ public:
         }
         for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
         for(const auto &k:activate_pending_)activate_pending.push_back({k.x,k.y,k.z});
-        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"dirty",dirty},{"activate_pending",activate_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_}};
+        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"provenance",provenance_.encode()},{"dirty",dirty},{"activate_pending",activate_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_}};
     }
     static std::unique_ptr<IntegratedRuntime> decode(const nlohmann::json& j,const std::vector<Liquid>& types) {
         if(j.at("schema")!="v3-hybrid-runtime-1"||!j.at("geometry").is_array()||j.at("geometry").size()>128)throw std::invalid_argument("hybrid runtime archive");
@@ -294,7 +310,9 @@ public:
             if(!out->dirty_.contains(k))throw std::invalid_argument("hybrid pending owner");
             out->activate_pending_.insert(k);
         }
-        out->revision_=j.at("revision").get<std::uint64_t>();out->ticks_=j.at("ticks").get<std::uint64_t>();
+        out->revision_=j.at("revision").get<std::uint64_t>();
+        out->provenance_=EditProvenance::decode(j.value("provenance",nlohmann::json(nullptr)),out->revision_);
+        out->ticks_=j.at("ticks").get<std::uint64_t>();
         out->debt_=j.at("debt").get<std::uint64_t>();out->moved_=j.at("moved").get<std::uint64_t>();
         if(out->debt_>100000000)throw std::invalid_argument("hybrid archive tick debt");
         return out;

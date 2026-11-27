@@ -384,8 +384,27 @@
           "gpu_frame_p95_us": 54497
         },
         "i14": {
+          "status": "CORE_NATIVE_GPU_PASS_P99_GAIN_PARTIAL_QUALIFICATION",
+          "focus": "worker boundary extraction and incremental seam-only cache",
+          "commit": "57442cb60b950c272e8c4c6e37541638c5445834",
+          "core_run": 46067865494,
+          "native_run": 46067865378,
+          "gpu_run": 46067865382,
+          "native_artifact": 15231113891,
+          "gpu_artifact": 15231219083,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_tick_p95_us": 4295,
+          "gpu_worker_p95_us": 1567,
+          "gpu_combined_refresh_p95_us": 6490,
+          "gpu_combined_refresh_p99_us": 8560,
+          "gpu_frame_p95_us": 49219,
+          "gpu_snapshot_max_us": 51359
+        },
+        "i15": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "worker boundary extraction and incremental seam-only cache"
+          "focus": "persistent per-tile edit provenance and bounded pristine presentation survey in edited worlds"
         }
       }
     },

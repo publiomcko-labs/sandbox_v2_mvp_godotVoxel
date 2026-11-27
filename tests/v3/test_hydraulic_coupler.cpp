@@ -1,4 +1,5 @@
 #include "../../experiments/v3/hybrid/coupler.hpp"
+#include "core/hydraulic_provenance.hpp"
 #include <cassert>
 #include <iostream>
 using namespace sandbox::hydraulic;
@@ -9,6 +10,17 @@ static std::shared_ptr<const tp::Result> flat(int x,std::uint64_t revision=1) {
 }
 int main(){
     const std::vector<Liquid> types{{"water",1,1000},{"lava",10,2800}};
+    EditProvenance provenance;
+    const sandbox::core::Region edit_key{0,-32,0},safe_key{16,-32,0};
+    assert(provenance.pristine(edit_key,0));
+    provenance.record(1,{edit_key});
+    assert(!provenance.pristine(edit_key,1)&&provenance.pristine(safe_key,1)&&!provenance.pristine(safe_key,2));
+    auto restored=EditProvenance::decode(provenance.encode(),1);
+    assert(restored.complete()&&restored.pristine(safe_key,1)&&!restored.pristine(edit_key,1));
+    restored.record(3,{safe_key});
+    assert(!restored.complete()&&!restored.pristine(edit_key,3));
+    assert(!EditProvenance::decode(nlohmann::json(nullptr),1).pristine(safe_key,1));
+    std::cout<<"V3_HYBRID_I15_PROVENANCE_PASS\n";
     const auto a=flat(0),b=flat(4),c=flat(8);
     const auto ka=a->origin,kb=b->origin,kc=c->origin;
     std::map<sandbox::core::Region,std::shared_ptr<const tp::Result>> geometry{{ka,a},{kb,b},{kc,c}};

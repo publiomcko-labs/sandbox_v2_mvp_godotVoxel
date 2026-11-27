@@ -144,6 +144,9 @@ func _test() -> void:
         _fail("isolated dry cavity")
         return
     if reopen:
+        if not bool(initial.get("provenance_complete",false)) or int(initial.get("edited_provenance_tiles",0))<=0:
+            _fail("edit provenance not reopened")
+            return
         if int(initial["local_active"])<1 or int(runtime.session.get_state()["terrain_revision"])<1:
             _fail("local ownership was not reopened "+str(initial))
             return
@@ -190,6 +193,9 @@ func _test() -> void:
     var published: Dictionary=runtime.session.hydraulic_report()
     if int(published["ticks"])!=before_ticks or int(published["litres"])!=mass or int(published["local_active"])<=0:
         _fail("exclusive edit remap "+str(published))
+        return
+    if not bool(published.get("provenance_complete",false)) or int(published.get("edited_provenance_tiles",0))<=0:
+        _fail("accepted terrain edit provenance missing")
         return
     var near_zero: int=runtime.session.hydraulic_column_mass(near)
     var far_zero: int=runtime.session.hydraulic_column_mass(far)

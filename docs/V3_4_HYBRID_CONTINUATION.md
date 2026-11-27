@@ -14,6 +14,8 @@ I12b core/native/GPU passed; serration resolved but residual long straight front
 
 I13 core/native/GPU passed, receiving local region now fills boundary columns with 72–84L formerly dry at I12b; visual front improved but geometry remains partial, tick p95 4.387ms and refresh p95/p99 6.569/10.336ms. I14 moves boundary extraction off main thread and avoids redundant full-mesh copies/reports. Candidate pending validation.
 
+I14 core/native/GPU passed; p99 refresh 8.560ms vs 10.336ms I13, p95 6.490ms, frame p95 49.219ms; max SDF 51.359ms. I15 introduces persisted per-tile edit provenance and bounded pristine nonresident survey in edited worlds; no full coverage claim. Candidate pending validation.
+
 ## Next actions in order
 1. Focal seam validated. Next geometry problem: shallow local and aggregate fronts use full 1m quads (5L strip at X=-33, Z=-80..-70). Reconstruct subcell visible footprint using certified SDF/actual free-surface intersection and connected wet donor geometry, preserving real shallow occupation, layer caps and Voxel Tools terrain authority. Explicitly update the six-vertex assumption in stitch_tile_edge if using arbitrary polygons; do not simply hide shallow physical mass or use global mask. Validate actual breach and static lake, with exact ledger and no dry cave leak.
 2. Complete static geometry/support versus dynamic height/depth/flow separation; I10a reuses fixed-count buffers but native still builds full changed quads and I11b adds main-thread seam assembly. Profile, retain only measured improvements. Avoid global scans, preserve coherent edit groups and stale-revision rejection.
