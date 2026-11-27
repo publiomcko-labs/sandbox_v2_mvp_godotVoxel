@@ -50,6 +50,7 @@ jobs:
         with:
           path: h7-visual-${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: v3-native-integration-evidence
