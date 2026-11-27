@@ -155,8 +155,9 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
     var previous: Array[Vector3]=[first]
     var accepted:=0
     var holds:=0
+    var portal_moved:=int(runtime.session.hydraulic_report()["moved"])
     while accepted<8:
-        var candidate: Variant=_next_shore_cut(runtime,tool,previous)
+        var candidate: Variant=_cross_tile_cut(runtime,tool,previous) if accepted==0 else _next_shore_cut(runtime,tool,previous)
         if candidate==null:
             _fail("stress: insufficient distinct shore positions "+str(accepted))
             return false
@@ -196,6 +197,12 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
                 _fail("stress: edit publication timeout "+str(runtime.session.hydraulic_report()))
                 return false
             await process_frame
+        if first_wet<0:
+            _fail("stress: excavated floor never filled "+str(target))
+            return false
+        if accepted==1 and int(runtime.session.hydraulic_report()["moved"])<=portal_moved:
+            _fail("stress: no cross-tile transfer into previously dry tile")
+            return false
         for i in range(runtime.session.hydraulic_surfaces().size()+1):
             water.call("refresh")
         print("V3_GPU_STRESS_EDIT index=",accepted," point=",target," first_wet_step=",first_wet," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
@@ -216,6 +223,45 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
         return false
     print("V3_GPU_STRESS_PASS accepted=",accepted," observed_group_holds=",holds," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
     return true
+
+func _tile_key(p: Vector3) -> Vector3i:
+    return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
+
+func _cross_tile_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Variant:
+    # A target in a previously dry tile cannot be filled by remapping
+    # litres from its own old geometry. This tests actual portal discharge.
+    var wet_tiles: Dictionary={}
+    for row: Array in runtime.session.hydraulic_surfaces():
+        wet_tiles[row[3]]=true
+    for z in range(-64,64):
+        for x in range(-88,24):
+            if posmod(x,16)!=0 and posmod(x,16)!=15 and posmod(z,16)!=0 and posmod(z,16)!=15:
+                continue
+            for y in range(-12,4):
+                var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
+                var wet: Dictionary=runtime.session.hydraulic_at(p)
+                if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01 or float(wet["level"])-p.y<0.35:
+                    continue
+                for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
+                    var shore:=p+direction
+                    var target:=shore-Vector3(0,1.65,0)
+                    if _tile_key(p)==_tile_key(target) or wet_tiles.has(_tile_key(target)):
+                        continue
+                    if not tool.is_area_editable(AABB(target-Vector3(5,5,5),Vector3(10,10,10))):
+                        continue
+                    if not runtime.session.hydraulic_at(shore).is_empty() or not runtime.session.hydraulic_at(target).is_empty():
+                        continue
+                    if tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                        continue
+                    var distinct:=true
+                    for old: Vector3 in previous:
+                        if old.distance_to(target)<4.0:
+                            distinct=false
+                            break
+                    if distinct:
+                        print("V3_HYDRAULIC_CROSS_TILE_TARGET source=",_tile_key(p)," dry_target=",_tile_key(target)," point=",target)
+                        return target
+    return null
 
 func _test() -> void:
     var write:=true
@@ -423,9 +469,10 @@ func _test() -> void:
             return
         _diagnose_seams(water,camera,"settled")
         var after: Dictionary=runtime.session.hydraulic_report()
-        if int(after["litres"])!=mass or int(after["ticks"])!=before_ticks+20 or int(after["moved"])<=0:
-            _fail("transfer "+str(after))
+        if int(after["litres"])!=mass or int(after["ticks"])!=before_ticks+20:
+            _fail("settling "+str(after))
             return
+        print("V3_GPU_LOCAL_REMAP_OR_TRANSFER_PASS moved=",after["moved"])
         # Distinguish a transient remap head from a persistent geometric gap.
         for i in range(100):
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):

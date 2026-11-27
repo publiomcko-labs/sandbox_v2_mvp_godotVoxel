@@ -4,6 +4,45 @@ func _initialize() -> void:
 func _fail(reason: String) -> void:
     push_error("V3_HYDRAULIC_RUNTIME_FAIL: "+reason)
     quit(1)
+func _tile_key(p: Vector3) -> Vector3i:
+    return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
+
+func _cross_tile_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Variant:
+    # A target in a previously dry tile cannot be filled by remapping
+    # litres from its own old geometry. This tests actual portal discharge.
+    var wet_tiles: Dictionary={}
+    for row: Array in runtime.session.hydraulic_surfaces():
+        wet_tiles[row[3]]=true
+    for z in range(-64,64):
+        for x in range(-88,24):
+            if posmod(x,16)!=0 and posmod(x,16)!=15 and posmod(z,16)!=0 and posmod(z,16)!=15:
+                continue
+            for y in range(-12,4):
+                var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
+                var wet: Dictionary=runtime.session.hydraulic_at(p)
+                if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01 or float(wet["level"])-p.y<0.35:
+                    continue
+                for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
+                    var shore:=p+direction
+                    var target:=shore-Vector3(0,1.65,0)
+                    if _tile_key(p)==_tile_key(target) or wet_tiles.has(_tile_key(target)):
+                        continue
+                    if not tool.is_area_editable(AABB(target-Vector3(5,5,5),Vector3(10,10,10))):
+                        continue
+                    if not runtime.session.hydraulic_at(shore).is_empty() or not runtime.session.hydraulic_at(target).is_empty():
+                        continue
+                    if tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                        continue
+                    var distinct:=true
+                    for old: Vector3 in previous:
+                        if old.distance_to(target)<4.0:
+                            distinct=false
+                            break
+                    if distinct:
+                        print("V3_HYDRAULIC_CROSS_TILE_TARGET source=",_tile_key(p)," dry_target=",_tile_key(target)," point=",target)
+                        return target
+    return null
+
 func _test() -> void:
     var write: bool="--phase=write" in OS.get_cmdline_user_args()
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
@@ -96,38 +135,12 @@ func _test() -> void:
         # excavate under that exact location, not a random dry cave.
         var tool: VoxelTool=runtime.terrain.get_voxel_tool()
         tool.channel=VoxelBuffer.CHANNEL_SDF
-        var cut:=Vector3.ZERO
-        var found:=false
-        for z in range(16,32):
-            if found:
-                break
-            for x in range(-16,0):
-                if found:
-                    break
-                for y in range(-12,4):
-                    var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
-                    var wet: Dictionary=runtime.session.hydraulic_at(p)
-                    if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01:
-                        continue
-                    if float(wet["level"])-p.y<0.35:
-                        continue
-                    for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
-                        var shore:=p+direction
-                        if not runtime.session.hydraulic_at(shore).is_empty():
-                            continue
-                        if tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1:
-                            continue
-                        var target:=shore-Vector3(0,1.65,0)
-                        if tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
-                            continue
-                        cut=target
-                        found=true
-                        break
-                    if found:
-                        break
-        if not found:
-            _fail("no submerged sample beside a solid shore for lateral breach")
+        var no_previous: Array[Vector3]=[]
+        var candidate: Variant=_cross_tile_cut(runtime,tool,no_previous)
+        if candidate==null:
+            _fail("no resident wet-to-dry tile boundary for lateral breach")
             return
+        var cut: Vector3=candidate
         # Materialize the current presentation and verify the edit does
         # not make the old reservoir disappear before worker publication.
         for i in range(runtime.session.hydraulic_surfaces().size()+1):
