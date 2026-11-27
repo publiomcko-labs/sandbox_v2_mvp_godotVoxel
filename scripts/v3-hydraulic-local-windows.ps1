@@ -7,10 +7,10 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='5f99bb606b9965c4cd985fc226f6bc180a354443'
-$run='45977720014'
+$candidate='1067bc7d6ebae83f41820ceef78403b79abaafba'
+$run='45982136425'
 $artifact='v3-native-integration-evidence'
-$zipSha='82a6d1240cd69be2286dad08a04f089970500a44c0b7102d541f7f113afc7576'
+$zipSha='65b346343f7f35e24d06aea8cba3c768a022bebc576ce872145848c81e78bc6c'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- godot native third_party.lock ':(exclude)godot/tests/v3_hydraulic_gpu_capture.gd'
@@ -39,7 +39,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45977720014/artifacts/15187723079 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45982136425/artifacts/15189683209 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -70,7 +70,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 hydraulic H13: inspect refined exposed sills, continuous shoreline and grouped mesh swaps after edits; close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
+Write-Host 'V3 hydraulic H14: inspect movement during active discharge, continuous shoreline and grouped mesh swaps after edits; close normally. Lava/Sea source spawns are exploratory and not yet terrain-qualified.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
