@@ -2,8 +2,12 @@
 #include "core/hydraulic_topology.hpp"
 #include <deque>
 #include <memory>
+#include <set>
+#include <optional>
+#include <map>
 
 namespace sandbox::hydraulic::experiment {
+namespace tp = sandbox::hydraulic::topology;
 // A certificate is a local witness of a continuous exposed, submerged path
 // from one explicit source. It is NOT an occupancy mask or terrain authority.
 // All neighbors must have been certified for the SAME world revision.
