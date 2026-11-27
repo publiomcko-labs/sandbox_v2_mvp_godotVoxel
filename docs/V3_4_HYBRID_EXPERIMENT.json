@@ -677,8 +677,19 @@
             "commit": "486c4a183bbf1552c4dfc6bedc722439b980a900",
             "native_run": 46081003039,
             "gpu_run": 46081003022,
-            "status": "PENDING_VALIDATION",
-            "restriction": "bulk ocean acquisition only revision zero"
+            "status": "NATIVE_LIFECYCLE_FAIL_GPU_PREREQUISITE_FAIL",
+            "restriction": "bulk ocean acquisition only revision zero",
+            "native_conclusion": "failure",
+            "gpu_conclusion": "failure",
+            "integrated_mass_litres": 12656585,
+            "integrated_injected_litres": 1278143,
+            "failure": "lifecycle exact suspension, 77 ocean-interest tiles and 1 local owner retained"
+          },
+          "residency_correction": {
+            "commit": "5533ea2c5fd8124fefc153fcacb5cd3a43af3ac5",
+            "native_run": 46082290470,
+            "gpu_run": 46082290574,
+            "status": "PENDING_VALIDATION"
           }
         }
       }
