@@ -228,7 +228,26 @@
           "gpu_combined_refresh_p95_us": 6671
         },
         "i9a": {
-          "status": "CANDIDATE_VALIDATION_PENDING"
+          "status": "NATIVE_GPU_PASS_PRISTINE_SURVEY_GEOMETRY_PARTIAL_PERFORMANCE_OPEN",
+          "commit": "2ad64958b2052f1e13bce1423a4442b68ac91121",
+          "native_run": 46060034065,
+          "gpu_run": 46060034047,
+          "native_artifact": 15228133166,
+          "gpu_artifact": 15227898524,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "pristine_survey_tiles_gpu": 27,
+          "pristine_survey_tiles_headless": 35,
+          "gpu_builds": 1407,
+          "gpu_tick_p95_us": 3107,
+          "gpu_snapshot_max_us": 28311,
+          "gpu_combined_refresh_p95_us": 6805,
+          "settles": 0
+        },
+        "i10a": {
+          "status": "CANDIDATE_VALIDATION_PENDING",
+          "focus": "dynamic mesh buffer reuse"
         }
       }
     },

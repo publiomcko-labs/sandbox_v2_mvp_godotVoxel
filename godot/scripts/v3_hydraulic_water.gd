@@ -28,6 +28,10 @@ var _hybrid_nodes: Dictionary={}
 var _hybrid_stage: Dictionary={}
 var _hybrid_ready:=false
 var _hybrid_builds:=0
+var _hybrid_buffer_updates:=0
+var _hybrid_allocations:=0
+var _hybrid_buffer_bytes:=0
+var _hybrid_dynamic:=OS.get_environment("V3_HYBRID_SOLVER")=="1" and OS.get_environment("V3_HYBRID_REBUILD_CONTROL")!="1"
 var _hybrid_build_us: Array[int]=[]
 var _hybrid_publish_us: Array[int]=[]
 var _hybrid_snapshot_us: Array[int]=[]
@@ -194,6 +198,56 @@ func hybrid_display(enabled: bool) -> void:
         for node: MeshInstance3D in nodes:
             node.visible=enabled
 
+# Reuse unindexed triangle-list allocations when the material and count
+# match. Positions and UV bounds are dynamic; normals and allocation are
+# static. All materials are preflighted before touching a visible cohort.
+func _hybrid_can_update(node: MeshInstance3D, material: Array) -> bool:
+    var mesh:=node.mesh as ArrayMesh
+    var vertices: PackedVector3Array=material[1]
+    var uv: PackedVector2Array=material[2]
+    if mesh==null or mesh.get_surface_count()!=1 or mesh.surface_get_array_len(0)!=vertices.size() or uv.size()!=vertices.size():
+        return false
+    var format:=mesh.surface_get_format(0)
+    var count:=vertices.size()
+    return (format & Mesh.ARRAY_FLAG_USE_DYNAMIC_UPDATE)!=0 and RenderingServer.mesh_surface_get_format_vertex_stride(format,count)==12 and RenderingServer.mesh_surface_get_format_attribute_stride(format,count)==8 and RenderingServer.mesh_surface_get_format_offset(format,count,Mesh.ARRAY_VERTEX)==0 and RenderingServer.mesh_surface_get_format_offset(format,count,Mesh.ARRAY_TEX_UV)==0
+
+func _try_hybrid_buffers(tile: Vector3i, materials: Array) -> bool:
+    if not _hybrid_dynamic or _hybrid_group.has(tile) or _hybrid_stage.has(tile) or not _hybrid_nodes.has(tile):
+        return false
+    var nodes: Array=_hybrid_nodes[tile]
+    var by_slot: Dictionary={}
+    for node: MeshInstance3D in nodes:
+        by_slot[int(node.get_meta("liquid_slot",-1))]=node
+    var count:=0
+    for material: Array in materials:
+        var vertices: PackedVector3Array=material[1]
+        if vertices.is_empty():
+            continue
+        count+=1
+        var slot:=int(material[0])
+        if not by_slot.has(slot) or not _hybrid_can_update(by_slot[slot],material):
+            return false
+    if count!=nodes.size() or by_slot.size()!=nodes.size():
+        return false
+    for material: Array in materials:
+        var vertices: PackedVector3Array=material[1]
+        if vertices.is_empty():
+            continue
+        var uv: PackedVector2Array=material[2]
+        var node: MeshInstance3D=by_slot[int(material[0])]
+        var mesh:=node.mesh as ArrayMesh
+        # Keep unchanged streams intact, including normals. No GPU readback.
+        if node.get_meta("liquid_positions")!=vertices:
+            mesh.surface_update_vertex_region(0,0,vertices.to_byte_array())
+            _hybrid_buffer_bytes+=vertices.size()*12
+            node.set_meta("liquid_positions",vertices)
+        if node.get_meta("liquid_uv")!=uv:
+            mesh.surface_update_attribute_region(0,0,uv.to_byte_array())
+            _hybrid_buffer_bytes+=uv.size()*8
+            node.set_meta("liquid_uv",uv)
+        _hybrid_buffer_updates+=1
+    return true
+
 func hybrid_refresh() -> Dictionary:
     var started:=Time.get_ticks_usec()
     var state: Dictionary=session.hydraulic_report()
@@ -216,6 +270,12 @@ func hybrid_refresh() -> Dictionary:
     var ready: Array=data["ready"]
     for row: Dictionary in data["updates"]:
         var tile: Vector3i=row["tile"]
+        _hybrid_builds+=1
+        _hybrid_fallback_columns+=int(row["fallback_columns"])
+        if _hybrid_build_us.size()<4096:
+            _hybrid_build_us.append(int(row["build_us"]))
+        if _try_hybrid_buffers(tile,row["materials"]):
+            continue
         var nodes: Array=[]
         for material: Array in row["materials"]:
             var vertices: PackedVector3Array=material[1]
@@ -230,9 +290,20 @@ func hybrid_refresh() -> Dictionary:
             arrays[Mesh.ARRAY_NORMAL]=normals
             arrays[Mesh.ARRAY_TEX_UV]=material[2]
             var mesh:=ArrayMesh.new()
-            mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
+            if _hybrid_dynamic:
+                mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays,[],{},Mesh.ARRAY_FLAG_USE_DYNAMIC_UPDATE)
+                # Vertices are absolute world coordinates in tile-local nodes;
+                # conservative bounds prevent stale AABB culling after writes.
+                mesh.custom_aabb=AABB(Vector3(tile)-Vector3(2,2,2),Vector3(20,68,20))
+            else:
+                mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
             var node:=MeshInstance3D.new()
             node.mesh=mesh
+            node.set_meta("liquid_slot",int(material[0]))
+            if _hybrid_dynamic:
+                node.set_meta("liquid_positions",vertices)
+                node.set_meta("liquid_uv",material[2])
+            _hybrid_allocations+=1
             node.material_override=_materials[int(material[0])]
             node.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
             node.visible=false
@@ -241,10 +312,6 @@ func hybrid_refresh() -> Dictionary:
         if _hybrid_stage.has(tile):
             _free_hybrid_nodes(_hybrid_stage[tile])
         _hybrid_stage[tile]=nodes
-        _hybrid_builds+=1
-        _hybrid_fallback_columns+=int(row["fallback_columns"])
-        if _hybrid_build_us.size()<4096:
-            _hybrid_build_us.append(int(row["build_us"]))
     var group_ready:=int(state["pending_edit_tiles"])==0
     for tile: Vector3i in _hybrid_group:
         if wanted.has(tile) and not ready.has(tile):
@@ -285,7 +352,7 @@ func hybrid_report() -> Dictionary:
             meshes+=1
             triangles+=int(node.mesh.surface_get_array_len(0)/3.0)
     return {"tiles":_hybrid_nodes.size(),"meshes":meshes,"triangles":triangles,"vertex_bytes_estimate":triangles*3*32,
-        "builds":_hybrid_builds,"fallback_columns":_hybrid_fallback_columns,"group_holds":_hybrid_holds,"group_swaps":_hybrid_swaps,
+        "builds":_hybrid_builds,"mesh_allocations":_hybrid_allocations,"buffer_updates":_hybrid_buffer_updates,"buffer_bytes":_hybrid_buffer_bytes,"fallback_columns":_hybrid_fallback_columns,"group_holds":_hybrid_holds,"group_swaps":_hybrid_swaps,
         "worker_p95_us":_percentile(_hybrid_build_us,0.95),"worker_p99_us":_percentile(_hybrid_build_us,0.99),
         "snapshot_p95_us":_percentile(_hybrid_snapshot_us,0.95),"publish_refresh_p95_us":_percentile(_hybrid_publish_us,0.95),
         "publish_refresh_p99_us":_percentile(_hybrid_publish_us,0.99)}
