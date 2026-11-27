@@ -176,19 +176,21 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
                 if(wet){sum+=std::clamp(wet->head-wet->floor_mm*0.001,0.0001,0.20);head_sum+=wet->head;++wet_count;}
                 else dry[static_cast<std::size_t>(dry_count++)]={a,b};
             }
-            if(!wet_count||!dry_count)return 1.0;
+            if(!wet_count)return 1.0;
+            const double mean_depth=sum/wet_count;
+            if(!dry_count)return mean_depth;
             const double head=head_sum/wet_count;
             // Actual SDF slice must certify air at this contour sample.
             const double sx=x-ix,sz=z-iz;
             const double sdf0=sdf_at(ix,iz,head)*(1-sx)+(sx?sdf_at(ix+1,iz,head)*sx:0);
             const double sdf1=sz?sdf_at(ix,iz+1,head)*(1-sx)+(sx?sdf_at(ix+1,iz+1,head)*sx:0):0;
-            if(sdf0*(1-sz)+sdf1*sz<=0.1)return 1.0;
+            if(sdf0*(1-sz)+sdf1*sz<=0.1)return mean_depth;
             int open=0;
             for(int i=0;i<dry_count;++i)if(dry_open(dry[i].first,dry[i].second,head))++open;
-            if(!open)return 1.0;
+            if(!open)return mean_depth;
             // A 5 cm transition scale is geometric only; deep water
             // retains full support, shallow fronts acquire fractional edges.
-            return sum-0.05*open;
+            return (sum-0.05*open)/(wet_count+open);
         };
         for(const auto &cell:out.input.cells) {
             std::array<Vertex,4> vertices;
@@ -200,7 +202,9 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
                 vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
             }
             auto &v=out.materials[cell.type];
-            if(cell.ceiling_mm==exposed_ceiling&&!g.render_sdf.empty()){
+            // At most three dry samples meet a wet cell at a corner.
+            // A depth above 15cm cannot cross zero: exact fast path.
+            if(cell.ceiling_mm==exposed_ceiling&&!g.render_sdf.empty()&&cell.head-cell.floor_mm*0.001<=0.15){
                 std::array<Vertex,8> ring{};std::array<double,8> f{};
                 bool clipped=false;
                 for(std::size_t i=0;i<4;++i){

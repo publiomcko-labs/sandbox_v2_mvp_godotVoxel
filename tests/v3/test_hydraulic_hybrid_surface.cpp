@@ -231,6 +231,13 @@ int main(){
     hybrid::stitch_tile_edge(overlap,west_patch,partial,true,2);
     assert(overlap.at(0).size()==12);
     for(std::size_t i=6;i<12;++i)assert(overlap.at(0)[i].z>=0.25&&overlap.at(0)[i].z<=0.75);
+    // Uniform adjacent shallow centers: on their common edge the
+    // subcell surface must retain a shared interval, not a point.
+    front.cells.push_back({1,0,0,8000,0,0.005,{0.005,0.005,0.005,0.005}});
+    const auto strip=hybrid::build(front);
+    std::set<double> shared_z;
+    for(const auto &p:strip.materials.at(0))if(std::abs(p.x-1)<1e-9)shared_z.insert(p.z);
+    assert(shared_z.size()>=3&&*shared_z.begin()<0.5&&*shared_z.rbegin()>0.5);
     std::cout<<"V3_HYBRID_I12_SUBCELL_PASS\n";
     std::cout<<"V3_HYBRID_I11B_TILE_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I10B_INCREMENTAL_INPUT_PASS\n";

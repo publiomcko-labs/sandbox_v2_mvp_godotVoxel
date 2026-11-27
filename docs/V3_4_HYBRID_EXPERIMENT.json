@@ -326,8 +326,27 @@
           "filled_blue_pixels_removed": 0
         },
         "i12": {
+          "status": "CORE_NATIVE_GPU_PASS_VISUAL_AND_COST_REGRESSION",
+          "focus": "subcell signed depth reconstruction on certified exposed dry fronts and triangle edge overlap",
+          "commit": "4707eeaac52886977ca86978dfc516e9274b9206",
+          "core_run": 46066107824,
+          "native_run": 46066107788,
+          "gpu_run": 46066107866,
+          "native_artifact": 15231480390,
+          "gpu_artifact": 15231420706,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_worker_p95_us": 1776,
+          "gpu_combined_refresh_p95_us": 6956,
+          "gpu_combined_refresh_p99_us": 10877,
+          "gpu_frame_p95_us": 51335,
+          "filled_mask_removed": 544,
+          "filled_mask_added": 0
+        },
+        "i12b": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "subcell signed depth reconstruction on certified exposed dry fronts and triangle edge overlap"
+          "focus": "normalized front field and exact deep-water fast path"
         }
       }
     },
