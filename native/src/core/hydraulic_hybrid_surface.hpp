@@ -64,7 +64,12 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
         };
         // Canonical connected component at each world-space corner. A
         // cell on the opposite tile boundary computes identical values.
+        using CornerKey=std::tuple<int,int,int,int,int,int,std::size_t>;
+        std::map<CornerKey,double> corner_cache;
+        auto corner_key=[](const Cell& c,int x,int z){return CornerKey{x,z,c.x,c.z,c.floor_mm,c.ceiling_mm,c.type};};
         auto corner=[&](const Cell& cell,int x,int z) {
+            const auto key=corner_key(cell,x,z);
+            if(auto it=corner_cache.find(key);it!=corner_cache.end())return it->second;
             std::vector<const Cell*> candidates;
             for(int a=x-1;a<=x;++a)for(int b=z-1;b<=z;++b) {
                 auto it=columns.find({a,b});if(it==columns.end())continue;
@@ -80,7 +85,10 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
                 if(connected(*candidates[i],*candidates[j])){members.insert(i);changed=true;break;}}
             double sum=0,lo=-1e9,hi=1e9;
             for(auto i:members){const auto &c=*candidates[i];sum+=c.head;lo=std::max(lo,c.floor_mm*0.001+0.0001);hi=std::min(hi,c.ceiling_mm*0.001-0.002);}
-            return members.empty()||lo>hi?cell.head:std::clamp(sum/double(members.size()),lo,hi);
+            if(members.empty()||lo>hi){corner_cache.emplace(key,cell.head);return cell.head;}
+            const double y=std::clamp(sum/double(members.size()),lo,hi);
+            for(auto i:members)corner_cache.emplace(corner_key(*candidates[i],x,z),y);
+            return y;
         };
         // Bank patches are disjoint footprints. Resolve each shared
         // vertex against the same wet component, including the second
@@ -292,6 +300,64 @@ inline bool bank_has_donor(const Input& wet,const core::Region& target) {
             c.z>=target.z-1&&c.z<=target.z+g.nz;
     });
 }
+// Incremental presentation input cache. A changed primary may create or
+// remove a bank in the first ring; that membership changes halo ownership
+// in the second ring. Recompute membership before any halo is assembled.
+class LayeredInputCache {
+    std::map<core::Region,Input> primary_,wanted_;
+    std::uint64_t primary_rebuilds_{},input_rebuilds_{};
+public:
+    template<class Primary,class Geometry>
+    const auto& update(const std::set<core::Region>& changed,int side,int height,Primary primary,Geometry geometry) {
+        if(changed.empty())return wanted_;
+        auto ring=[&](const std::set<core::Region>& source){
+            std::set<core::Region> out;
+            for(auto k:source)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz)
+                out.insert({k.x+dx*side,k.y,k.z+dz*side});
+            return out;
+        };
+        for(auto k:changed){
+            ++primary_rebuilds_;
+            if(auto in=primary(k))primary_.insert_or_assign(k,std::move(*in));
+            else primary_.erase(k);
+        }
+        const auto membership=ring(changed);
+        for(auto k:membership) {
+            if(primary_.contains(k)){wanted_.try_emplace(k,primary_.at(k));continue;}
+            auto g=geometry(k);
+            bool bank=false;
+            if(g)for(int dx=-1;dx<=1&&!bank;++dx)for(int dz=-1;dz<=1;++dz){
+                auto p=primary_.find({k.x+dx*side,k.y,k.z+dz*side});
+                if(p!=primary_.end()&&bank_has_donor(p->second,k)){bank=true;break;}
+            }
+            if(bank){Input in{k,g,{},height,{}};in.layered=true;wanted_.try_emplace(k,std::move(in));}
+            else wanted_.erase(k);
+        }
+        for(auto k:ring(membership)){
+            auto at=wanted_.find(k);if(at==wanted_.end())continue;
+            ++input_rebuilds_;
+            auto p=primary_.find(k);
+            Input in=p!=primary_.end()?p->second:Input{k,geometry(k),{},height,{}};
+            in.layered=true;
+            for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
+                if(!dx&&!dz)continue;
+                core::Region q{k.x+dx*side,k.y,k.z+dz*side};
+                if(!wanted_.contains(q))continue;
+                in.adjacent_geometry.insert(q);
+                auto neighbor=primary_.find(q);if(neighbor==primary_.end())continue;
+                for(const auto &cell:neighbor->second.cells){
+                    const int pad=cell.ceiling_mm==(k.y+height)*1000?2:1;
+                    if(cell.x>=k.x-pad&&cell.x<k.x+side+pad&&cell.z>=k.z-pad&&cell.z<k.z+side+pad)
+                        in.neighbors.push_back(cell);
+                }
+            }
+            at->second=std::move(in);
+        }
+        return wanted_;
+    }
+    std::uint64_t primary_rebuilds()const{return primary_rebuilds_;}
+    std::uint64_t input_rebuilds()const{return input_rebuilds_;}
+};
 // Conservative dependency groups: all dirty tiles sharing a cardinal
 // edge or corner in either accepted or requested ownership are atomic.
 // Unchanged inputs need no rebuild; disjoint groups cannot share a halo.

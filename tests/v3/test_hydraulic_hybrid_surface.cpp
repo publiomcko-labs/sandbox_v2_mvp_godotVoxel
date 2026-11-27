@@ -134,6 +134,59 @@ int main(){
     }
     assert(shared_heights.size()==1&&*shared_heights.begin()==2.25);
     assert(outer_heights.size()==1&&*outer_heights.begin()==2.25);
+    // I10b: a primary/bank change must invalidate its entire dependency
+    // ring, including unchanged neighbors of a removed bank. Compare
+    // incremental inputs to a fresh build after every mutation.
+    using Region=sandbox::core::Region;
+    std::map<Region,hybrid::Input> primary;
+    std::map<Region,std::shared_ptr<const tp::Result>> known;
+    for(int x=0;x<8;x+=2)for(int z=0;z<8;z+=2){
+        auto s=left;s.origin={x,0,z};known[s.origin]=std::make_shared<const tp::Result>(tp::extract(s));
+    }
+    auto make_primary=[&](Region k,double head){
+        hybrid::Input in{k,known.at(k),{},8,{}};in.layered=true;
+        in.cells={{k.x+1,k.z+1,0,8000,0,head,{head,head,head,head}}};primary.insert_or_assign(k,std::move(in));
+    };
+    auto fetch_primary=[&](Region k)->std::optional<hybrid::Input>{
+        auto it=primary.find(k);if(it==primary.end())return std::nullopt;return it->second;
+    };
+    auto fetch_geometry=[&](Region k)->std::shared_ptr<const tp::Result>{
+        auto it=known.find(k);return it==known.end()?nullptr:it->second;
+    };
+    make_primary({0,0,0},2.0);make_primary({4,0,4},2.5);make_primary({6,0,6},2.1);
+    hybrid::LayeredInputCache incremental;
+    auto verify_cache=[&](std::set<Region> changes){
+        const auto &actual=incremental.update(changes,2,8,fetch_primary,fetch_geometry);
+        // Independent original full-map algorithm.
+        auto expected=primary;
+        std::set<Region> banks;
+        for(const auto &[k,in]:primary)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
+            Region q{k.x+dx*2,k.y,k.z+dz*2};
+            if(!primary.contains(q)&&known.contains(q)&&hybrid::bank_has_donor(in,q))banks.insert(q);
+        }
+        for(auto k:banks){hybrid::Input in{k,known.at(k),{},8,{}};in.layered=true;expected.emplace(k,std::move(in));}
+        for(auto &[k,in]:expected)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
+            if(!dx&&!dz)continue;
+            auto n=expected.find({k.x+dx*2,k.y,k.z+dz*2});if(n==expected.end())continue;
+            in.adjacent_geometry.insert(n->first);
+            for(const auto &cell:n->second.cells){
+                const int pad=cell.ceiling_mm==(k.y+8)*1000?2:1;
+                if(cell.x>=k.x-pad&&cell.x<k.x+2+pad&&cell.z>=k.z-pad&&cell.z<k.z+2+pad)in.neighbors.push_back(cell);
+            }
+        }
+        assert(actual.size()==expected.size());
+        for(const auto &[k,in]:expected)assert(actual.at(k).same(in));
+    };
+    std::set<Region> all;for(const auto &[k,g]:known){(void)g;all.insert(k);}
+    verify_cache(all);
+    const auto before=incremental.input_rebuilds();verify_cache({});assert(before==incremental.input_rebuilds());
+    make_primary({0,0,0},2.2);verify_cache({{0,0,0}});
+    primary.erase({4,0,4});verify_cache({{4,0,4}});
+    known.erase({2,0,2});verify_cache({{2,0,2}});
+    auto replacement=left;replacement.origin={2,0,2};replacement.revision=2;
+    known[replacement.origin]=std::make_shared<const tp::Result>(tp::extract(replacement));
+    make_primary({2,0,2},1.8);verify_cache({{2,0,2}});
+    std::cout<<"V3_HYBRID_I10B_INCREMENTAL_INPUT_PASS\n";
     std::cout<<"V3_HYBRID_I8_BANK_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I7_GROUPS_PASS\n";
     std::cout<<"V3_HYBRID_I7_IDENTICAL_OUTPUT_PASS\n";

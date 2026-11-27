@@ -246,8 +246,25 @@
           "settles": 0
         },
         "i10a": {
+          "status": "NATIVE_GPU_PASS_BUFFER_REUSE_GAIN_GEOMETRY_PARTIAL",
+          "commit": "67968194c11ae2be2f2418381edae8f67032463e",
+          "native_run": 46062213372,
+          "gpu_run": 46062213386,
+          "native_artifact": 15229736020,
+          "gpu_artifact": 15229616231,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_builds": 1409,
+          "gpu_mesh_allocations": 272,
+          "gpu_buffer_updates": 1136,
+          "gpu_buffer_bytes": 14083680,
+          "gpu_combined_refresh_p95_us": 5376,
+          "gpu_combined_refresh_p99_us": 7134
+        },
+        "i10b": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "dynamic mesh buffer reuse"
+          "focus": "incremental native surface input cache"
         }
       }
     },

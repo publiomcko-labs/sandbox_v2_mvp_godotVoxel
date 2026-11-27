@@ -431,7 +431,9 @@ public:
     godot::Dictionary hybrid_render() {
         using namespace godot;
         const auto started=std::chrono::steady_clock::now();
-        const auto wanted=integrated_?integrated_->inputs():hybrid::snapshot(domain_,height);
+        std::map<core::Region,hybrid::Input> control;
+        if(!integrated_)control=hybrid::snapshot(domain_,height);
+        const auto &wanted=integrated_?integrated_->inputs():control;
         const auto snapshots_us=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-started).count();
         auto done=hybrid_renderer_.poll(wanted);
         Array updates,keys,ready;
@@ -472,7 +474,7 @@ public:
         std::uint64_t hash=1469598103934665603ULL;
         auto mix=[&](std::uint64_t x){hash^=x;hash*=1099511628211ULL;};
         if(integrated_) {
-            const auto state=integrated_->report();mix(static_cast<std::uint64_t>(static_cast<int64_t>(state["litres"])));mix(static_cast<std::uint64_t>(static_cast<int64_t>(state["ticks"])));
+            mix(static_cast<std::uint64_t>(integrated_->model().mass()));mix(integrated_->ticks());
         }else {mix(static_cast<std::uint64_t>(domain_.graph().finite()));mix(ticks_);}
         for(const auto &[id,v]:domain_.graph().volumes()){mix(id);mix(v.type);mix(static_cast<std::uint64_t>(v.litres));}
         for(const auto &[k,t]:domain_.tiles()){mix(static_cast<std::uint64_t>(k.x));mix(static_cast<std::uint64_t>(k.z));mix(t.geometry->revision);mix(t.expected_revision);mix(t.available?1:0);}

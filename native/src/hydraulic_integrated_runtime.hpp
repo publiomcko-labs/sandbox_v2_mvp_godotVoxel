@@ -12,7 +12,8 @@ class IntegratedRuntime {
     std::set<std::string> sources_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
-    std::set<core::Region> group_,activate_pending_;
+    std::set<core::Region> group_,activate_pending_,visual_invalidated_;
+    hybrid::LayeredInputCache surface_cache_;
     std::vector<std::uint64_t> tick_samples_;
     std::size_t pristine_survey_tiles_=0;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
@@ -71,6 +72,7 @@ public:
         const auto keys=affected(p,radius);
         bool near_wet=false;for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
         for(auto k:keys) {
+            visual_invalidated_.insert(k);
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
             else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
             worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
@@ -153,9 +155,17 @@ public:
     // One immutable surface input per known wet tile, independent of LOD0
     // residency. For a local window, use actual wet intervals, never an
     // averaged compartment head. Aggregate tiles keep B2 bank support.
-    std::map<core::Region,hybrid::Input> inputs()const {
-        std::map<core::Region,hybrid::Input> out;
-        for(const auto &[k,t]:model_.tiles())if(!dirty_.contains(k)&&model_.tile_mass(k)) {
+    const auto& inputs() {
+        auto changed=model_.take_surface_changes();
+        changed.insert(visual_invalidated_.begin(),visual_invalidated_.end());
+        visual_invalidated_.clear();
+        auto geometry=[&](core::Region k)->std::shared_ptr<const tp::Result>{
+            auto it=model_.tiles().find(k);
+            return it==model_.tiles().end()||dirty_.contains(k)?nullptr:it->second.geometry;
+        };
+        auto primary=[&](core::Region k)->std::optional<hybrid::Input>{
+            if(!geometry(k)||!model_.tile_mass(k))return std::nullopt;
+            const auto &t=model_.tiles().at(k);
             hybrid::Input in{k,t.geometry,{},height,{}};in.layered=true;
             auto add=[&](int x,int z,int floor,int ceiling,std::size_t type,double head) {
                 if(head<=floor*0.001||head>=ceiling*0.001-0.001)return;
@@ -171,30 +181,12 @@ public:
                 const auto h=c.curve.level(v->second.litres);
                 for(const auto &s:c.spans)add(s.x,s.z,tp::span_floor_mm(*t.geometry,s),(k.y+s.top)*1000,v->second.type,h);
             }
-            if(!in.cells.empty())out.emplace(k,std::move(in));
-        }
-        // A known dry target tile owns its adjacent bank surface, even
-        // when it contains no hydraulic mass. Never synthesize unknown.
-        std::set<core::Region> banks;
-        for(const auto &[k,in]:out){(void)in;for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
-            core::Region q{k.x+dx*side,base,k.z+dz*side};
-            if(!out.contains(q)&&!dirty_.contains(q)&&model_.tiles().contains(q)&&hybrid::bank_has_donor(in,q))banks.insert(q);
-        }}
-        for(auto k:banks){hybrid::Input in{k,model_.tiles().at(k).geometry,{},height,{}};in.layered=true;out.emplace(k,std::move(in));}
-        // Primary corners need one wet halo column; exposed bank
-        // corners need two. No solver ownership or LOD0 residency is involved.
-        for(auto &[k,in]:out)for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
-            if(!dx&&!dz)continue;
-            auto n=out.find({k.x+dx*side,base,k.z+dz*side});if(n==out.end())continue;
-            in.adjacent_geometry.insert(n->first);
-            for(const auto &cell:n->second.cells){
-                const int pad=cell.ceiling_mm==(k.y+height)*1000?2:1;
-                if(cell.x>=k.x-pad&&cell.x<k.x+side+pad&&cell.z>=k.z-pad&&cell.z<k.z+side+pad)
-                    in.neighbors.push_back(cell);
-            }
-        }
-        return out;
+            if(in.cells.empty())return std::nullopt;
+            return in;
+        };
+        return surface_cache_.update(changed,side,height,primary,geometry);
     }
+    std::uint64_t ticks()const{return ticks_;}
     godot::Array surfaces()const {
         godot::Array rows;int64_t id=1;
         for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)) {
@@ -210,6 +202,7 @@ public:
         d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
         d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
         d["pristine_survey_tiles"]=static_cast<int64_t>(pristine_survey_tiles_);
+        d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);

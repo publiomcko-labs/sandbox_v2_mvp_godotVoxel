@@ -36,6 +36,8 @@ class Coupler {
     std::size_t active_limit_,tile_limit_;
     Litres initial_{},injected_{},drained_{};
     std::uint64_t epoch_{};
+    // Ephemeral render invalidations; never persisted or used by physics.
+    std::set<core::Region> surface_changes_;
     struct Value {std::size_t type=no_liquid;Litres mass{},capacity{};double head{};bool ocean=false;};
     static const tp::Compartment& compartment(const CoupledTile& t,Id id) {
         const auto it=std::find_if(t.geometry->compartments.begin(),t.geometry->compartments.end(),[&](const auto &v){return v.id==id;});
@@ -197,6 +199,7 @@ public:
     std::size_t active_limit()const{return active_limit_;}
     std::size_t tile_limit()const{return tile_limit_;}
     const auto& interfaces()const{return interfaces_;}
+    std::set<core::Region> take_surface_changes(){std::set<core::Region> out;out.swap(surface_changes_);return out;}
     // Explicit transfer from bootstrap Domain. Caller discards old owner.
     static Coupler adopt(const Domain& domain,std::size_t active_limit=8,std::size_t tile_limit=96) {
         Coupler out(domain.graph().types(),active_limit,tile_limit);
@@ -207,7 +210,7 @@ public:
                 const auto &v=domain.graph().volumes().at(id);
                 if(v.litres)owner.aggregate.emplace(local,tp::Content{v.type,v.litres});
             }
-            out.tiles_.emplace(k,std::move(owner));
+            out.tiles_.emplace(k,std::move(owner));out.surface_changes_.insert(k);
         }
         for(const auto &[id,o]:domain.oceans()) {
             const auto &v=domain.graph().volumes().at(o.ocean);
@@ -269,12 +272,12 @@ public:
         const auto key=geometry->origin;
         if(!tiles_.empty()&&(geometry->nx!=tiles_.begin()->second.geometry->nx||geometry->nz!=tiles_.begin()->second.geometry->nz||
             key.y!=tiles_.begin()->first.y))return false;
-        CoupledTile t;t.geometry=std::move(geometry);tiles_.emplace(key,std::move(t));rebuild();return true;
+        CoupledTile t;t.geometry=std::move(geometry);tiles_.emplace(key,std::move(t));surface_changes_.insert(key);rebuild();return true;
     }
     bool seed(core::Region key,Id id,std::size_t type,Litres amount) {
         auto &t=tiles_.at(key);
         if(t.local||t.aggregate.contains(id)||type>=types_.size()||amount<=0||amount>compartment(t,id).curve.capacity())return false;
-        t.aggregate.emplace(id,tp::Content{type,amount});initial_+=amount;verify();return true;
+        t.aggregate.emplace(id,tp::Content{type,amount});initial_+=amount;surface_changes_.insert(key);verify();return true;
     }
     bool activate(core::Region key) {
         auto &t=tiles_.at(key);if(!t.resident||t.local)return false;
@@ -297,7 +300,7 @@ public:
         if(staged.mass()!=tile_mass(key))throw std::logic_error("R3 activation mass");
         t.phase=Phase::activating;
         t.local.emplace(std::move(staged));t.owners=std::move(owners);t.aggregate.clear();
-        t.phase=Phase::local_active;t.epoch=++epoch_;t.stable_ticks=0;rebuild();verify();return true;
+        t.phase=Phase::local_active;t.epoch=++epoch_;t.stable_ticks=0;surface_changes_.insert(key);rebuild();verify();return true;
     }
     bool request_settle(core::Region key) {
         auto &t=tiles_.at(key);if(!t.local||!t.resident)return false;
@@ -311,7 +314,7 @@ public:
         auto it=tiles_.find(key);
         if(it==tiles_.end()||it->second.resident||it->second.local||tile_mass(key)||
             std::any_of(oceans_.begin(),oceans_.end(),[&](const auto &o){return o.tile==key;}))return false;
-        tiles_.erase(it);rebuild();verify();return true;
+        tiles_.erase(it);surface_changes_.insert(key);rebuild();verify();return true;
     }
     bool replace_geometry(std::shared_ptr<const tp::Result> geometry) {
         auto &t=tiles_.at(geometry->origin);
@@ -321,7 +324,7 @@ public:
             if(a.size()!=b.size())return false;
             for(std::size_t i=0;i<a.size();++i){if(a[i].size()!=b[i].size())return false;for(std::size_t j=0;j<a[i].size();++j)
                 if(a[i][j].bottom!=b[i][j].bottom||a[i][j].top!=b[i][j].top||a[i][j].compartment!=b[i][j].compartment||tp::span_floor_mm(*t.geometry,a[i][j])!=tp::span_floor_mm(*geometry,b[i][j]))return false;}
-            t.geometry=std::move(geometry);t.resident=true;rebuild();return true;
+            surface_changes_.insert(geometry->origin);t.geometry=std::move(geometry);t.resident=true;rebuild();return true;
         }
         if(t.local) {
             Local staged(*geometry,types_);
@@ -332,7 +335,7 @@ public:
             auto remap=tp::remap(*t.geometry,*geometry,t.aggregate);if(!remap)return false;
             t.aggregate=std::move(remap->contents);
         }
-        t.geometry=std::move(geometry);t.resident=true;t.epoch=++epoch_;rebuild();verify();return true;
+        surface_changes_.insert(geometry->origin);t.geometry=std::move(geometry);t.resident=true;t.epoch=++epoch_;rebuild();verify();return true;
     }
     bool ocean(Ocean o) {
         if(o.id.empty()||o.type>=types_.size()||!std::isfinite(o.head)||!std::isfinite(o.sill)||
@@ -343,7 +346,7 @@ public:
     }
     Litres tick() {
         Litres moved=0;std::set<core::Region> exchanging;
-        for(auto &[k,t]:tiles_)if(t.resident&&t.local){(void)k;moved+=t.local->tick().moved;}
+        for(auto &[k,t]:tiles_)if(t.resident&&t.local){const auto amount=t.local->tick().moved;moved+=amount;if(amount)surface_changes_.insert(k);}
         std::map<Owner,Litres> sent,received;
         std::map<Owner,std::size_t> receiving_type;
         struct Transfer {Owner from,to;std::size_t type;Litres amount;};
@@ -375,13 +378,14 @@ public:
         // Apply withdrawals first; no use of incoming mass for proposals.
         for(const auto &v:transfers)remove(v.from,v.amount);
         for(const auto &v:transfers)add(v.to,v.type,v.amount);
+        surface_changes_.insert(exchanging.begin(),exchanging.end());
         bool changed=false;
         for(auto &[k,t]:tiles_)if(t.resident&&t.local&&t.phase==Phase::settling) {
             if(!exchanging.contains(k)&&settled(t))++t.stable_ticks;else t.stable_ticks=0;
             if(t.stable_ticks>=20) {
                 auto aggregate=collect(t);
                 t.local.reset();t.owners.clear();t.aggregate=std::move(aggregate);
-                t.phase=Phase::aggregate;t.epoch=++epoch_;t.stable_ticks=0;changed=true;
+                t.phase=Phase::aggregate;t.epoch=++epoch_;t.stable_ticks=0;surface_changes_.insert(k);changed=true;
             }
         }
         if(changed)rebuild();
