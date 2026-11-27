@@ -163,7 +163,7 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
             return false
         var target: Vector3=candidate
         previous.append(target)
-        if runtime.submit_brush(target,false,3.0)!="accepted":
+        if runtime.submit_brush(target,false,6.0 if accepted==0 else 3.0)!="accepted":
             if previous.size()>48:
                 _fail("stress: too many rejected positions")
                 return false
@@ -228,39 +228,42 @@ func _tile_key(p: Vector3) -> Vector3i:
     return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
 
 func _cross_tile_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Variant:
-    # A target in a previously dry tile cannot be filled by remapping
-    # litres from its own old geometry. This tests actual portal discharge.
+    # Find a solid point in a dry adjacent tile whose radius-6 excavation
+    # actually overlaps an existing water body. The dry tile has no mass
+    # to remap, so its first wet sample must come from portal discharge.
     var wet_tiles: Dictionary={}
     for row: Array in runtime.session.hydraulic_surfaces():
         wet_tiles[row[3]]=true
     for z in range(-64,64):
         for x in range(-88,24):
-            if posmod(x,16)!=0 and posmod(x,16)!=15 and posmod(z,16)!=0 and posmod(z,16)!=15:
+            var source_tile:=_tile_key(Vector3(x+0.5,0,z+0.5))
+            if not wet_tiles.has(source_tile):
                 continue
-            for y in range(-12,4):
-                var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
-                var wet: Dictionary=runtime.session.hydraulic_at(p)
-                if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01 or float(wet["level"])-p.y<0.35:
-                    continue
-                for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
-                    var shore:=p+direction
-                    var target:=shore-Vector3(0,1.65,0)
-                    if _tile_key(p)==_tile_key(target) or wet_tiles.has(_tile_key(target)):
+            for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
+                for distance in range(1,5):
+                    var tx:=float(x)+0.5+direction.x*distance
+                    var tz:=float(z)+0.5+direction.z*distance
+                    var target_tile:=_tile_key(Vector3(tx,0,tz))
+                    if target_tile==source_tile or wet_tiles.has(target_tile):
                         continue
-                    if not tool.is_area_editable(AABB(target-Vector3(5,5,5),Vector3(10,10,10))):
-                        continue
-                    if not runtime.session.hydraulic_at(shore).is_empty() or not runtime.session.hydraulic_at(target).is_empty():
-                        continue
-                    if tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
-                        continue
-                    var distinct:=true
-                    for old: Vector3 in previous:
-                        if old.distance_to(target)<4.0:
-                            distinct=false
-                            break
-                    if distinct:
-                        print("V3_HYDRAULIC_CROSS_TILE_TARGET source=",_tile_key(p)," dry_target=",_tile_key(target)," point=",target)
-                        return target
+                    for y in range(-10,4):
+                        var p:=Vector3(float(x)+0.5,float(y)+0.5,float(z)+0.5)
+                        var wet: Dictionary=runtime.session.hydraulic_at(p)
+                        if wet.is_empty() or float(wet["level"])-p.y<0.5:
+                            continue
+                        var target:=Vector3(tx,p.y-0.5,tz)
+                        if not tool.is_area_editable(AABB(target-Vector3(8,8,8),Vector3(16,16,16))):
+                            continue
+                        if not runtime.session.hydraulic_at(target).is_empty() or tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                            continue
+                        var distinct:=true
+                        for old: Vector3 in previous:
+                            if old.distance_to(target)<8.0:
+                                distinct=false
+                                break
+                        if distinct:
+                            print("V3_HYDRAULIC_CROSS_TILE_TARGET source=",source_tile," dry_target=",target_tile," point=",target)
+                            return target
     return null
 
 func _test() -> void:
