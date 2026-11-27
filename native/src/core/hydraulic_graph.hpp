@@ -8,7 +8,9 @@ using Id=std::uint32_t;
 using Litres=std::int64_t;
 inline constexpr Litres volume_limit=1'000'000'000'000LL;
 inline constexpr Litres ledger_limit=1'000'000'000'000'000LL;
-inline constexpr std::size_t volume_count_limit=4096,portal_count_limit=16384;
+inline constexpr std::size_t volume_count_limit=8192,portal_count_limit=32768;
+// Resource exhaustion is a recoverable admission failure, not invalid geometry.
+struct CapacityExceeded:std::length_error {using std::length_error::length_error;};
 inline constexpr double tick_s=0.05;
 inline constexpr std::size_t no_liquid=std::numeric_limits<std::size_t>::max();
 struct Knot {int mm{};Litres litres{};auto operator<=>(const Knot&)const=default;};
@@ -58,6 +60,7 @@ struct Transfer {Id portal{},from{},to{};Litres litres{};};
 struct Report {std::size_t visited{},backlog{};Litres moved{};std::vector<Transfer> flows;};
 class Graph {
     std::vector<Liquid> types_;
+    std::size_t volume_budget_,portal_budget_;
     std::map<Id,Volume> volumes_;
     std::map<Id,Portal> portals_;
     std::map<Id,std::set<Id>> adjacency_;
@@ -91,7 +94,10 @@ class Graph {
         return lo;
     }
 public:
-    explicit Graph(std::vector<Liquid> types):types_(std::move(types)) {
+    explicit Graph(std::vector<Liquid> types,std::size_t volume_budget=volume_count_limit,
+        std::size_t portal_budget=portal_count_limit):types_(std::move(types)),volume_budget_(volume_budget),portal_budget_(portal_budget) {
+        if(!volume_budget_||volume_budget_>volume_count_limit||!portal_budget_||portal_budget_>portal_count_limit)
+            throw std::invalid_argument("graph capacity budget");
         if(types_.empty()||types_.size()>32)throw std::invalid_argument("liquid types");
         std::set<std::string> ids;
         for(const auto &t:types_)if(t.id.empty()||!ids.insert(t.id).second||
@@ -107,12 +113,16 @@ public:
     Litres injected()const{return injected_;}
     Litres drained()const{return drained_;}
     std::size_t backlog()const{return frontier_.size();}
+    std::size_t volume_budget()const{return volume_budget_;}
+    std::size_t portal_budget()const{return portal_budget_;}
     void add_volume(Volume v) {
-        if(!v.id||volumes_.contains(v.id)||volumes_.size()>=volume_count_limit||(v.type>=types_.size()&&!(v.type==no_liquid&&!v.litres&&!v.ocean))||
-            v.litres<0||v.litres>v.curve.capacity()||
-            (v.ocean&&(v.litres||!std::isfinite(v.ocean_level)||std::abs(v.ocean_level)>100000))||
-            initial_>ledger_limit-v.litres)
-            throw std::invalid_argument("volume definition");
+        if(!v.id||volumes_.contains(v.id))throw std::invalid_argument("volume identity");
+        if(v.type>=types_.size()&&!(v.type==no_liquid&&!v.litres&&!v.ocean))throw std::invalid_argument("volume liquid type");
+        if(v.litres<0||v.litres>v.curve.capacity())throw std::invalid_argument("volume mass exceeds capacity");
+        if(v.ocean&&(v.litres||!std::isfinite(v.ocean_level)||std::abs(v.ocean_level)>100000))
+            throw std::invalid_argument("volume ocean definition");
+        if(initial_>ledger_limit-v.litres)throw std::invalid_argument("volume ledger limit");
+        if(volumes_.size()>=volume_budget_)throw CapacityExceeded("hydraulic volume budget");
         if(!v.ocean&&!v.litres)v.type=no_liquid;
         initial_+=v.litres;finite_+=v.litres;
         adjacency_.try_emplace(v.id);
@@ -120,9 +130,10 @@ public:
     }
     void add_portal(Portal p) {
         check_portal(p);
-        if(portals_.size()>=portal_count_limit||portals_.contains(p.id)||!volumes_.contains(p.a)||!volumes_.contains(p.b)||
+        if(portals_.contains(p.id)||!volumes_.contains(p.a)||!volumes_.contains(p.b)||
             (volumes_.at(p.a).ocean&&volumes_.at(p.b).ocean))
             throw std::invalid_argument("portal endpoints");
+        if(portals_.size()>=portal_budget_)throw CapacityExceeded("hydraulic portal budget");
         portals_.emplace(p.id,p);adjacency_[p.a].insert(p.id);adjacency_[p.b].insert(p.id);wake(p.id);
     }
     const std::set<Id>& incident(Id id)const{return adjacency_.at(id);}

@@ -49,8 +49,9 @@ class Domain {
                 static_cast<int>(std::floor(point.z/depth_))*depth_};
     }
 public:
-    Domain(std::vector<Liquid> types,int nx=16,int nz=16,int step=1,int base_y=-32)
-        :graph_(std::move(types)),width_(nx*step),depth_(nz*step),step_(step),base_y_(base_y) {
+    Domain(std::vector<Liquid> types,int nx=16,int nz=16,int step=1,int base_y=-32,
+            std::size_t volume_budget=volume_count_limit,std::size_t portal_budget=portal_count_limit)
+        :graph_(std::move(types),volume_budget,portal_budget),width_(nx*step),depth_(nz*step),step_(step),base_y_(base_y) {
         if(nx<1||nx>32||nz<1||nz>32||step<1||step>4||std::abs(std::int64_t(base_y))>99000)
             throw std::invalid_argument("domain tile shape");
     }
@@ -70,13 +71,39 @@ public:
             for(auto p:graph_.incident(id))graph_.invalidate_portal(p,std::max(revision,graph_.portals().at(p).revision));
         }
     }
-    bool publish(tp::Result geometry) {
+    // Only dry, suspended tiles without an ocean anchor can be forgotten.
+    // Wet mass, source identity and the entire ledger remain untouched.
+    bool forget_dry_tile(core::Region origin) {
+        const auto it=tiles_.find(origin);
+        if(it==tiles_.end()||it->second.available)return false;
+        for(const auto &[name,o]:oceans_){(void)name;if(o.tile==origin)return false;}
+        std::set<Id> ids;
+        for(const auto &[local,id]:it->second.ids) {
+            (void)local;
+            const auto &v=graph_.volumes().at(id);
+            if(v.litres||v.ocean)return false;
+            ids.insert(id);
+        }
+        graph_.erase_region(ids);
+        tiles_.erase(it);
+        return true;
+    }
+    bool publish(tp::Result geometry,bool* capacity_limited=nullptr) try {
+        if(capacity_limited)*capacity_limited=false;
         const auto origin=geometry.origin;
         if(origin.y!=base_y_||origin.x%width_||origin.z%depth_||
             geometry.nx*geometry.step!=width_||geometry.nz*geometry.step!=depth_||geometry.step!=step_)
             throw std::invalid_argument("domain tile alignment");
         const auto old=tiles_.find(origin);
-        if(old==tiles_.end()&&tiles_.size()>=tile_limit)return false;
+        if(old==tiles_.end()&&tiles_.size()>=tile_limit) {
+            if(capacity_limited)*capacity_limited=true;
+            return false;
+        }
+        const auto replacing=old==tiles_.end()?std::size_t(0):old->second.ids.size();
+        if(graph_.volumes().size()-replacing+geometry.compartments.size()>graph_.volume_budget()) {
+            if(capacity_limited)*capacity_limited=true;
+            return false;
+        }
         if(old!=tiles_.end()&&(geometry.revision<old->second.expected_revision||
             geometry.revision<old->second.geometry->revision))return false;
         // Same revision revalidation after unload requires identical geometry.
@@ -136,6 +163,11 @@ public:
         tiles.insert_or_assign(origin,std::move(t));
         graph_=std::move(staged);tiles_=std::move(tiles);next_node_=node;next_portal_=portal;
         return true;
+    } catch(const CapacityExceeded&) {
+        // All changes were on the staging graph. No partially published
+        // region, lost mass or fatal runtime error on a full graph.
+        if(capacity_limited)*capacity_limited=true;
+        return false;
     }
     std::optional<Id> volume_at(core::Vec3 point)const {
         if(!core::valid_point(point))return {};
@@ -220,7 +252,7 @@ public:
             if(!staged.initialize(id,type,staged.volumes().at(id).curve.at_level(level)))return false;
         graph_=std::move(staged);seeded_.insert(source);return true;
     }
-    bool add_ocean(const std::string &source,core::Vec3 anchor,std::size_t type,double level,double area,bool exposure_certified) {
+    bool add_ocean(const std::string &source,core::Vec3 anchor,std::size_t type,double level,double area,bool exposure_certified) try {
         if(source.empty()||!exposure_certified||seeded_.contains(source)||!core::valid_point(anchor)||
             !std::isfinite(level)||level<=anchor.y||!std::isfinite(area)||area<=0||area>4096)return false;
         const auto id=volume_at(anchor);if(!id)return false;
@@ -234,6 +266,8 @@ public:
         auto seeded=seeded_;seeded.insert(source);
         graph_=std::move(staged);oceans_=std::move(sources);seeded_=std::move(seeded);
         next_node_=node;next_portal_=portal;return true;
+    } catch(const CapacityExceeded&) {
+        return false;
     }
     // Restore a validated archive. Graph IDs are session-local and can be
     // regenerated; source IDs and exact finite mass are persistent.

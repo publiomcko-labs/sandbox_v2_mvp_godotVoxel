@@ -72,6 +72,30 @@ int main(){
     assert(cached.publish(tp::extract(ca))&&cached.graph().portals().empty());
     assert(cached.graph().finite()==cached_mass);
     std::cout<<"V3_HYDRAULIC_CACHED_RECONNECT_PASS visual_only closed_physics edited_neighbour_excluded\n";
+    // H14: force resource exhaustion with a tiny graph rather than
+    // requiring thousands of streamed tiles for the regression.
+    Domain bounded({{"water",1,1000}},4,4,1,0,2,4);
+    auto ba=a,bb=a,bc=a;bb.origin.x=4;bc.origin.x=8;
+    assert(bounded.publish(tp::extract(ba))&&bounded.publish(tp::extract(bb)));
+    assert(bounded.seed_finite("wet",{1,0.1,1},0,4,true));
+    const auto bounded_mass=bounded.graph().finite();
+    bool saturated=false;
+    assert(!bounded.publish(tp::extract(bc),&saturated)&&saturated);
+    assert(bounded.tiles().size()==2&&bounded.graph().volumes().size()==2&&bounded.graph().finite()==bounded_mass);
+    assert(!bounded.forget_dry_tile(bb.origin));
+    bounded.invalidate(ba.origin,1);bounded.invalidate(bb.origin,1);
+    assert(!bounded.forget_dry_tile(ba.origin)&&bounded.forget_dry_tile(bb.origin));
+    assert(bounded.publish(tp::extract(bc),&saturated)&&!saturated);
+    assert(bounded.graph().finite()==bounded_mass&&bounded.seeded().contains("wet"));
+    assert(bounded.graph().initial()==bounded_mass);
+    // Portal overflow can occur after staged volumes were added.
+    Domain portal_bounded({{"water",1,1000}},4,4,1,0,4,1);
+    assert(portal_bounded.publish(tp::extract(ba))&&portal_bounded.publish(tp::extract(bb)));
+    assert(portal_bounded.seed_finite("wet",{1,0.1,1},0,4,true));
+    assert(!portal_bounded.publish(tp::extract(bc),&saturated)&&saturated);
+    assert(portal_bounded.graph().volumes().size()==2&&portal_bounded.graph().portals().size()==1);
+    assert(portal_bounded.graph().finite()==bounded_mass&&portal_bounded.tiles().size()==2);
+    std::cout<<"V3_HYDRAULIC_CAPACITY_PASS transactional_volume_and_portal_rejection dry_reclaim exact_mass\n";
     tp::Snapshot shape{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
     for(int z=1;z<=2;++z)for(int x=1;x<=2;++x)for(int y=1;y<8;++y)
         shape.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;

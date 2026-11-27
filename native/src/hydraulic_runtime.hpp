@@ -15,6 +15,9 @@ class Runtime {
     Domain domain_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
+    std::set<core::Region> capacity_blocked_;
+    std::uint64_t capacity_rejections_=0,dry_evictions_=0;
+    std::size_t peak_volumes_=0,peak_portals_=0;
     std::set<core::Region> edited_tiles_,edit_group_,seed_interest_;
     std::map<std::string,std::set<core::Region>> seed_windows_;
     std::uint64_t seed_boundary_caps_=0;
@@ -239,7 +242,7 @@ public:
         for(int x=lo.x;x<=hi.x;x+=side)for(int z=lo.z;z<=hi.z;z+=side) {
             const core::Region k{x,base,z};
             if(domain_.tiles().contains(k)){edited_tiles_.insert(k);edit_group_.insert(k);}
-            domain_.invalidate(k,revision);worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
+            domain_.invalidate(k,revision);worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);capacity_blocked_.erase(k);
         }
     }
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed) {
@@ -249,11 +252,38 @@ public:
         // Only the 3x3 near-field is active. No voxel streaming requests.
         for(const auto &[k,t]:domain_.tiles())if(t.available&&(!hydraulic_interest(k,center)||!resident(tool,k)))
             domain_.invalidate(k,t.geometry->revision);
+        // Under pressure reclaim only suspended, dry geometry outside
+        // the near/wet/seed interest. Never evict wet or edited state.
+        const auto &g=domain_.graph();
+        if(g.volumes().size()>=g.volume_budget()*3/4||
+            g.portals().size()>=g.portal_budget()*3/4||domain_.tiles().size()>=192||
+            !capacity_blocked_.empty()) {
+            std::vector<core::Region> reclaim;
+            for(const auto &[k,t]:domain_.tiles())
+                if(!t.available&&!wet_tile(t)&&!hydraulic_interest(k,center)&&!pending_.contains(k))reclaim.push_back(k);
+            std::size_t removed=0;
+            for(const auto &k:reclaim) {
+                if(domain_.forget_dry_tile(k)){++dry_evictions_;++removed;worker_.invalidate(k);blocked_.erase(k);}
+                if(removed>=2)break;
+            }
+            if(removed)capacity_blocked_.clear();
+        }
+        for(auto it=capacity_blocked_.begin();it!=capacity_blocked_.end();) {
+            if(!hydraulic_interest(*it,center))it=capacity_blocked_.erase(it);else ++it;
+        }
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
             if(hydraulic_interest(k,center)&&resident(tool,k)) {
-                if(domain_.publish(std::move(*result))){edited_tiles_.erase(k);++publications_;}
-                else blocked_[k]=revision;
+                const auto before_volumes=g.volumes().size(),before_portals=g.portals().size();
+                bool capacity=false;
+                if(domain_.publish(std::move(*result),&capacity)){
+                    edited_tiles_.erase(k);++publications_;
+                    if(g.volumes().size()<before_volumes||g.portals().size()<before_portals)capacity_blocked_.clear();
+                    peak_volumes_=std::max(peak_volumes_,g.volumes().size());
+                    peak_portals_=std::max(peak_portals_,g.portals().size());
+                } else if(capacity) {
+                    ++capacity_rejections_;capacity_blocked_.insert(k);
+                } else blocked_[k]=revision;
             }
         }
         seed(center);
@@ -276,7 +306,7 @@ public:
         for(auto k:candidates) {
             const auto t=domain_.tiles().find(k);
             if(t!=domain_.tiles().end()&&t->second.available)continue;
-            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==revision))continue;
+            if(pending_.contains(k)||capacity_blocked_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==revision))continue;
             if(domain_.tiles().size()>=256&&t==domain_.tiles().end())continue;
             if(!resident(tool,k))continue;
             const auto start=std::chrono::steady_clock::now();
@@ -376,6 +406,13 @@ public:
         for(const auto &k:edit_group_)group.push_back(godot::Vector3i(k.x,k.y,k.z));
         d["edit_group_tiles"]=group;
         d["publications"]=static_cast<int64_t>(publications_);d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
+        d["capacity_blocked_tiles"]=static_cast<int64_t>(capacity_blocked_.size());
+        d["capacity_rejections"]=static_cast<int64_t>(capacity_rejections_);
+        d["dry_evictions"]=static_cast<int64_t>(dry_evictions_);
+        d["volume_budget"]=static_cast<int64_t>(domain_.graph().volume_budget());
+        d["portal_budget"]=static_cast<int64_t>(domain_.graph().portal_budget());
+        d["peak_volumes"]=static_cast<int64_t>(std::max(peak_volumes_,domain_.graph().volumes().size()));
+        d["peak_portals"]=static_cast<int64_t>(std::max(peak_portals_,domain_.graph().portals().size()));
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
         return d;
     }
