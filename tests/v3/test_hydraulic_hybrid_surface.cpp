@@ -84,7 +84,7 @@ int main(){
     hybrid::Input empty{left.origin,il.geometry,{},8,{}};
     empty.layered=true;
     hybrid::Renderer cached_renderer;
-    std::map<core::Region,hybrid::Input> desired{{empty.tile,empty}};
+    std::map<sandbox::core::Region,hybrid::Input> desired{{empty.tile,empty}};
     auto await_current=[&](std::size_t expected_updates){
         std::size_t updates=0;
         const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
