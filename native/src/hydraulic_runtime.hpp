@@ -54,6 +54,50 @@ class Runtime {
         }
         return false;
     }
+    // Close numerical cracks between certified wet exposed faces, not
+    // just portals with a recent transfer. A cached tile may participate
+    // only while its rendered revision is still valid. No physics changes.
+    std::map<Id,godot::PackedVector3Array> visible_seams(const std::map<Id,double> &heads)const {
+        using namespace godot;
+        std::map<Id,PackedVector3Array> out;
+        if(heads.empty())return out;
+        const auto &graph=domain_.graph();
+        std::map<Id,std::pair<const Tile*,Id>> locations;
+        for(const auto &[k,t]:domain_.tiles())if(t.renderable()) {
+            (void)k;
+            for(const auto &[local,id]:t.ids)if(heads.contains(id))locations.emplace(id,std::pair{&t,local});
+        }
+        std::size_t remaining=2048;
+        for(const auto &[id,location]:locations) {
+            if(!remaining)break;
+            for(auto pid:graph.incident(id)) {
+                if(!remaining)break;
+                const auto &p=graph.portals().at(pid);
+                const Id other=p.a==id?p.b:p.a;
+                if(!locations.contains(other)||p.opening_height_m<=0)continue;
+                const double high=heads.at(id),low=heads.at(other);
+                // Larger falls retain the H5 flow presentation. Do not
+                // draw across a sill above either water surface.
+                if(high-low<0.0005||high-low>1.0||low<=p.sill_m||
+                    high>=p.sill_m+p.opening_height_m||
+                    graph.volumes().at(id).type!=graph.volumes().at(other).type)continue;
+                const auto [a,la]=location;
+                const auto [b,lb]=locations.at(other);
+                const auto faces=surface::flow_faces(*a->geometry,la,*b->geometry,lb,
+                    static_cast<int>(std::lround(p.sill_m*1000)),
+                    static_cast<int>(std::lround((p.sill_m+p.opening_height_m)*1000)),
+                    base+height,high,low,remaining,0.0005,0.0);
+                for(const auto &q:faces) {
+                    auto &vertices=out[id];
+                    const Vector3 a0(q.x0,q.bottom-0.001,q.z0),a1(q.x0,q.top+0.001,q.z0),
+                        b0(q.x1,q.bottom-0.001,q.z1),b1(q.x1,q.top+0.001,q.z1);
+                    for(const auto &v:{a0,a1,b1,a0,b1,b0})vertices.push_back(v);
+                    --remaining;
+                }
+            }
+        }
+        return out;
+    }
     std::map<Id,godot::PackedVector3Array> visible_flows(const std::map<Id,double> &heads)const {
         using namespace godot;
         std::map<Id,PackedVector3Array> out;
@@ -66,7 +110,11 @@ class Runtime {
             const auto &a=graph.volumes().at(f.from),&b=graph.volumes().at(f.to);
             if(a.ocean||b.ocean||!a.litres||a.level()-b.level()<0.08||
                 a.level()<=p->second.sill_m)continue;
-            if(heads.contains(f.from)&&heads.contains(f.to)&&heads.at(f.from)-heads.at(f.to)<0.08)continue;
+            if(heads.contains(f.from)&&heads.contains(f.to)) {
+                const double high=heads.at(f.from),low=heads.at(f.to);
+                if(high-low<0.08||(high-low<=1.0&&low>p->second.sill_m&&
+                    high<p->second.sill_m+p->second.opening_height_m))continue;
+            }
             candidates.push_back(f);
         }
         std::sort(candidates.begin(),candidates.end(),[](const auto &a,const auto &b){
@@ -267,13 +315,16 @@ public:
     godot::Array surfaces()const {
         godot::Array out;
         std::set<Id> exposed;
-        for(const auto &[k,t]:domain_.tiles())if(t.available&&visual_tile(k,t))for(const auto &c:t.geometry->compartments) {
+        for(const auto &[k,t]:domain_.tiles())if(t.renderable()&&visual_tile(k,t))for(const auto &c:t.geometry->compartments) {
             const auto id=t.ids.at(c.id);
             if(domain_.graph().volumes().at(id).litres&&std::any_of(c.spans.begin(),c.spans.end(),
                 [](const auto &s){return s.top==height;}))exposed.insert(id);
         }
-        const auto heads=domain_.graph().presentation_heads(exposed);
-        const auto flows=visible_flows(heads);
+        // Unavailable due only to streaming is still a valid render
+        // snapshot. Edited tiles are excluded until the new revision.
+        const auto heads=domain_.graph().presentation_heads(exposed,0.15,true);
+        auto flows=visible_flows(heads);
+        for(const auto &[id,vertices]:visible_seams(heads))flows[id].append_array(vertices);
         for(const auto &[k,t]:domain_.tiles())if(visual_tile(k,t))for(const auto &[local,id]:t.ids) {
             (void)k;(void)local;const auto &v=domain_.graph().volumes().at(id);
             if(!v.litres)continue;

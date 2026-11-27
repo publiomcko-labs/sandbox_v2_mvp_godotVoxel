@@ -179,7 +179,8 @@ public:
     // a certified submerged aperture when the full group head spread is
     // small. Never change any litres or extend through an unavailable
     // opening, a dry receiver, a different liquid, or a large drop.
-    std::map<Id,double> presentation_heads(const std::set<Id>& exposed,double tolerance=0.15)const {
+    std::map<Id,double> presentation_heads(const std::set<Id>& exposed,double tolerance=0.15,
+            bool cached_renderable=false)const {
         struct Group {Id parent{};double lo{},hi{},sill{},soffit{};};
         std::map<Id,Group> groups;
         for(auto id:exposed) {
@@ -198,7 +199,7 @@ public:
             (void)entry;
             for(auto pid:adjacency_.at(id)) {
                 const auto &p=portals_.at(pid);
-                if(!p.available||p.opening_height_m<=0||p.area_m2/p.opening_height_m<0.99)continue;
+                if((!p.available&&!cached_renderable)||p.opening_height_m<=0||p.area_m2/p.opening_height_m<0.99)continue;
                 const Id other=p.a==id?p.b:p.a;
                 if(other<=id||!groups.contains(other)||volumes_.at(id).type!=volumes_.at(other).type)continue;
                 auto a=root(id),b=root(other);

@@ -9,9 +9,10 @@ struct FlowFace {double x0{},z0{},x1{},z1{},bottom{},top{};};
 // The caller supplies current heads, an observed transfer and a hard cap.
 inline std::vector<FlowFace> flow_faces(const topology::Result &a,Id from,
         const topology::Result &b,Id to,int sill_mm,int soffit_mm,
-        int surface_ceiling,double high,double low,std::size_t limit) {
+        int surface_ceiling,double high,double low,std::size_t limit,
+        double min_drop=0.08,double inset=0.015) {
     std::vector<FlowFace> out;
-    if(!limit||a.step!=b.step||high<=sill_mm*0.001||high-low<0.08)return out;
+    if(!limit||a.step!=b.step||high<=sill_mm*0.001||high-low<min_drop)return out;
     const auto c=std::find_if(a.compartments.begin(),a.compartments.end(),
         [&](const auto &v){return v.id==from;});
     if(c==a.compartments.end())return out;
@@ -30,11 +31,10 @@ inline std::vector<FlowFace> flow_faces(const topology::Result &a,Id from,
                 if(lo!=sill_mm||hi!=soffit_mm||lo>=hi)continue;
                 const double top=std::min(high,hi*0.001-0.001);
                 const double bottom=std::max(low,double(floor_b));
-                if(top-bottom<0.08)continue;
+                if(top-bottom<min_drop)continue;
                 const double ax=a.origin.x+u.x*a.step,az=a.origin.z+u.z*a.step;
                 // Slight receiver-side offset prevents coplanar terrain
                 // flicker. It never changes hydraulic occupancy or volume.
-                const double inset=0.015;
                 if(d.x) {
                     const double edge=ax+(d.x>0?a.step:0)+d.x*inset;
                     out.push_back({edge,az,edge,az+a.step,bottom,top});

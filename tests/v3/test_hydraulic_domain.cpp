@@ -112,6 +112,11 @@ int main(){
     const auto seam=surface::flow_faces(ga,ga.compartments.front().id,gb,gb.compartments.front().id,0,8000,8,3,1,64);
     assert(seam.size()==4);
     for(const auto &q:seam)assert(q.x0>4&&q.x0<4.1&&q.top==3&&q.bottom==1);
+    const auto fine_seam=surface::flow_faces(ga,ga.compartments.front().id,gb,gb.compartments.front().id,0,8000,8,3.01,3,64,0.0005,0.0);
+    assert(fine_seam.size()==4);
+    for(const auto &q:fine_seam)assert(q.x0==4&&q.x1==4&&q.top==3.01&&q.bottom==3);
+    assert(surface::flow_faces(ga,ga.compartments.front().id,gb,gb.compartments.front().id,0,8000,8,3,3,64,0.0005,0.0).empty());
+    std::cout<<"V3_HYDRAULIC_FINE_SEAM_PASS exact_boundary sub_centimetre_drop\n";
     std::cout<<"V3_HYDRAULIC_FLOW_FACE_PASS exposed_drop actual_sill cross_tile bounded\n";
     // Four independent high-drop columns share a square. Their exposed
     // surfaces must tile the whole 2x2 footprint exactly once, including

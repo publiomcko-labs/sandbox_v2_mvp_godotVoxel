@@ -105,3 +105,11 @@ Contratos 45919696977 e integração 45919697028 SUCCESS; 10.007.000 L conservad
 ## H9 — plano visual compartilhado e levantamento estendido (candidato)
 
 Compartimentos expostos molhados do mesmo líquido, conectados por abertura real submersa >=1m de largura, podem compartilhar uma altura visual de equilíbrio (spread de todo o grupo <=15cm, deslocamento individual <=7.5cm; margem de 2.5cm em soleira/teto). Sem modificar litros, altura física, portais ou saves; grupos não atravessam fronteira indisponível, parede, queda grande ou líquidos diferentes. Evita cortina visual redundante quando a diferença renderizada desaparece. A expansão inicial segue fronteira até raio de cinco tiles, máximo 64 tiles e headroom de 3200 volumes para novas expansões. Ainda é protótipo limitado; fallback explícito pode truncar um lago extenso, e o custo da aquisição precisa de acompanhamento. Contrato de grupos, cadeia, parede e massa. Validação e captura pendentes.
+
+### H9 resultado
+
+Contratos 45920161648, integração 45920161641, GPU 45920194240 SUCCESS, artefato gráfico 15163797540. 10.658.000 L conservados; seed_boundary_caps=0; 1 swap/6 holds; tick GPU 206us, snapshot 36004us, atualização 2102us. A captura inicial não mostra o corte retangular dominante; após edição persistem linhas finas de terreno entre tiles e pequeno trecho retangular interno. Não qualifica visualmente como final.
+
+## H10 — continuidade visual em streaming e fechamento de costuras (candidato)
+
+A H9 excluía tiles indisponíveis da união de alturas mesmo se a revisão renderizada permanecia válida; a simulação fecha portais ao sair do interesse, mas a superfície não deveria se fragmentar por essa razão. H10 permite usar conexões previamente certificadas apenas entre endpoints renderizáveis com revisão intacta, nunca para simulação. Adiciona faces de costura no limite geométrico exato entre superfícies expostas do mesmo líquido, ambas molhadas, abertura submersa e diferença 0,5mm–1m; mantém quedas maiores no sistema anterior. Limite separado de 2048 quads/refresh, sem deslocamento horizontal e sem massa. Não desenha sobre portais inválidos por edição porque o tile editado deixa de ser renderizável até nova revisão. Contratos de conexão cacheada exclusivamente visual e costura de 1cm. Validação GPU pendente.

@@ -95,6 +95,11 @@ int main(){
     assert(heads.volumes().at(1).litres==40000&&heads.volumes().at(2).litres==41000);
     heads.invalidate_portal(1,2);
     assert(heads.presentation_heads({1,2}).at(1)==4.0);
+    // Runtime supplies only revision-valid renderable endpoints when
+    // using cached connectivity. Physics still treats the portal closed.
+    assert(heads.presentation_heads({1,2},0.15,true).at(1)==visual.at(1));
+    assert(heads.presentation_heads({1},0.15,true).at(1)==4.0);
+    assert(heads.volumes().at(1).litres==40000&&heads.volumes().at(2).litres==41000);
     std::cout<<"V3_HYDRAULIC_SHARED_PLANE_PASS bounded_group_head no_mass_mutation no_closed_sill\n";
     // Volume count does not determine the tick work: 4096 dormant bodies,
     // one opening, one portal visit. A billion litres is still one node.
