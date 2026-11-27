@@ -39,6 +39,20 @@ struct Batch {
     std::uint64_t build_us{};
     std::size_t fallback_columns{};
 };
+inline Vertex lerp_vertex(const Vertex& a,const Vertex& b,double f) {
+    return {a.x+(b.x-a.x)*f,a.y+(b.y-a.y)*f,a.z+(b.z-a.z)*f,a.floor+(b.floor-a.floor)*f,a.ceiling+(b.ceiling-a.ceiling)*f};
+}
+// Piecewise linear contour within a certified wet footprint. The center
+// remains positive even for the smallest nonzero physical occupancy.
+inline void clip_front_triangle(std::vector<Vertex>& dst,const std::array<Vertex,3>& tri,const std::array<double,3>& field) {
+    std::array<Vertex,4> poly{};std::size_t n=0;
+    for(std::size_t i=0;i<3;++i){
+        const auto k=(i+1)%3;
+        if(field[i]>0)poly[n++]=tri[i];
+        if((field[i]>0)!=(field[k]>0))poly[n++]=lerp_vertex(tri[i],tri[k],field[i]/(field[i]-field[k]));
+    }
+    for(std::size_t i=1;i+1<n;++i)dst.insert(dst.end(),{poly[0],poly[i],poly[i+1]});
+}
 // B2 control: reuse the certified H14 geometric support and terrain depth
 // intersection rather than erode the water to fully open cells. Build
 // one material batch per render tile; never weld distinct heads/layers.
@@ -121,18 +135,6 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             return fallback;
         };
         const int exposed_ceiling=(g.origin.y+out.input.exposed_top)*1000;
-        for(const auto &cell:out.input.cells) {
-            std::array<Vertex,4> vertices;
-            for(std::size_t j=0;j<4;++j) {
-                const auto [dx,dz]=offsets[j];
-                const double floor=cell.floor_mm*0.001,ceiling=cell.ceiling_mm*0.001;
-                const int x=cell.x+dx,z=cell.z+dz;
-                const double clip=cell.ceiling_mm==exposed_ceiling?std::min(floor_at(x,z,floor)-1.35,floor-0.35):floor-0.35;
-                vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
-            }
-            auto &v=out.materials[cell.type];
-            v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
-        }
         // SDF slice at the actual free-surface head, not the highest
         // solid-to-air crossing (which may be an unrelated cave roof).
         auto sdf_at=[&](int x,int z,double y) {
@@ -144,6 +146,80 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             const auto idx=static_cast<std::size_t>((lz*w+lx)*(g.render_ny+1));
             return (g.render_sdf[idx+a]*(1-(ly-a))+g.render_sdf[idx+b]*(ly-a))/1024.0;
         };
+        // The signed front field uses only certified open, physically dry
+        // neighbors. A solid or unknown neighbor retains the I11b bank
+        // overlap and opaque terrain intersection. The field is a local
+        // presentation reconstruction, not a change to mass or topology.
+        auto dry_open=[&](int x,int z,double head) {
+            const int lx=x-g.origin.x,lz=z-g.origin.z;
+            const bool inside=lx>=0&&lx<g.nx&&lz>=0&&lz<g.nz;
+            if(!inside&&(g.halo_runs.empty()||lx< -1||lx>g.nx||lz< -1||lz>g.nz))return false;
+            const auto &runs=inside?g.column_runs.at(static_cast<std::size_t>(lz*g.nx+lx)):
+                g.halo_runs.at(static_cast<std::size_t>((lz+1)*(g.nx+2)+lx+1));
+            return std::any_of(runs.begin(),runs.end(),[&](const auto &run){
+                const double low=inside?tp::span_floor_mm(g,run)*0.001:double(g.origin.y+run.bottom*g.step);
+                return head>low&&head<(g.origin.y+run.top*g.step)-0.001;
+            });
+        };
+        auto front_sample=[&](const Cell& cell,double x,double z) {
+            const int ix=static_cast<int>(std::floor(x)),iz=static_cast<int>(std::floor(z));
+            const bool on_x=x==ix,on_z=z==iz;
+            double sum=0,head_sum=0;int wet_count=0,dry_count=0;
+            std::array<std::pair<int,int>,4> dry{};
+            for(int a=ix-(on_x?1:0);a<=ix;++a)for(int b=iz-(on_z?1:0);b<=iz;++b){
+                const Cell* wet=nullptr;
+                auto it=columns.find({a,b});
+                if(it!=columns.end())for(auto c:it->second)if(c->type==cell.type&&c->ceiling_mm==cell.ceiling_mm&&
+                    std::max(c->floor_mm,cell.floor_mm)<std::min(c->ceiling_mm,cell.ceiling_mm)){
+                    wet=c;break;
+                }
+                if(wet){sum+=std::clamp(wet->head-wet->floor_mm*0.001,0.0001,0.20);head_sum+=wet->head;++wet_count;}
+                else dry[static_cast<std::size_t>(dry_count++)]={a,b};
+            }
+            if(!wet_count||!dry_count)return 1.0;
+            const double head=head_sum/wet_count;
+            // Actual SDF slice must certify air at this contour sample.
+            const double sx=x-ix,sz=z-iz;
+            const double sdf0=sdf_at(ix,iz,head)*(1-sx)+(sx?sdf_at(ix+1,iz,head)*sx:0);
+            const double sdf1=sz?sdf_at(ix,iz+1,head)*(1-sx)+(sx?sdf_at(ix+1,iz+1,head)*sx:0):0;
+            if(sdf0*(1-sz)+sdf1*sz<=0.1)return 1.0;
+            int open=0;
+            for(int i=0;i<dry_count;++i)if(dry_open(dry[i].first,dry[i].second,head))++open;
+            if(!open)return 1.0;
+            // A 5 cm transition scale is geometric only; deep water
+            // retains full support, shallow fronts acquire fractional edges.
+            return sum-0.05*open;
+        };
+        for(const auto &cell:out.input.cells) {
+            std::array<Vertex,4> vertices;
+            for(std::size_t j=0;j<4;++j) {
+                const auto [dx,dz]=offsets[j];
+                const double floor=cell.floor_mm*0.001,ceiling=cell.ceiling_mm*0.001;
+                const int x=cell.x+dx,z=cell.z+dz;
+                const double clip=cell.ceiling_mm==exposed_ceiling?std::min(floor_at(x,z,floor)-1.35,floor-0.35):floor-0.35;
+                vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
+            }
+            auto &v=out.materials[cell.type];
+            if(cell.ceiling_mm==exposed_ceiling&&!g.render_sdf.empty()){
+                std::array<Vertex,8> ring{};std::array<double,8> f{};
+                bool clipped=false;
+                for(std::size_t i=0;i<4;++i){
+                    ring[2*i]=vertices[i];ring[2*i+1]=lerp_vertex(vertices[i],vertices[(i+1)%4],0.5);
+                }
+                for(std::size_t i=0;i<8;++i){f[i]=front_sample(cell,ring[i].x,ring[i].z);clipped=clipped||f[i]<=0;}
+                if(clipped){
+                    auto center=lerp_vertex(vertices[0],vertices[2],0.5);
+                    center.y=cell.head;
+                    const double depth=std::clamp(cell.head-cell.floor_mm*0.001,0.0001,0.20);
+                    for(std::size_t i=0;i<8;++i){
+                        const auto k=(i+1)%8;
+                        clip_front_triangle(v,{center,ring[i],ring[k]},{depth,f[i],f[k]});
+                    }
+                    continue;
+                }
+            }
+            v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
+        }
         // A single canonical donor per known bank column, and only
         // below its first certified higher air interval. This restores
         // the H14 partial-cell shoreline without flooding dry passages.
@@ -393,34 +469,41 @@ using MaterialVertices=std::map<std::size_t,std::vector<Vertex>>;
 inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,const MaterialVertices& b,bool x_axis,int boundary) {
     using Edge=std::array<Vertex,2>;
     using Key=std::tuple<int,double,std::size_t>;
+    auto fixed=[&](const Vertex& v){return x_axis?v.x:v.z;};
+    auto along=[&](const Vertex& v){return x_axis?v.z:v.x;};
     auto collect=[&](const MaterialVertices& src,bool lower_side){
         std::map<Key,std::vector<Edge>> edges;
-        auto fixed=[&](const Vertex& v){return x_axis?v.x:v.z;};
-        auto along=[&](const Vertex& v){return x_axis?v.z:v.x;};
-        for(const auto &[slot,verts]:src)for(std::size_t i=0;i+5<verts.size();i+=6){
-            // build() produces one six-vertex horizontal quad per
-            // certified primary or bank footprint.
-            const std::array<Vertex,4> q{verts[i],verts[i+1],verts[i+2],verts[i+5]};
-            double lo=fixed(q[0]),hi=lo;
-            for(const auto &v:q){lo=std::min(lo,fixed(v));hi=std::max(hi,fixed(v));}
-            if(lower_side?hi!=boundary:lo!=boundary)continue;
-            if(hi-lo!=1.0)continue;
-            for(std::size_t n=0;n<4;++n){
-                auto u=q[n],v=q[(n+1)%4];
+        for(const auto &[slot,verts]:src)for(std::size_t i=0;i+2<verts.size();i+=3){
+            const std::array<Vertex,3> q{verts[i],verts[i+1],verts[i+2]};
+            for(std::size_t n=0;n<3;++n){
+                auto u=q[n],v=q[(n+1)%3];const auto& interior=q[(n+2)%3];
                 if(fixed(u)!=boundary||fixed(v)!=boundary||u.ceiling!=v.ceiling)continue;
+                if(lower_side?fixed(interior)>=boundary:fixed(interior)<=boundary)continue;
                 if(along(u)>along(v))std::swap(u,v);
-                if(along(v)-along(u)!=1.0)continue;
-                edges[{static_cast<int>(along(u)),u.ceiling,slot}].push_back({u,v});
+                if(along(v)-along(u)<=1e-9)continue;
+                edges[{static_cast<int>(std::floor((along(u)+along(v))*0.5)),u.ceiling,slot}].push_back({u,v});
             }
         }
         return edges;
     };
     const auto left=collect(a,true),right=collect(b,false);
     for(const auto &[key,edges]:left){
-        const auto other=right.find(key);
-        // Ambiguous coincident layers are not joined.
-        if(edges.size()!=1||other==right.end()||other->second.size()!=1)continue;
-        auto u=edges.front(),v=other->second.front();
+        const auto other=right.find(key);if(other==right.end())continue;
+        std::vector<double> breaks;
+        for(const auto* list:{&edges,&other->second})for(const auto &e:*list){breaks.push_back(along(e[0]));breaks.push_back(along(e[1]));}
+        std::sort(breaks.begin(),breaks.end());breaks.erase(std::unique(breaks.begin(),breaks.end()),breaks.end());
+        auto at=[&](const Edge& e,double pos){return lerp_vertex(e[0],e[1],(pos-along(e[0]))/(along(e[1])-along(e[0])));};
+        for(std::size_t interval=1;interval<breaks.size();++interval){
+        const double lo=breaks[interval-1],hi=breaks[interval],mid=(lo+hi)*0.5;
+        if(hi-lo<=1e-9)continue;
+        auto unique=[&](const std::vector<Edge>& list)->const Edge*{
+            const Edge* match=nullptr;
+            for(const auto &e:list)if(along(e[0])<mid&&along(e[1])>mid){if(match)return nullptr;match=&e;}
+            return match;
+        };
+        const auto* l=unique(edges);const auto* rr=unique(other->second);
+        if(!l||!rr)continue;
+        Edge u{at(*l,lo),at(*l,hi)},v{at(*rr,lo),at(*rr,hi)};
         bool valid=true;
         for(std::size_t n=0;n<2;++n){
             const double floor=std::max(u[n].floor,v[n].floor);
@@ -434,9 +517,10 @@ inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,con
         auto &out=dst[std::get<2>(key)];
         if(d0*d1<0){
             const double f=d0/(d0-d1);
-            Vertex mid{u[0].x+(u[1].x-u[0].x)*f,u[0].y+(u[1].y-u[0].y)*f,u[0].z+(u[1].z-u[0].z)*f,u[0].floor+(u[1].floor-u[0].floor)*f,u[0].ceiling};
-            out.insert(out.end(),{u[0],v[0],mid,mid,v[1],u[1]});
+            Vertex crossing{u[0].x+(u[1].x-u[0].x)*f,u[0].y+(u[1].y-u[0].y)*f,u[0].z+(u[1].z-u[0].z)*f,u[0].floor+(u[1].floor-u[0].floor)*f,u[0].ceiling};
+            out.insert(out.end(),{u[0],v[0],crossing,crossing,v[1],u[1]});
         }else out.insert(out.end(),{u[0],v[0],v[1],u[0],v[1],u[1]});
+        }
     }
 }
 class Renderer {

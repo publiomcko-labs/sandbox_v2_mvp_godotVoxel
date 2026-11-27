@@ -324,6 +324,10 @@
           "gpu_triangles": 12646,
           "filled_blue_pixels_added": 94,
           "filled_blue_pixels_removed": 0
+        },
+        "i12": {
+          "status": "CANDIDATE_VALIDATION_PENDING",
+          "focus": "subcell signed depth reconstruction on certified exposed dry fronts and triangle edge overlap"
         }
       }
     },

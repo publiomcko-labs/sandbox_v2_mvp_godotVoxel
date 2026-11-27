@@ -207,6 +207,31 @@ int main(){
     assert(no_join==west_patch);
     hybrid::stitch_tile_edge(no_join,west_patch,{},true,2);
     assert(no_join==west_patch);
+    // I12: fractional shallow front, no triangle outside its original
+    // wet cell, and arbitrary partial segments stitched only on overlap.
+    auto front_snapshot=left;
+    front_snapshot.render_pad=1;
+    front_snapshot.render_sdf.assign(5*5*9,1024);
+    front_snapshot.halo_air.assign(4*4*8,1);
+    front_snapshot.halo_floor.assign(25,0.0f);
+    hybrid::Input front{left.origin,std::make_shared<const tp::Result>(tp::extract(front_snapshot)),{},8,{}};
+    front.layered=true;
+    front.cells={{0,0,0,8000,0,0.005,{0.005,0.005,0.005,0.005}}};
+    const auto clipped_front=hybrid::build(front);
+    double area=0;
+    const auto &fv=clipped_front.materials.at(0);
+    for(std::size_t i=0;i<fv.size();i+=3){
+        const auto &p=fv[i],&q=fv[i+1],&rr=fv[i+2];
+        area+=std::abs((q.x-p.x)*(rr.z-p.z)-(q.z-p.z)*(rr.x-p.x))*0.5;
+        for(const auto *vtx:{&p,&q,&rr})assert(vtx->x>=0&&vtx->x<=1&&vtx->z>=0&&vtx->z<=1);
+    }
+    assert(area>0&&area<1);
+    hybrid::MaterialVertices partial{{0,{{2,1.93,0.25,0,8},{3,1.93,0.5,0,8},{2,1.93,0.75,0,8}}}};
+    auto overlap=west_patch;
+    hybrid::stitch_tile_edge(overlap,west_patch,partial,true,2);
+    assert(overlap.at(0).size()==12);
+    for(std::size_t i=6;i<12;++i)assert(overlap.at(0)[i].z>=0.25&&overlap.at(0)[i].z<=0.75);
+    std::cout<<"V3_HYBRID_I12_SUBCELL_PASS\n";
     std::cout<<"V3_HYBRID_I11B_TILE_EDGE_PASS\n";
     std::cout<<"V3_HYBRID_I10B_INCREMENTAL_INPUT_PASS\n";
     std::cout<<"V3_HYBRID_I8_BANK_EDGE_PASS\n";
