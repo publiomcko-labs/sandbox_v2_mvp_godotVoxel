@@ -123,6 +123,24 @@ public:
         if(c.litres||type>=types_.size()||litres<=0||litres>c.capacity())throw std::invalid_argument("R2 seed");
         c.type=type;c.litres=litres;initial_+=litres;
     }
+    // R3 exclusive-owner interface. The caller owns the global ledger;
+    // these operations update only the local expected mass.
+    bool receive(std::size_t i,std::size_t type,Litres amount) {
+        auto &c=columns_.at(i);
+        if(type>=types_.size()||amount<=0||amount>c.capacity()-c.litres||
+            (c.litres&&c.type!=type))return false;
+        c.type=type;c.litres+=amount;initial_+=amount;return true;
+    }
+    bool withdraw(std::size_t i,Litres amount) {
+        auto &c=columns_.at(i);
+        if(amount<=0||amount>c.litres)return false;
+        c.litres-=amount;initial_-=amount;if(!c.litres)c.type=no_liquid;return true;
+    }
+    void restore_pipe(std::size_t i,double flux,double credit) {
+        if(!std::isfinite(flux)||!std::isfinite(credit)||credit<0||credit>=1.0||
+            std::abs(flux)>100000.0)throw std::invalid_argument("R3 pipe archive");
+        auto &p=pipes_.at(i);p.flux=flux;p.credit=credit;
+    }
     // For the microfixture only: exact unchanged interval mapping after
     // an opening adds columns. No deletion or general remap implied.
     void copy_unchanged(const Local& previous) {
