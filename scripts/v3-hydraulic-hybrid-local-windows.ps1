@@ -11,16 +11,16 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='864d6881eb1230a7b3d70ceaa2a9b053dd776c0a'
-$visualCandidate='864d6881eb1230a7b3d70ceaa2a9b053dd776c0a'
-$run='45996221454'
+$candidate='38744f13e4e04208f823424f2c8cfe7fcdad05c5'
+$visualCandidate='38744f13e4e04208f823424f2c8cfe7fcdad05c5'
+$run='46062811824'
 $artifact='v3-native-integration-evidence'
-$zipSha='9db9c31cdbc8ea331c0baaa60d6eac8a706a2206aeae91a7637dd033d76810f6'
+$zipSha='42066f6f2c1cff932ea840e54b1cda6c8e85f4cdea7ebee2da6e15dd7c1f7f9b'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
 & git -C $root diff --quiet $candidate HEAD -- native experiments/v3/hybrid third_party.lock
 if ($LASTEXITCODE -ne 0) { throw 'Checkout native runtime differs from candidate' }
-& git -C $root diff --quiet $visualCandidate HEAD -- godot ':(exclude)godot/tests/v3_hydraulic_gpu_capture.gd'
+& git -C $root diff --quiet $visualCandidate HEAD -- godot ':(exclude)godot/tests/v3_hydraulic_gpu_capture.gd' ':(exclude)godot/tests/v3_hydraulic_integrated.gd'
 if ($LASTEXITCODE -ne 0) { throw 'Checkout visual runtime differs from experimental candidate' }
 & git -C $root diff --quiet HEAD -- godot native experiments/v3/hybrid third_party.lock
 if ($LASTEXITCODE -ne 0) { throw 'Local tracked runtime modifications detected' }
@@ -46,9 +46,11 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45996221454/artifacts/15195977471 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/46062811824/artifacts/15229282637 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
+$dllSha='1be5ef8ebbf1f59b011cf5e8b45fafbe01f85f8d7fab3787b46858021e3e6a86'
+if (!(Test-Path -LiteralPath (Join-Path $stage $dll) -PathType Leaf) -or (Get-FileHash -LiteralPath (Join-Path $stage $dll) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dllSha) { throw 'Native DLL SHA256 mismatch' }
 foreach ($file in @($dll,'extension_api.json')) {
     $src=Join-Path $stage $file
     if (!(Test-Path -LiteralPath $src -PathType Leaf)) { throw "Missing validated artifact file: $file" }
@@ -84,7 +86,7 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 R3 I6 experimental solver=$Solver renderer=$Renderer. Inspect progressive shoreline flow, caves, movement and edits; close normally. Lava/Sea are exploratory.'
+Write-Host "V3 R3 I10b experimental solver=$Solver renderer=$Renderer. Inspect progressive shoreline flow, caves, movement and edits; close normally. Lava/Sea are exploratory."
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()

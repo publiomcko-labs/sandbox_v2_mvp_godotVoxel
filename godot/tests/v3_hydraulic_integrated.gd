@@ -17,6 +17,52 @@ func _capture(name: String) -> bool:
     print("V3_HYBRID_CAPTURE ",name)
     return true
 
+# Diagnostic only: serialize the exact arrays last submitted to visible
+# Godot meshes, and project them with the capture camera. No simulation
+# tick, refresh, terrain write or shader change; outside timed samples.
+func _surface_evidence(runtime,water: Node3D,camera: Camera3D,center: Vector3) -> bool:
+    var capture_root:=OS.get_environment("V3_GPU_CAPTURE_ROOT")
+    if capture_root.is_empty():
+        return true
+    var patches: Array=[]
+    var nodes: Dictionary=water.get("_hybrid_nodes")
+    for tile: Vector3i in nodes:
+        for node: MeshInstance3D in nodes[tile]:
+            if not node.visible:
+                continue
+            if not node.has_meta("liquid_positions") or not node.has_meta("liquid_uv"):
+                _fail("surface evidence missing accepted arrays")
+                return false
+            var vertices: PackedVector3Array=node.get_meta("liquid_positions")
+            var uv: PackedVector2Array=node.get_meta("liquid_uv")
+            var rows: Array=[]
+            for i in range(vertices.size()):
+                var v: Vector3=node.to_global(vertices[i])
+                var screen: Vector2=camera.unproject_position(v)
+                rows.append([v.x,v.y,v.z,uv[i].x,uv[i].y,screen.x,screen.y,-camera.to_local(v).z])
+            patches.append({"tile":[tile.x,tile.y,tile.z],"slot":node.get_meta("liquid_slot"),"vertices":rows})
+    var columns: Array=[]
+    for z in range(floori(center.z)-16,floori(center.z)+17):
+        for x in range(floori(center.x)-16,floori(center.x)+17):
+            var p:=Vector3(x+0.5,0,z+0.5)
+            var litres: int=runtime.session.hydraulic_column_mass(p)
+            var layers: Array=[]
+            if litres>0:
+                for y in range(-12,8):
+                    p.y=y+0.5
+                    var wet: Dictionary=runtime.session.hydraulic_at(p)
+                    if not wet.is_empty():
+                        layers.append([p.y,wet.get("level"),wet.get("liquid")])
+            columns.append([x,z,litres,layers])
+    var file:=FileAccess.open(capture_root.path_join("05-surface-evidence.log"),FileAccess.WRITE)
+    if file==null:
+        _fail("surface evidence open")
+        return false
+    file.store_string(JSON.stringify({"schema":"v3-surface-evidence-1","center":[center.x,center.y,center.z],"camera":[camera.global_position.x,camera.global_position.y,camera.global_position.z],"viewport":[root.size.x,root.size.y],"patches":patches,"columns":columns,"state":runtime.session.hydraulic_report()}))
+    file.close()
+    print("V3_HYBRID_SURFACE_EVIDENCE_PASS patches=",patches.size()," columns=",columns.size())
+    return true
+
 func _tile(p: Vector3) -> Vector3i:
     return Vector3i(floori(p.x/16.0)*16,-32,floori(p.z/16.0)*16)
 
@@ -188,6 +234,8 @@ func _test() -> void:
         return
     print("V3_HYBRID_PROGRESSIVE_PASS threshold_l=20 near_tick=",first_near," far_tick=",first_far," mass=",mass)
     if not await _capture("05-filled"):
+        return
+    if not _surface_evidence(runtime,water,camera,breach["center"]):
         return
     var retained:=int(water.call("get_report")["meshes"])
     # Move within visible range without altering terrain; certified

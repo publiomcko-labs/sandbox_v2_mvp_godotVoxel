@@ -263,8 +263,31 @@
           "gpu_combined_refresh_p99_us": 7134
         },
         "i10b": {
-          "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "incremental native surface input cache"
+          "status": "CORE_NATIVE_GPU_PASS_WORKER_GAIN_FRAME_REGRESSION_GEOMETRY_PARTIAL",
+          "commit": "38744f13e4e04208f823424f2c8cfe7fcdad05c5",
+          "test_fix": "dd05a2e53ed451fea0bb10c3ffbbd0e91534bae8",
+          "core_run": 46062971393,
+          "native_run": 46062811824,
+          "gpu_run": 46062811791,
+          "native_artifact": 15229282637,
+          "gpu_artifact": 15229109777,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "settles": 0,
+          "gpu_worker_p95_us": 1483,
+          "gpu_snapshot_p95_us": 848,
+          "gpu_combined_refresh_p95_us": 5202,
+          "gpu_combined_refresh_p99_us": 6177,
+          "gpu_frame_p95_us": 59207,
+          "gpu_snapshot_max_us": 42092,
+          "gpu_builds": 1417,
+          "gpu_mesh_allocations": 273,
+          "gpu_buffer_updates": 1143
+        },
+        "i11a": {
+          "status": "DIAGNOSTIC_CANDIDATE_PENDING",
+          "focus": "world-space mesh and projection evidence for residual seam"
         }
       }
     },
