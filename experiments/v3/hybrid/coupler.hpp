@@ -150,27 +150,54 @@ class Coupler {
         v.type=type;v.litres+=amount;
         if(v.litres>compartment(t,static_cast<Id>(o.index)).curve.capacity())throw std::logic_error("R3 aggregate capacity");
     }
-    std::map<Id,tp::Content> collect(const CoupledTile& t)const {
+    // A compartment may contain disconnected pools of distinct liquids
+    // in local mode. Such a state cannot be represented by one aggregate.
+    std::optional<std::map<Id,tp::Content>> collect(const CoupledTile& t)const {
         if(!t.local)return t.aggregate;
         std::map<Id,tp::Content> out;
         for(std::size_t i=0;i<t.owners.size();++i) {
             const auto &c=t.local->columns()[i];if(!c.litres)continue;
             auto &v=out[t.owners[i]];
-            if(v.litres&&v.type!=c.type)throw std::logic_error("R3 incompatible aggregate");
+            if(v.litres&&v.type!=c.type)return {};
             v.type=c.type;v.litres+=c.litres;
         }
         return out;
     }
+    // Use the same deterministic integer projection for promotion and
+    // exact suspension checks. No new Local/pipe graph needed to check.
+    static std::optional<std::vector<Litres>> project(const CoupledTile& t,
+            const Local& local,const std::vector<Id>& owners,const std::map<Id,tp::Content>& contents) {
+        std::vector<Litres> amounts(owners.size());
+        for(const auto &[id,v]:contents) {
+            const auto head=compartment(t,id).curve.level(v.litres);
+            Litres left=v.litres;
+            for(std::size_t i=0;i<owners.size();++i)if(owners[i]==id) {
+                const auto n=std::min(left,interval_at(local.columns()[i],head));
+                amounts[i]=n;left-=n;
+            }
+            for(std::size_t i=0;i<owners.size()&&left;++i)if(owners[i]==id) {
+                const auto n=std::min(left,local.columns()[i].capacity()-amounts[i]);
+                amounts[i]+=n;left-=n;
+            }
+            if(left)return {};
+        }
+        return amounts;
+    }
     bool settled(const CoupledTile& t)const {
-        const auto contents=collect(t);
+        const auto contents=collect(t);if(!contents)return false;
+        const auto expected=project(t,*t.local,t.owners,*contents);if(!expected)return false;
         for(std::size_t i=0;i<t.owners.size();++i) {
             const auto &c=t.local->columns()[i];
-            const auto it=contents.find(t.owners[i]);const auto &curve=compartment(t,t.owners[i]).curve;
-            const double head=curve.level(it==contents.end()?0:it->second.litres);
-            if(std::abs(interval_at(c,head)-c.litres)>20)return false;
+            // Never turn a dry interval into a wet one (or the reverse)
+            // merely by changing representation.
+            if(((*expected)[i]>0)!=(c.litres>0)||std::abs((*expected)[i]-c.litres)>20)return false;
         }
         for(const auto &p:t.local->pipes())if(std::abs(p.flux)>0.005)return false;
         return true;
+    }
+    void aggregate_owner(core::Region k,CoupledTile& t,std::map<Id,tp::Content> contents) {
+        t.local.reset();std::vector<Id>().swap(t.owners);t.aggregate=std::move(contents);
+        t.phase=Phase::aggregate;t.epoch=++epoch_;t.stable_ticks=0;surface_changes_.insert(k);
     }
     void verify()const {
         if(mass()!=initial_+injected_-drained_)throw std::logic_error("R3 global ledger");
@@ -306,19 +333,10 @@ public:
         if(active()>=active_limit_){t.phase=Phase::blocked;return false;}
         Local staged(*t.geometry,types_);
         auto owners=mapping(*t.geometry,staged);
-        for(const auto &[id,v]:t.aggregate) {
-            const auto head=compartment(t,id).curve.level(v.litres);
-            Litres left=v.litres;
-            for(std::size_t i=0;i<owners.size();++i)if(owners[i]==id) {
-                const auto amount=std::min(left,interval_at(staged.columns()[i],head));
-                if(amount){staged.seed(i,v.type,amount);left-=amount;}
-            }
-            for(std::size_t i=0;i<owners.size()&&left;++i)if(owners[i]==id) {
-                const auto &c=staged.columns()[i];const auto amount=std::min(left,c.capacity()-c.litres);
-                if(amount){if(!staged.receive(i,v.type,amount))throw std::logic_error("R3 remainder");left-=amount;}
-            }
-            if(left){t.phase=Phase::blocked;return false;}
-        }
+        const auto amounts=project(t,staged,owners,t.aggregate);
+        if(!amounts){t.phase=Phase::blocked;return false;}
+        for(std::size_t i=0;i<owners.size();++i)if((*amounts)[i])
+            staged.seed(i,t.aggregate.at(owners[i]).type,(*amounts)[i]);
         if(staged.mass()!=tile_mass(key))throw std::logic_error("R3 activation mass");
         t.phase=Phase::activating;
         t.local.emplace(std::move(staged));t.owners=std::move(owners);t.aggregate.clear();
@@ -330,6 +348,22 @@ public:
     }
     void set_resident(core::Region key,bool resident) {
         auto &t=tiles_.at(key);if(t.resident==resident)return;t.resident=resident;rebuild();
+    }
+    // Unloading a region must not consume a local slot forever if its
+    // state is exactly representable by the aggregate. Frozen time is
+    // not counted as stable ticks: live fronts and momentum are retained.
+    bool reclaim_suspended(core::Region k) {
+        auto &t=tiles_.at(k);
+        if(t.resident||!t.local)return false;
+        auto contents=collect(t);if(!contents)return false;
+        if(!contents->empty()){
+            for(const auto &p:t.local->pipes())if(p.flux!=0||p.credit!=0)return false;
+            const auto expected=project(t,*t.local,t.owners,*contents);if(!expected)return false;
+            for(std::size_t i=0;i<expected->size();++i)
+                if((*expected)[i]!=t.local->columns()[i].litres)return false;
+        }
+        // Completely dry intervals carry no liquid momentum.
+        aggregate_owner(k,t,std::move(*contents));rebuild();verify();return true;
     }
     void suspend_all() {for(auto &[k,t]:tiles_){(void)k;t.resident=false;}rebuild();}
     bool forget_dry(core::Region key) {
@@ -406,8 +440,8 @@ public:
             if(!exchanging.contains(k)&&settled(t))++t.stable_ticks;else t.stable_ticks=0;
             if(t.stable_ticks>=20) {
                 auto aggregate=collect(t);
-                t.local.reset();t.owners.clear();t.aggregate=std::move(aggregate);
-                t.phase=Phase::aggregate;t.epoch=++epoch_;t.stable_ticks=0;surface_changes_.insert(k);changed=true;
+                if(!aggregate)throw std::logic_error("R3 settled aggregate");
+                aggregate_owner(k,t,std::move(*aggregate));changed=true;
             }
         }
         if(changed)rebuild();

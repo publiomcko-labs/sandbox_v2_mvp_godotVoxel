@@ -429,6 +429,10 @@
           "gpu_combined_refresh_p99_us": 10557,
           "gpu_frame_p95_us": 48485,
           "gpu_snapshot_max_us": 33565
+        },
+        "i16": {
+          "status": "CANDIDATE_VALIDATION_PENDING",
+          "focus": "exact quiescent suspension reclaim, compatible aggregation, persisted lifecycle and real edit/revisit/reopen fixture"
         }
       }
     },

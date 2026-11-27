@@ -16,3 +16,6 @@ Branch: `exp/v3-hydraulic-hybrid` only. Latest validated runtime `337c92f8cf9806
 5. After geometry gate, flow/material presentation and real gameplay benchmark. Final native/GPU evidence, validate standalone launcher with exact artifact, consolidate criteria and docs. No automatic merge. Maintain C++, mod-first, Voxel Tools authority and GL Compatibility.
 
 No human blocker identified. Work remains executable; this is a continuation checkpoint, not acceptance.
+
+## Revised priority / I16 candidate
+Lifecycle first, then late sources, barriers, streaming, performance, geometry/finish. I16 implements exact suspended resource reclamation and compatible aggregation, with an isolated actual terrain edit/revisit/reopen fixture; validation pending. Do not equate exact suspended reclaim with resident 20-tick equilibrium qualification.

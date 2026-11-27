@@ -107,8 +107,89 @@ func _frame(runtime,water: Node3D,elapsed: int) -> bool:
     water.call("refresh")
     return true
 
+# Actual VoxelTool edit in a deep solid point under a wet tile. The
+# tiny carve modifies terrain but cannot form a certified 1m air cell.
+# No debug injection or forced aggregation: runtime handles unload.
+func _lifecycle(runtime,water: Node3D,reopen: bool) -> void:
+    var initial: Dictionary=runtime.session.hydraulic_report()
+    var mass:=int(initial["litres"])
+    if int(initial["local_active"])!=0 or (reopen and int(initial["suspended_reclaims"])<1):
+        _fail("lifecycle initial owner "+str(initial))
+        return
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var spawn: Vector3=runtime.player.global_position
+    var tile:=_tile(spawn)
+    var probe:=Vector3.ZERO
+    var accepted:=false
+    for dz in range(-1,2):
+        for dx in range(-1,2):
+            var k:=tile+Vector3i(dx*16,0,dz*16)
+            var wet:=false
+            for z in range(k.z,k.z+16):
+                for x in range(k.x,k.x+16):
+                    var p:=Vector3(x+0.5,0,z+0.5)
+                    if runtime.session.hydraulic_column_mass(p)>0:
+                        probe=p
+                        wet=true
+                        break
+                if wet:
+                    break
+            if not wet:
+                continue
+            for y in range(-29,-15):
+                var p:=Vector3(k.x+8,y,k.z+8)
+                if tool.get_voxel_f(Vector3i(p))>=-0.5:
+                    continue
+                if runtime.submit_brush(p,false,0.5)=="accepted":
+                    accepted=true
+                    break
+            if accepted:
+                break
+        if accepted:
+            break
+    if not accepted:
+        _fail("lifecycle no admissible deep edit")
+        return
+    var deadline:=Time.get_ticks_msec()+30000
+    while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("lifecycle edit publication")
+            return
+        await process_frame
+    var hot: Dictionary=runtime.session.hydraulic_report()
+    var column: int=runtime.session.hydraulic_column_mass(probe)
+    if int(hot["local_active"])!=1 or int(hot["local_bytes"])<=0 or int(hot["litres"])!=mass or column<=0:
+        _fail("lifecycle activation "+str(hot))
+        return
+    runtime.player.global_position=spawn+Vector3(256,0,0)
+    if not _frame(runtime,water,0):
+        return
+    var cold: Dictionary=runtime.session.hydraulic_report()
+    if int(cold["local_active"])!=0 or int(cold["local_bytes"])!=0 or int(cold["litres"])!=mass or int(cold["ticks"])!=int(hot["ticks"]) or int(cold["suspended_reclaims"])!=int(hot["suspended_reclaims"])+1:
+        _fail("lifecycle exact suspension "+str(cold))
+        return
+    runtime.player.global_position=spawn
+    deadline=Time.get_ticks_msec()+30000
+    while runtime.session.hydraulic_column_mass(probe)<0 or int(runtime.session.hydraulic_report()["near_active_tiles"])<9:
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("lifecycle revisit")
+            return
+        await process_frame
+    if runtime.session.hydraulic_column_mass(probe)!=column or int(runtime.session.hydraulic_report()["litres"])!=mass:
+        _fail("lifecycle revisit changed mass")
+        return
+    print("V3_HYBRID_LIFECYCLE_PASS phase=",("reopen" if reopen else "write")," mass=",mass," freed_bytes=",hot["local_bytes"]," reclaimed=",cold["suspended_reclaims"]," column=",column)
+    runtime.request_close()
+
 func _test() -> void:
-    var reopen: bool="--phase=reopen" in OS.get_cmdline_user_args()
+    var args:=OS.get_cmdline_user_args()
+    var reopen: bool="--phase=reopen" in args
+    var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
     if not runtime.running:
@@ -142,6 +223,9 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if lifecycle:
+        await _lifecycle(runtime,water,"--phase=lifecycle-reopen" in args)
         return
     if reopen:
         if not bool(initial.get("provenance_complete",false)) or int(initial.get("edited_provenance_tiles",0))<=0:

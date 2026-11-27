@@ -69,6 +69,20 @@ int main(){
         for(int i=0;i<25;++i)stable.tick();
         assert(stable.active()==0&&stable.tiles().at(ka).phase==Phase::aggregate&&stable.mass()==16000);
     }
+    // Recover an exact suspended equilibrium without advancing frozen
+    // time, preserve non-equilibrium local state, then reuse the slot.
+    Coupler reclaim(types,1,2);assert(reclaim.publish(a)&&reclaim.publish(b));
+    assert(reclaim.seed(ka,a->compartments.front().id,0,16000)&&reclaim.activate(ka));
+    reclaim.set_resident(ka,false);
+    assert(reclaim.reclaim_suspended(ka)&&reclaim.active()==0&&reclaim.mass()==16000);
+    assert(reclaim.activate(kb));reclaim.set_resident(kb,false);
+    assert(reclaim.reclaim_suspended(kb)&&reclaim.active()==0);
+    auto cold=Coupler::decode(reclaim.encode(),types,{{ka,a},{kb,b}});
+    assert(cold.encode()==reclaim.encode());cold.set_resident(ka,true);
+    assert(cold.activate(ka)&&cold.mass()==16000);
+    frontier.set_resident(kb,false);
+    assert(!frontier.reclaim_suspended(kb)&&frontier.tiles().at(kb).local&&frontier.mass()==32000);
+    std::cout<<"V3_HYBRID_I16_RECLAIM_PASS\n";
     // Explicit ocean source and sink, no infinite volume in resident state.
     Coupler sea(types,1,1);assert(sea.publish(a));
     assert(sea.ocean({"sea",ka,{0.5,0.1,0.5},0,2,0,1}));
