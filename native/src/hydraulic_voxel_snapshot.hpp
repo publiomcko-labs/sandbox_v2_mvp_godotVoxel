@@ -31,15 +31,12 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
     std::vector<std::uint8_t> corners(static_cast<std::size_t>(size.x*size.y*size.z));
     auto index=[&](int x,int y,int z){return static_cast<std::size_t>((z*size.x+x)*size.y+y);};
     std::vector<float> floors(static_cast<std::size_t>(size.x*size.z));
-    snapshot.render_sdf.resize(static_cast<std::size_t>(core_size.x*core_size.y*core_size.z));
     for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x) {
         double previous=0.0;
         double floor=origin.y;
         for(int y=0;y<size.y;++y) {
             const double sdf=buffer->get_voxel_f(x,y,z,VoxelBuffer::CHANNEL_SDF);
             corners[index(x,y,z)]=sdf>0.1?1:0;
-            if(x>=pad&&x<pad+core_size.x&&z>=pad&&z<pad+core_size.z)
-                snapshot.render_sdf[static_cast<std::size_t>(((z-pad)*core_size.x+x-pad)*core_size.y+y)]=static_cast<float>(sdf);
             if(y&&previous<=0.0&&sdf>0.0)
                 floor=origin.y+y-1+std::clamp(-previous/(sdf-previous),0.0,1.0);
             previous=sdf;

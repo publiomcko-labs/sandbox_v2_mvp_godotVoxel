@@ -1,5 +1,6 @@
 #pragma once
 #include "hydraulic_domain.hpp"
+#include "hydraulic_surface.hpp"
 #include <future>
 #include <chrono>
 #include <memory>
@@ -16,6 +17,7 @@ struct Input {
     core::Region tile;
     std::shared_ptr<const tp::Result> geometry;
     std::vector<Wet> wet;
+    int exposed_top{};
     bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{};};
@@ -25,65 +27,49 @@ struct Batch {
     std::uint64_t build_us{};
     std::size_t fallback_columns{};
 };
-inline double sdf(const tp::Result& g,int x,int z,double h) {
-    const double y=std::clamp((h-g.origin.y)/g.step,0.0,double(g.render_ny));
-    const int lo=static_cast<int>(std::floor(y)),hi=std::min(lo+1,g.render_ny);
-    const auto base=static_cast<std::size_t>((z*(g.nx+1)+x)*(g.render_ny+1));
-    const double a=g.render_sdf.at(base+static_cast<std::size_t>(lo));
-    const double b=g.render_sdf.at(base+static_cast<std::size_t>(hi));
-    return a+(b-a)*(y-lo);
-}
-// Fixed world-space triangulation of authorized footprints. Interpolated
-// SDF clips only WITHIN a wet interval, never claims an unclassified cell.
-// Distinct Y layers remain independent. Both sides of a shared lattice
-// edge use identical endpoints and interpolation at a common head.
-inline Batch build(Input input) {
+// B2 control: reuse the certified H14 geometric support and terrain depth
+// intersection rather than erode the water to fully open cells. Build
+// one material batch per render tile; never weld distinct heads/layers.
+// Static support is cached by immutable geometry identity on the worker.
+struct CachedTile {
+    std::shared_ptr<const tp::Result> geometry;
+    int exposed_top{};
+    std::map<Id,std::vector<surface::Patch>> patches;
+};
+inline Batch build(Input input,CachedTile* cached=nullptr) {
     const auto start=std::chrono::steady_clock::now();
     Batch out{std::move(input),{},0,0};
     const auto &g=*out.input.geometry;
-    const bool has_sdf=g.render_ny>0&&g.render_sdf.size()==static_cast<std::size_t>((g.nx+1)*(g.nz+1)*(g.render_ny+1));
+    CachedTile temporary;
+    auto &cache=cached?*cached:temporary;
+    if(cache.geometry!=out.input.geometry||cache.exposed_top!=out.input.exposed_top) {
+        cache={out.input.geometry,out.input.exposed_top,{}};
+    }
     std::map<Id,Wet> wet;
     for(const auto &w:out.input.wet)wet.emplace(w.local,w);
-    for(const auto &column:g.column_runs)for(const auto &s:column) {
-        const auto found=wet.find(s.compartment);if(found==wet.end())continue;
+    for(const auto &c:g.compartments) {
+        const auto found=wet.find(c.id);if(found==wet.end())continue;
         const auto &w=found->second;
-        const double floor=tp::span_floor_mm(g,s)*0.001,ceiling=g.origin.y+s.top*g.step;
-        if(w.physical<=floor||w.physical>=ceiling-0.001)continue;
-        // Never use a smoothed head that would move the free surface
-        // outside the certified interval. Preserve genuine falls.
-        const double h=w.visual>floor&&w.visual<ceiling-0.001?w.visual:w.physical;
-        std::array<Vertex,4> p{};
-        std::array<double,4> values{};
-        constexpr std::array<std::pair<int,int>,4> corners{{{0,0},{1,0},{1,1},{0,1}}};
-        for(std::size_t i=0;i<corners.size();++i) {
-            const auto [dx,dz]=corners[i];
-            const int x=s.x+dx,z=s.z+dz;
-            p[i]={double(g.origin.x+x*g.step),h,double(g.origin.z+z*g.step),floor,ceiling};
-            values[i]=has_sdf?sdf(g,x,z,h):1.0;
-        }
-        if(!has_sdf)++out.fallback_columns;
+        const bool exposed=std::any_of(c.spans.begin(),c.spans.end(),[&](const auto &span){return span.top==out.input.exposed_top;});
+        if(!cache.patches.contains(c.id))cache.patches.emplace(c.id,surface::build(g,c,out.input.exposed_top));
         auto &dst=out.materials[w.type];
-        // Deterministic diagonal; clip individual triangles, not a
-        // polygon across unrelated heads/ceilings or a dry island.
-        for(const auto &tri:std::array<std::array<std::size_t,3>,2>{{{0,1,2},{0,2,3}}}) {
-            std::vector<Vertex> poly;
-            for(std::size_t j=0;j<3;++j) {
-                auto a=tri[j],b=tri[(j+1)%3];
-                const bool ia=values[a]>=0,ib=values[b]>=0;
-                if(ia)poly.push_back(p[a]);
-                if(ia!=ib) {
-                    // Canonical endpoint order gives identical edge
-                    // interpolation even when traversal is reversed.
-                    if(std::tuple{p[b].x,p[b].z}<std::tuple{p[a].x,p[a].z})std::swap(a,b);
-                    const double t=std::clamp(values[a]/(values[a]-values[b]),0.0,1.0);
-                    const auto snap=[](double v){return std::round(v*1000000.0)/1000000.0;};
-                    poly.push_back({snap(p[a].x+(p[b].x-p[a].x)*t),h,snap(p[a].z+(p[b].z-p[a].z)*t),floor,ceiling});
+        for(const auto &patch:cache.patches.at(c.id)) {
+            for(std::size_t i=0;i+2<patch.vertices.size();i+=3) {
+                std::array<Vertex,3> tri{};
+                bool below=true,above=true;
+                for(std::size_t j=0;j<3;++j) {
+                    const auto &p=patch.vertices[i+j];
+                    // Exact H14 attributes, including bounded bank overlap
+                    // and roof cap. All vertices are in world coordinates.
+                    const double y=w.visual+p.offset;
+                    const double floor=p.floor-(exposed?1.35:0.35);
+                    tri[j]={g.origin.x+p.x*g.step,y,g.origin.z+p.z*g.step,floor,double(patch.ceiling)};
+                    below=below&&y<floor-0.0001;
+                    above=above&&y>double(patch.ceiling)+0.0001;
                 }
-            }
-            for(std::size_t j=1;j+1<poly.size();++j) {
-                const auto &a=poly[0],&b=poly[j],&c=poly[j+1];
-                const double area=(b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
-                if(area>1e-12)dst.insert(dst.end(),{a,b,c});
+                // Discard only triangles guaranteed invisible under the
+                // existing shader; leave mixed triangles to its exact clip.
+                if(!below&&!above)dst.insert(dst.end(),tri.begin(),tri.end());
             }
         }
     }
@@ -103,7 +89,7 @@ inline std::map<core::Region,Input> snapshot(const Domain& domain,int exposed_to
     const auto heads=graph.presentation_heads(exposed,0.15,true);
     std::map<core::Region,Input> inputs;
     for(const auto &[k,t]:domain.tiles())if(t.renderable()) {
-        Input in{k,t.geometry,{}};
+        Input in{k,t.geometry,{},exposed_top};
         for(const auto &[local,id]:t.ids) {
             const auto &v=graph.volumes().at(id);if(!v.litres)continue;
             // Head signature at 1mm; retain exact physical head at
@@ -120,6 +106,8 @@ inline std::map<core::Region,Input> snapshot(const Domain& domain,int exposed_to
 class Renderer {
     std::map<core::Region,Input> presented_;
     std::optional<std::future<std::vector<Batch>>> running_;
+    // The async task is sole writer; shared lifetime survives destruction.
+    std::shared_ptr<std::map<core::Region,CachedTile>> cache_=std::make_shared<std::map<core::Region,CachedTile>>();
 public:
     std::vector<Batch> poll(const std::map<core::Region,Input>& wanted) {
         std::vector<Batch> done;
@@ -154,8 +142,18 @@ public:
                 if(old!=presented_.end()&&old->second.same(in))continue;
                 jobs.push_back(in);if(jobs.size()==4)break;
             }
-            if(!jobs.empty())running_.emplace(std::async(std::launch::async,[items=std::move(jobs)]() mutable {
-                std::vector<Batch> out;for(auto &in:items)out.push_back(build(std::move(in)));return out;
+            // No concurrent task owns the cache here. Evict tiles no
+            // longer in the presentation working set, including dry tiles.
+            for(auto it=cache_->begin();it!=cache_->end();) {
+                if(!wanted.contains(it->first))it=cache_->erase(it);else ++it;
+            }
+            if(!jobs.empty())running_.emplace(std::async(std::launch::async,[items=std::move(jobs),cache=cache_]() mutable {
+                std::vector<Batch> out;
+                for(auto &in:items) {
+                    const auto k=in.tile;
+                    out.push_back(build(std::move(in),&(*cache)[k]));
+                }
+                return out;
             }));
         }
         return done;

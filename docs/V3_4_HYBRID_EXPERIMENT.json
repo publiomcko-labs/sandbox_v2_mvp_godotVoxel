@@ -73,13 +73,19 @@
   ],
   "results": {
     "R1": {
-      "status": "CORE_NATIVE_PASS_GPU_PENDING",
+      "status": "B1_GPU_GEOMETRY_REJECTED_B2_CANDIDATE",
       "core_run": 45986752819,
       "native_run": 45986575619,
       "gpu_run": 45986751707,
       "clipper2_triangles": 8,
       "local_triangles": 480,
-      "native_artifact": 15192805811
+      "native_artifact": 15192805811,
+      "gpu_artifact": 15192661813,
+      "initial_a_only": 5617,
+      "final_a_only": 13042,
+      "final_meshes_A": 315,
+      "final_meshes_B": 43,
+      "final_refresh_p95_us": 3418
     },
     "R2": {
       "status": "MICROBENCH_PASS_RESTRICTED",
