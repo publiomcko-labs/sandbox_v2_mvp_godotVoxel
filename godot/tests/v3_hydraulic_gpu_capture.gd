@@ -100,10 +100,10 @@ func _visible_tiles(water: Node3D) -> Dictionary:
     return result
 
 func _next_shore_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Variant:
-    # Search near the viewer, require actual wet floor next to solid.
+    # Search the known resident lake, require actual wet floor next to solid.
     # Distinct centers prevent eight no-op excavations of the same hole.
-    for z in range(8,40,2):
-        for x in range(-24,8,2):
+    for z in range(-64,64,2):
+        for x in range(-88,24,2):
             for y in range(-12,4):
                 var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
                 var wet: Dictionary=runtime.session.hydraulic_at(p)
@@ -137,7 +137,7 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
         var target: Vector3=candidate
         previous.append(target)
         if runtime.submit_brush(target,false,3.0)!="accepted":
-            if previous.size()>24:
+            if previous.size()>48:
                 _fail("stress: too many rejected positions")
                 return false
             continue
