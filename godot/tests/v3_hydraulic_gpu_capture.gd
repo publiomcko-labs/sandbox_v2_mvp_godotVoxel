@@ -189,8 +189,11 @@ func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: in
             if int(runtime.session.hydraulic_report()["litres"])!=mass:
                 _fail("stress: lost mass")
                 return false
-            if first_wet<0 and not runtime.session.hydraulic_at(target).is_empty():
-                first_wet=step+1
+            if first_wet<0:
+                var wet_probe: Variant=_wet_breach_probe(runtime,target,6.0 if accepted==1 else 3.0)
+                if wet_probe!=null:
+                    print("V3_GPU_STRESS_WET point=",wet_probe)
+                    first_wet=step+1
             if step>=39 and int(runtime.session.hydraulic_report()["pending_edit_tiles"])==0 and swap.is_empty():
                 break
             if Time.get_ticks_msec()>deadline or step==399:
@@ -264,6 +267,20 @@ func _cross_tile_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Varian
                         if distinct:
                             print("V3_HYDRAULIC_CROSS_TILE_TARGET source=",source_tile," dry_target=",target_tile," point=",target)
                             return target
+    return null
+
+func _wet_breach_probe(runtime,center: Vector3,radius: float) -> Variant:
+    # A new cavity need not fill to the brush center: test points inside
+    # the excavated volume, on the destination tile, below its center.
+    var tile:=_tile_key(center)
+    for y in range(0,int((radius-0.75)*2)+1):
+        for dz in range(-1,2):
+            for dx in range(-1,2):
+                var p:=center+Vector3(float(dx)*0.5,-float(y)*0.5,float(dz)*0.5)
+                if _tile_key(p)!=tile or p.distance_to(center)>=radius-0.5:
+                    continue
+                if not runtime.session.hydraulic_at(p).is_empty():
+                    return p
     return null
 
 func _test() -> void:
