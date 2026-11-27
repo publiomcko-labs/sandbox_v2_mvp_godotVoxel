@@ -1,6 +1,6 @@
 {
   "schema": "v3_hydraulic_hybrid_experiment_v1",
-  "status": "PLANNED",
+  "status": "EXPERIMENTAL_IN_PROGRESS",
   "base_commit": "ab3500f6d61bca0e71eb1d90a5de48485fd7892f",
   "branch": "exp/v3-hydraulic-hybrid",
   "baseline": "H14",
@@ -70,5 +70,34 @@
     "docs/V3_4_HYDRAULIC.md",
     "https://profs.etsmtl.ca/epaquette/Research/Papers/Dagenais.2018.cg/",
     "https://www.angusj.com/clipper2/Docs/Overview.htm"
-  ]
+  ],
+  "results": {
+    "R1": {
+      "status": "CORE_PASS_GPU_PENDING",
+      "core_run": 45986752819,
+      "native_run": 45986575619,
+      "gpu_run": 45986751707,
+      "clipper2_triangles": 8,
+      "local_triangles": 480
+    },
+    "R2": {
+      "status": "MICROBENCH_PASS_RESTRICTED",
+      "commit": "23447b20f4bf8d3f3f976b0ca0c65ec79ba706c6",
+      "run": 45987449927,
+      "water_far_ticks": 48,
+      "water_aggregate_h14_far_ticks": 0,
+      "mass_litres": 56000,
+      "pressure": "UNSUPPORTED_BLOCKED",
+      "water_sign_flips": 35
+    },
+    "R3": {
+      "status": "ELIGIBLE_RESTRICTED_PROTOTYPE_NOT_INTEGRATED"
+    },
+    "R4": {
+      "status": "BLOCKED_GEOMETRY_GATE"
+    },
+    "R5": {
+      "status": "PENDING"
+    }
+  }
 }
