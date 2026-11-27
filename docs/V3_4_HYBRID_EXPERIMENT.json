@@ -646,7 +646,7 @@
           "gpu_snapshot_max_us": 29898
         },
         "i22d": {
-          "status": "GCC_PASS_MSVC_SHADOW_WARNING_FIXED_RETEST_PENDING",
+          "status": "CORE_PASS_GCC_MSVC",
           "commit": "27b6c016543a62997183b1a1344fea89c904608b",
           "fix_commit": "ed50599b75082184b08d3850ccc07f699ffa9258",
           "failed_core_run": 46080159646,
@@ -660,7 +660,7 @@
         "i22e": {
           "commit": "18e90a0d49740edfc6f45b853db575737738028f",
           "core_run": 46080522071,
-          "status": "GCC_PASS_MSVC_C4456"
+          "status": "CORE_PASS_GCC_MSVC"
         },
         "i22f": {
           "commit": "4ab14c0edbb055364838e20f2442a6cd649f8444",
@@ -668,7 +668,18 @@
           "core_run": 46080772250,
           "native_run": 46080597329,
           "gpu_run": 46080597349,
-          "status": "RUNTIME_CANDIDATE_VALIDATION_PENDING"
+          "status": "CORE_PASS_NATIVE_MOVEMENT_FAIL_GPU_PREREQUISITE_FAIL",
+          "core_conclusion": "success",
+          "native_conclusion": "failure",
+          "gpu_conclusion": "failure",
+          "failure": "movement mass/visibility after breach; cause not yet isolated",
+          "correction": {
+            "commit": "486c4a183bbf1552c4dfc6bedc722439b980a900",
+            "native_run": 46081003039,
+            "gpu_run": 46081003022,
+            "status": "PENDING_VALIDATION",
+            "restriction": "bulk ocean acquisition only revision zero"
+          }
         }
       }
     },
