@@ -1,6 +1,7 @@
 #include "v3_world_session.hpp"
 #include "world_bootstrap.hpp"
 #include <godot_cpp/classes/voxel_lod_terrain.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/voxel_stream.hpp>
 #include <godot_cpp/classes/voxel_stream_sq_lite.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -190,17 +191,26 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
             next->caves=ct::compile_caves(*next->snapshot,narrow(cave_profile),static_cast<uint64_t>(seed));
             generator="v3_3_caves_v3:"+next->geology->profile_id+":"+narrow(cave_profile);
         }
+        const bool coupled=OS::get_singleton()->get_environment("V3_HYBRID_SOLVER")=="1";
         std::optional<ct::HydraulicProfile> hydraulic_profile;
         if(!hydraulic_root.is_empty()) {
             hydraulic_profile=ct::compile_hydraulic(*next->snapshot);
-            generator="v3_4_hydraulic_v2:"+generator;
+            generator=(coupled?"v3_4_hybrid_runtime_v1:":"v3_4_hydraulic_v2:")+generator;
         }
         next->store.begin(path_of(world_root),narrow(world_id),static_cast<uint64_t>(seed),next->snapshot->pins,generator);
         if(hydraulic_profile) {
             if(next->store.header().generation>0) {
-                auto domain=ps::load_domain(next->store.path(),hydraulic_profile->types);
-                next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),std::move(domain));
-            }else next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile));
+                if(coupled) {
+                    const auto file=next->store.path()/"hydraulic_domain.json";ps::plain_unique_file(file);
+                    const auto n=fs::file_size(file);ct::require(n<=ps::hydraulic_archive_limit,"hybrid archive bounds");
+                    std::ifstream in(file,std::ios::binary);std::string bytes(static_cast<std::size_t>(n),'\0');
+                    in.read(bytes.data(),static_cast<std::streamsize>(n));ct::require(bool(in),"hybrid archive read");
+                    next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),ct::strict_json(bytes));
+                }else {
+                    auto domain=ps::load_domain(next->store.path(),hydraulic_profile->types);
+                    next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),std::move(domain));
+                }
+            }else next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),coupled);
         }
         const auto c=next->store.header().core;
         constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
@@ -268,7 +278,17 @@ Dictionary V3WorldSession::hydraulic_report() const {
 bool V3WorldSession::flush_hydraulic() {
     try {
         ct::require(state_&&state_->store.is_open(),"closed hydraulic session");
-        if(state_->hydraulic)ps::save_domain(state_->store.path(),state_->hydraulic->domain());
+        if(state_->hydraulic) {
+            if(!state_->hydraulic->integrated_mode())ps::save_domain(state_->store.path(),state_->hydraulic->domain());
+            else {
+                const auto tmp=state_->store.path()/"session_pending"/"hydraulic_domain.tmp";
+                const auto bytes=state_->hydraulic->archive().dump();
+                ct::require(bytes.size()<=ps::hydraulic_archive_limit&&!fs::exists(fs::symlink_status(tmp)),"hybrid archive bounds");
+                std::ofstream out(tmp,std::ios::binary);ct::require(bool(out),"hybrid archive open");
+                out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));out.flush();ct::require(bool(out),"hybrid archive write");
+                out.close();ct::require(bool(out),"hybrid archive close");ps::replace_file(tmp,state_->store.path()/"hydraulic_domain.json");
+            }
+        }
         return true;
     }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
 }

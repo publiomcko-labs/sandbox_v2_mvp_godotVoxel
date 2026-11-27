@@ -204,7 +204,7 @@ public:
         }
         for(const auto &[id,o]:domain.oceans()) {
             const auto &v=domain.graph().volumes().at(o.ocean);
-            if(!out.ocean({id,o.tile,o.anchor,v.type,v.ocean_level,o.anchor.y,o.area}))throw std::logic_error("R3 bootstrap ocean");
+            if(!out.ocean({id,o.tile,o.anchor,v.type,v.ocean_level,o.sill,o.area}))throw std::logic_error("R3 bootstrap ocean");
         }
         out.initial_=domain.graph().initial();out.injected_=domain.graph().injected();out.drained_=domain.graph().drained();
         out.rebuild();out.verify();return out;
@@ -279,6 +279,7 @@ public:
     void set_resident(core::Region key,bool resident) {
         auto &t=tiles_.at(key);if(t.resident==resident)return;t.resident=resident;rebuild();
     }
+    void suspend_all() {for(auto &[k,t]:tiles_){(void)k;t.resident=false;}rebuild();}
     bool forget_dry(core::Region key) {
         auto it=tiles_.find(key);
         if(it==tiles_.end()||it->second.resident||it->second.local||tile_mass(key)||

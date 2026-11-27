@@ -35,7 +35,7 @@ func _ready() -> void:
     if mods.is_empty():
         mods = ProjectSettings.globalize_path("user://mods_v3")
     if worlds.is_empty():
-        worlds = ProjectSettings.globalize_path("user://worlds_v34hydraulic_h3" if hydraulic_enabled else ("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3")))
+        worlds = ProjectSettings.globalize_path(("user://worlds_v34hybrid_r3" if OS.get_environment("V3_HYBRID_SOLVER")=="1" else "user://worlds_v34hydraulic_h3") if hydraulic_enabled else ("user://worlds_v33c" if caves_enabled else ("user://worlds_v32" if geology_enabled else "user://worlds_v3")))
     if world_id.is_empty():
         world_id = "world"
     if seed_text.is_empty():

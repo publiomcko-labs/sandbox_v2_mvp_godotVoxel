@@ -1,0 +1,256 @@
+#pragma once
+#include "hydraulic_voxel_snapshot.hpp"
+#include "core/hydraulic_worker.hpp"
+#include "core/hydraulic_hybrid_surface.hpp"
+#include "../../experiments/v3/hybrid/coupler.hpp"
+#include "persistence/hydraulic_domain_store.hpp"
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+namespace sandbox::hydraulic {
+class IntegratedRuntime {
+    experiment::Coupler model_;
+    std::set<std::string> sources_;
+    tp::Worker worker_;
+    std::map<core::Region,std::uint64_t> pending_,dirty_,blocked_;
+    std::set<core::Region> group_;
+    std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
+    core::Region center_{};
+    static constexpr int side=16,base=-32,height=64;
+    static bool resident(const godot::Ref<godot::VoxelTool>& tool,core::Region k) {
+        return tool.is_valid()&&tool->is_area_editable(godot::AABB(godot::Vector3(k.x,k.y,k.z),godot::Vector3(17,65,17)));
+    }
+    static core::Region key(core::Vec3 p){return {static_cast<int>(std::floor(p.x/16))*16,base,static_cast<int>(std::floor(p.z/16))*16};}
+    static std::set<core::Region> affected(core::Vec3 p,double r) {
+        std::set<core::Region> out;auto a=key({p.x-r-2,0,p.z-r-2}),b=key({p.x+r+2,0,p.z+r+2});
+        for(int x=a.x;x<=b.x;x+=side)for(int z=a.z;z<=b.z;z+=side)out.insert({x,base,z});
+        return out;
+    }
+    bool interested(core::Region k)const {
+        if(dirty_.contains(k))return true;
+        if(std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side)return true;
+        if(std::abs(k.x-center_.x)>144||std::abs(k.z-center_.z)>144)return false;
+        for(auto d:{core::Region{0,0,0},core::Region{-16,0,0},core::Region{16,0,0},core::Region{0,0,-16},core::Region{0,0,16}}) {
+            core::Region n{k.x+d.x,base,k.z+d.z};
+            if(model_.tiles().contains(n)&&(model_.tile_mass(n)||model_.tiles().at(n).local))return true;
+        }
+        return false;
+    }
+    bool activate(core::Region k) {
+        if(model_.tiles().at(k).local)return true;
+        if(!model_.activate(k))return false;
+        ++activations_;return true;
+    }
+public:
+    explicit IntegratedRuntime(const Domain& bootstrap):model_(experiment::Coupler::adopt(bootstrap)),sources_(bootstrap.seeded()){}
+    IntegratedRuntime(experiment::Coupler model,std::set<std::string> sources):model_(std::move(model)),sources_(std::move(sources)){}
+    const auto& model()const{return model_;}
+    bool allows_edit(core::Vec3 p,double radius,bool add) {
+        if(!core::valid_point(p)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
+        std::size_t needed=0;
+        const auto keys=affected(p,radius);
+        bool near_wet=false;
+        for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
+        for(auto k:keys) {
+            auto it=model_.tiles().find(k);
+            if(it==model_.tiles().end()) {if(near_wet)return false;continue;}
+            if(!it->second.resident||dirty_.contains(k))return false;
+            if(add&&model_.tile_mass(k))return false;
+            if(!add&&near_wet&&!it->second.local)++needed;
+        }
+        if(needed+model_.active()>model_.active_limit())return false;
+        // Activate BEFORE terrain mutation so the old column occupation is
+        // preserved when a newly carved interval joins the same basin.
+        if(!add&&near_wet)for(auto k:keys)if(model_.tiles().contains(k)&&!activate(k))return false;
+        return true;
+    }
+    void edited(core::Vec3 p,double radius,std::uint64_t rev) {
+        if(dirty_.empty())group_.clear();
+        revision_=rev;
+        for(auto k:affected(p,radius)) {
+            if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
+            worker_.invalidate(k);pending_.erase(k);blocked_.erase(k);
+        }
+    }
+    void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed) {
+        center_=key(p);
+        for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k)))model_.set_resident(k,false);
+        if(auto result=worker_.poll()) {
+            const auto k=result->origin;pending_.erase(k);
+            if(interested(k)&&resident(tool,k)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
+                auto geometry=std::make_shared<const tp::Result>(std::move(*result));
+                const bool exists=model_.tiles().contains(k);
+                if(!exists&&model_.tiles().size()>=model_.tile_limit()) {
+                    std::optional<core::Region> evict;
+                    for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){evict=q;break;}
+                    if(evict)model_.forget_dry(*evict);
+                }
+                if(exists?model_.replace_geometry(geometry):model_.publish(geometry)) {
+                    dirty_.erase(k);blocked_.erase(k);++publications_;
+                }else blocked_[k]=rev;
+            }
+        }
+        // Same Voxel Tools snapshots as H14; one acquisition per frame,
+        // cached wet geometry survives loss of LOD0 residency.
+        std::set<core::Region> candidates;
+        for(const auto &[k,r]:dirty_){(void)r;candidates.insert(k);}
+        for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)candidates.insert({center_.x+x*16,base,center_.z+z*16});
+        for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)||t.local)
+            for(auto d:{core::Region{0,0,0},core::Region{-16,0,0},core::Region{16,0,0},core::Region{0,0,-16},core::Region{0,0,16}}) {
+                core::Region q{k.x+d.x,base,k.z+d.z};if(interested(q))candidates.insert(q);
+            }
+        std::vector<core::Region> ordered(candidates.begin(),candidates.end());
+        std::sort(ordered.begin(),ordered.end(),[&](auto a,auto b){
+            if(dirty_.contains(a)!=dirty_.contains(b))return dirty_.contains(a);
+            return std::abs(a.x-center_.x)+std::abs(a.z-center_.z)<std::abs(b.x-center_.x)+std::abs(b.z-center_.z);
+        });
+        if(pending_.size()<2)for(auto k:ordered) {
+            auto it=model_.tiles().find(k);
+            if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
+            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev)||!resident(tool,k))continue;
+            if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit())continue;
+            const auto start=std::chrono::steady_clock::now();
+            const auto wanted_revision=dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
+            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
+            max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
+            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;break;}
+        }
+        constexpr std::uint64_t period=50000000;
+        debt_=std::min(debt_+std::min(elapsed,period*2),period*2);
+        if(debt_<period)return;
+        const auto start=std::chrono::steady_clock::now();
+        // Do not step a partial revision cohort. This preserves the front
+        // on the previous certified geometry until all edited tiles arrive.
+        if(!dirty_.empty())return;
+        if(ticks_%10==0&&model_.active()<model_.active_limit()) {
+            for(auto k:model_.flow_candidates(0.35))if(model_.active()<model_.active_limit())activate(k);
+        }
+        for(const auto &[k,t]:model_.tiles())if(t.local&&t.resident&&t.phase==experiment::Phase::local_active)model_.request_settle(k);
+        const auto n=model_.active();moved_+=static_cast<std::uint64_t>(model_.tick());settles_+=n-model_.active();
+        ++ticks_;debt_-=period;
+        max_tick_us_=std::max(max_tick_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
+    }
+    godot::Dictionary at(core::Vec3 p,const std::vector<Liquid>& types)const {
+        godot::Dictionary d;auto s=model_.sample(p,key(p));if(!s)return d;
+        const auto [type,mass,head,floor]=*s;d["slot"]=static_cast<int64_t>(type);d["density"]=types.at(type).density;
+        d["litres"]=mass;d["level"]=head;d["floor"]=floor;d["physical_floor"]=floor;return d;
+    }
+    // One immutable surface input per known wet tile, independent of LOD0
+    // residency. For a local window, use actual wet intervals, never an
+    // averaged compartment head. Aggregate tiles keep B2 bank support.
+    std::map<core::Region,hybrid::Input> inputs()const {
+        std::map<core::Region,hybrid::Input> out;
+        std::map<std::pair<int,int>,std::vector<hybrid::Cell>> wet;
+        for(const auto &[k,t]:model_.tiles())if(!dirty_.contains(k)&&model_.tile_mass(k)) {
+            hybrid::Input in{k,t.geometry,{},height,{}};
+            if(t.local) {
+                for(const auto &c:t.local->columns())if(c.litres&&c.head()<c.ceiling()-0.001) {
+                    hybrid::Cell cell{k.x+c.x,k.z+c.z,c.floor_mm,c.ceiling_mm,c.type,c.head(),{c.head(),c.head(),c.head(),c.head()}};
+                    wet[{cell.x,cell.z}].push_back(cell);in.cells.push_back(cell);
+                }
+            }else {
+                for(const auto &c:t.geometry->compartments) {
+                    auto v=t.aggregate.find(c.id);if(v==t.aggregate.end()||!v->second.litres)continue;
+                    const auto h=c.curve.level(v->second.litres);
+                    in.wet.push_back({c.id,c.id,v->second.type,h,h});
+                    for(const auto &s:c.spans) {
+                        const auto floor=tp::span_floor_mm(*t.geometry,s),ceiling=(k.y+s.top)*1000;
+                        if(h<=floor*0.001||h>=ceiling*0.001-0.001)continue;
+                        wet[{k.x+s.x,k.z+s.z}].push_back({k.x+s.x,k.z+s.z,floor,ceiling,v->second.type,h,{h,h,h,h}});
+                    }
+                }
+            }
+            if(!in.wet.empty()||!in.cells.empty())out.emplace(k,std::move(in));
+        }
+        // A canonical corner component among the four incident cells.
+        // Connect only shared faces with both heads inside an open interval.
+        // Aggregate boundaries pin the shared height to the aggregate sheet.
+        constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
+        for(auto &[k,in]:out)for(auto &cell:in.cells)for(std::size_t j=0;j<4;++j) {
+            const auto [dx,dz]=offsets[j];const int x=cell.x+dx,z=cell.z+dz;
+            std::vector<const hybrid::Cell*> group;
+            for(int a=x-1;a<=x;++a)for(int b=z-1;b<=z;++b)
+                if(auto it=wet.find({a,b});it!=wet.end())for(const auto &v:it->second)
+                    if(v.type==cell.type&&std::min(v.head,cell.head)>std::max(v.floor_mm,cell.floor_mm)*0.001&&
+                        std::max(v.head,cell.head)<std::min(v.ceiling_mm,cell.ceiling_mm)*0.001-0.001)
+                        group.push_back(&v);
+            // Traverse cardinal connectivity, not diagonal coincidence.
+            std::set<std::size_t> component;
+            for(std::size_t i=0;i<group.size();++i)if(group[i]->x==cell.x&&group[i]->z==cell.z&&group[i]->floor_mm==cell.floor_mm)component.insert(i);
+            bool changed=true;
+            while(changed){changed=false;for(std::size_t i=0;i<group.size();++i)if(!component.contains(i))for(auto n:component) {
+                const auto &a=*group[i],&b=*group[n];
+                if(std::abs(a.x-b.x)+std::abs(a.z-b.z)==1&&std::min(a.head,b.head)>std::max(a.floor_mm,b.floor_mm)*0.001&&
+                    std::max(a.head,b.head)<std::min(a.ceiling_mm,b.ceiling_mm)*0.001-0.001){component.insert(i);changed=true;break;}
+            }}
+            double sum=0,pinned=0,lo=-1e9,hi=1e9;std::size_t count=0,pins=0;
+            for(auto n:component){const auto &v=*group[n];sum+=v.head;++count;
+                lo=std::max(lo,v.floor_mm*0.001+0.0001);hi=std::min(hi,v.ceiling_mm*0.001-0.002);
+                const auto t=model_.tiles().find(key({v.x+0.5,0,v.z+0.5}));
+                if(t!=model_.tiles().end()&&!t->second.local){pinned+=v.head;++pins;}
+            }
+            if(count&&lo<=hi)cell.corners[j]=std::clamp(pins?pinned/double(pins):sum/double(count),lo,hi);
+        }
+        return out;
+    }
+    godot::Array surfaces()const {
+        godot::Array rows;int64_t id=1;
+        for(const auto &[k,t]:model_.tiles())if(model_.tile_mass(k)) {
+            (void)t;godot::Array row;row.push_back(id++);row.push_back(0);row.push_back(0.0);row.push_back(godot::Vector3i(k.x,k.y,k.z));rows.push_back(row);
+        }
+        return rows;
+    }
+    const auto& dirty()const{return dirty_;}
+    godot::Dictionary report()const {
+        using namespace godot;Dictionary d;
+        d["solver"]="hybrid";d["litres"]=model_.mass();d["initial"]=model_.initial();d["injected"]=model_.injected();d["drained"]=model_.drained();
+        d["ticks"]=static_cast<int64_t>(ticks_);d["moved"]=static_cast<int64_t>(moved_);d["publications"]=static_cast<int64_t>(publications_);
+        d["tiles"]=static_cast<int64_t>(model_.tiles().size());d["sources"]=static_cast<int64_t>(sources_.size());
+        d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
+        d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
+        d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
+        d["edit_group_revision"]=static_cast<int64_t>(revision_);
+        Array group;for(auto k:group_)group.push_back(Vector3i(k.x,k.y,k.z));d["edit_group_tiles"]=group;
+        int64_t active=0,near=0,wet=0,intervals=0;
+        for(const auto &[k,t]:model_.tiles()){
+            if(t.resident){++active;if(std::abs(k.x-center_.x)<=16&&std::abs(k.z-center_.z)<=16)++near;}
+            if(model_.tile_mass(k))++wet;
+            if(t.local)intervals+=static_cast<int64_t>(t.local->columns().size());
+        }
+        d["active_tiles"]=active;d["near_active_tiles"]=near;d["visible_wet_tiles"]=wet;d["local_intervals"]=intervals;
+        return d;
+    }
+    nlohmann::json encode()const {
+        using J=nlohmann::json;J geometry=J::array(),dirty=J::array();
+        for(const auto &[k,t]:model_.tiles()){
+            const auto &g=*t.geometry;J runs=J::array();
+            for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
+            geometry.push_back({{"key",{k.x,k.y,k.z}},{"revision",g.revision},{"runs",runs},{"floor",g.surface_floor},{"refined",g.refine_exposed}});
+        }
+        for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
+        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"dirty",dirty},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_}};
+    }
+    static std::unique_ptr<IntegratedRuntime> decode(const nlohmann::json& j,const std::vector<Liquid>& types) {
+        if(j.at("schema")!="v3-hybrid-runtime-1"||!j.at("geometry").is_array()||j.at("geometry").size()>128)throw std::invalid_argument("hybrid runtime archive");
+        std::map<core::Region,std::shared_ptr<const tp::Result>> geometry;
+        for(const auto &row:j.at("geometry")){
+            const auto &a=row.at("key");core::Region k{a[0].get<int>(),a[1].get<int>(),a[2].get<int>()};
+            if(k.y!=base||k.x%16||k.z%16||geometry.contains(k)||row.at("runs").size()>16384)throw std::invalid_argument("hybrid archive geometry");
+            tp::Snapshot s{k,16,64,16,1,row.at("revision").get<std::uint64_t>(),std::vector<std::uint8_t>(16*64*16)};
+            for(const auto &v:row.at("runs")){
+                const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
+                if(x<0||x>=16||z<0||z>=16||lo<0||hi>64||lo>=hi)throw std::invalid_argument("hybrid archive run");
+                for(int y=lo;y<hi;++y){auto &air=s.air.at(static_cast<std::size_t>((z*16+x)*64+y));if(air)throw std::invalid_argument("hybrid archive duplicate run");air=1;}
+            }
+            s.surface_floor=row.at("floor").get<std::vector<float>>();s.refine_exposed=row.at("refined").get<bool>();
+            geometry.emplace(k,std::make_shared<const tp::Result>(tp::extract(s)));
+        }
+        auto model=experiment::Coupler::decode(j.at("coupler"),types,geometry);model.suspend_all();
+        auto out=std::make_unique<IntegratedRuntime>(std::move(model),j.at("sources").get<std::set<std::string>>());
+        for(const auto &v:j.at("dirty")){core::Region k{v[0].get<int>(),v[1].get<int>(),v[2].get<int>()};if(!geometry.contains(k))throw std::invalid_argument("hybrid dirty tile");out->dirty_[k]=v[3].get<std::uint64_t>();out->group_.insert(k);}
+        out->revision_=j.at("revision").get<std::uint64_t>();out->ticks_=j.at("ticks").get<std::uint64_t>();
+        out->debt_=j.at("debt").get<std::uint64_t>();out->moved_=j.at("moved").get<std::uint64_t>();
+        if(out->debt_>100000000)throw std::invalid_argument("hybrid archive tick debt");
+        return out;
+    }
+};
+}

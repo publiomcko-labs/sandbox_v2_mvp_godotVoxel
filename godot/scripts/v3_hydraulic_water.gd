@@ -22,7 +22,7 @@ var _next_update:=0
 var _mesh_builds:=0
 var _level_updates:=0
 var _max_update_usec:=0
-var _hybrid_only:=OS.get_environment("V3_HYBRID_RENDERER")=="B"
+var _hybrid_only:=OS.get_environment("V3_HYBRID_RENDERER")=="B" or OS.get_environment("V3_HYBRID_SOLVER")=="1"
 var _hybrid_display:=_hybrid_only
 var _hybrid_nodes: Dictionary={}
 var _hybrid_stage: Dictionary={}

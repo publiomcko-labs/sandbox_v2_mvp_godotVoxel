@@ -13,12 +13,22 @@ struct Wet {
     double physical{},visual{};
     auto operator<=>(const Wet&) const=default;
 };
+// Independent variable-head surface samples. Vertices are shared at
+// certified wet edges; the worker sees no mutable solver object.
+struct Cell {
+    int x{},z{},floor_mm{},ceiling_mm{};
+    std::size_t type{};
+    double head{};
+    std::array<double,4> corners{};
+    auto operator<=>(const Cell&)const=default;
+};
 struct Input {
     core::Region tile;
     std::shared_ptr<const tp::Result> geometry;
     std::vector<Wet> wet;
     int exposed_top{};
-    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet;}
+    std::vector<Cell> cells{};
+    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{};};
 struct Batch {
@@ -40,6 +50,22 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
     const auto start=std::chrono::steady_clock::now();
     Batch out{std::move(input),{},0,0};
     const auto &g=*out.input.geometry;
+    if(!out.input.cells.empty()) {
+        constexpr std::array<std::pair<int,int>,4> offsets{{{0,0},{1,0},{1,1},{0,1}}};
+        for(const auto &cell:out.input.cells) {
+            std::array<Vertex,4> vertices;
+            for(std::size_t j=0;j<4;++j) {
+                const auto [dx,dz]=offsets[j];
+                const double floor=cell.floor_mm*0.001,ceiling=cell.ceiling_mm*0.001;
+                const auto x=cell.x+dx,z=cell.z+dz;
+                vertices[j]={double(x),cell.corners[j],double(z),floor-0.35,ceiling};
+            }
+            auto &v=out.materials[cell.type];
+            v.insert(v.end(),{vertices[0],vertices[1],vertices[2],vertices[0],vertices[2],vertices[3]});
+        }
+        out.build_us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
+        return out;
+    }
     CachedTile temporary;
     auto &cache=cached?*cached:temporary;
     if(cache.geometry!=out.input.geometry||cache.exposed_top!=out.input.exposed_top) {
@@ -123,6 +149,12 @@ public:
                 for(std::size_t i=0;i<it->second.wet.size();++i) {
                     const auto &a=it->second.wet[i],&b=result.input.wet[i];
                     if(a.id!=b.id||a.type!=b.type){same_members=false;break;}
+                }
+                if(!same_members)continue;
+                if(it->second.cells.size()!=result.input.cells.size())continue;
+                for(std::size_t i=0;i<it->second.cells.size();++i) {
+                    const auto &a=it->second.cells[i],&b=result.input.cells[i];
+                    if(a.x!=b.x||a.z!=b.z||a.floor_mm!=b.floor_mm||a.ceiling_mm!=b.ceiling_mm||a.type!=b.type){same_members=false;break;}
                 }
                 if(!same_members)continue;
                 presented_.insert_or_assign(result.input.tile,result.input);

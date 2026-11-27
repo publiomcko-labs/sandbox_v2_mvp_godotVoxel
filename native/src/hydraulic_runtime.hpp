@@ -4,6 +4,7 @@
 #include "core/hydraulic_worker.hpp"
 #include "core/hydraulic_surface.hpp"
 #include "core/hydraulic_hybrid_surface.hpp"
+#include "hydraulic_integrated_runtime.hpp"
 #include "content_registry/hydraulic_profile.hpp"
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -14,6 +15,8 @@ namespace sandbox::hydraulic {
 class Runtime {
     content::HydraulicProfile profile_;
     Domain domain_;
+    bool integrated_mode_=false;
+    std::unique_ptr<IntegratedRuntime> integrated_;
     tp::Worker worker_;
     hybrid::Renderer hybrid_renderer_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
@@ -215,13 +218,26 @@ class Runtime {
         }
     }
 public:
-    explicit Runtime(content::HydraulicProfile profile):profile_(std::move(profile)),domain_(profile_.types){}
+    explicit Runtime(content::HydraulicProfile profile,bool integrated=false):profile_(std::move(profile)),domain_(profile_.types),integrated_mode_(integrated){}
     Runtime(content::HydraulicProfile profile,Domain domain):profile_(std::move(profile)),domain_(std::move(domain)){}
+    Runtime(content::HydraulicProfile profile,const nlohmann::json& archive):profile_(std::move(profile)),domain_(profile_.types),integrated_mode_(true) {
+        if(archive.at("schema")=="v3-hybrid-runtime-1")integrated_=IntegratedRuntime::decode(archive,profile_.types);
+        else if(archive.at("schema")=="v3-hybrid-bootstrap-1")domain_=persistence::decode_domain(archive.at("bootstrap"),profile_.types);
+        else throw std::invalid_argument("hybrid save schema");
+    }
+    bool integrated_mode()const{return integrated_mode_;}
+    nlohmann::json archive()const {
+        if(integrated_)return integrated_->encode();
+        if(integrated_mode_)return {{"schema","v3-hybrid-bootstrap-1"},{"bootstrap",persistence::encode_domain(domain_)}};
+        return persistence::encode_domain(domain_);
+    }
     const auto &domain()const{return domain_;}
     const auto &profile()const{return profile_;}
     // Conservative initial edit policy: no construction in a wet tile;
     // no carving that could merge different liquids in the same tile.
-    bool allows_edit(core::Vec3 center,double radius,bool add)const {
+    bool allows_edit(core::Vec3 center,double radius,bool add) {
+        if(integrated_)return integrated_->allows_edit(center,radius,add);
+        if(integrated_mode_)return false;
         if(!core::valid_point(center)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});
         for(int x=lo.x;x<=hi.x;x+=side)for(int z=lo.z;z<=hi.z;z+=side) {
@@ -238,6 +254,7 @@ public:
         return true;
     }
     void edited(core::Vec3 center,double radius,std::uint64_t revision) {
+        if(integrated_){integrated_->edited(center,radius,revision);return;}
         if(edited_tiles_.empty())edit_group_.clear();
         edit_group_revision_=revision;
         const auto lo=key({center.x-radius-2,0,center.z-radius-2}),hi=key({center.x+radius+2,0,center.z+radius+2});
@@ -249,6 +266,7 @@ public:
     }
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position,std::uint64_t revision,std::uint64_t elapsed) {
         if(!core::valid_point(position))throw std::invalid_argument("hydraulic interest");
+        if(integrated_){integrated_->frame(tool,position,revision,elapsed);return;}
         const auto center=key(position);
         last_center_=center;
         // Only the 3x3 near-field is active. No voxel streaming requests.
@@ -289,6 +307,11 @@ public:
             }
         }
         seed(center);
+        if(integrated_mode_&&!domain_.seeded().empty()) {
+            integrated_=std::make_unique<IntegratedRuntime>(domain_);
+            domain_=Domain(profile_.types); // relinquish bootstrap mass owner
+            return;
+        }
         // At most one immutable copy per frame. Prioritize nearest tiles.
         std::vector<core::Region> candidates(edited_tiles_.begin(),edited_tiles_.end());
         candidates.insert(candidates.end(),seed_interest_.begin(),seed_interest_.end());
@@ -334,6 +357,7 @@ public:
         }
     }
     godot::Dictionary at(core::Vec3 p)const {
+        if(integrated_)return integrated_->at(p,profile_.types);
         godot::Dictionary out;const auto wet=domain_.wet_at(p);if(!wet)return out;
         out["slot"]=static_cast<int64_t>(wet->type);out["density"]=domain_.graph().types().at(wet->type).density;
         const auto &v=domain_.graph().volumes().at(*domain_.volume_at(p));
@@ -348,6 +372,7 @@ public:
         return out;
     }
     godot::Array surfaces()const {
+        if(integrated_)return integrated_->surfaces();
         godot::Array out;
         std::set<Id> exposed;
         for(const auto &[k,t]:domain_.tiles())if(t.renderable()&&visual_tile(k,t))for(const auto &c:t.geometry->compartments) {
@@ -389,7 +414,7 @@ public:
     godot::Dictionary hybrid_render() {
         using namespace godot;
         const auto started=std::chrono::steady_clock::now();
-        const auto wanted=hybrid::snapshot(domain_,height);
+        const auto wanted=integrated_?integrated_->inputs():hybrid::snapshot(domain_,height);
         const auto snapshots_us=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-started).count();
         auto done=hybrid_renderer_.poll(wanted);
         Array updates,keys,ready;
@@ -401,6 +426,7 @@ public:
         // construction from invalidated geometry.
         for(const auto &k:edited_tiles_)if(!wanted.contains(k)&&domain_.tiles().contains(k)&&wet_tile(domain_.tiles().at(k)))
             keys.push_back(Vector3i(k.x,k.y,k.z));
+        if(integrated_)for(const auto &[k,rev]:integrated_->dirty()){(void)rev;keys.push_back(Vector3i(k.x,k.y,k.z));}
         for(auto &batch:done) {
             Dictionary row;
             const auto k=batch.input.tile;
@@ -428,13 +454,16 @@ public:
         // compartment's exact ledger and its revision/availability.
         std::uint64_t hash=1469598103934665603ULL;
         auto mix=[&](std::uint64_t x){hash^=x;hash*=1099511628211ULL;};
-        mix(static_cast<std::uint64_t>(domain_.graph().finite()));mix(ticks_);
+        if(integrated_) {
+            const auto state=integrated_->report();mix(static_cast<std::uint64_t>(static_cast<int64_t>(state["litres"])));mix(static_cast<std::uint64_t>(static_cast<int64_t>(state["ticks"])));
+        }else {mix(static_cast<std::uint64_t>(domain_.graph().finite()));mix(ticks_);}
         for(const auto &[id,v]:domain_.graph().volumes()){mix(id);mix(v.type);mix(static_cast<std::uint64_t>(v.litres));}
         for(const auto &[k,t]:domain_.tiles()){mix(static_cast<std::uint64_t>(k.x));mix(static_cast<std::uint64_t>(k.z));mix(t.geometry->revision);mix(t.expected_revision);mix(t.available?1:0);}
         out["physics_digest"]=String::utf8(std::to_string(hash).c_str());
         return out;
     }
     godot::Dictionary report()const {
+        if(integrated_)return integrated_->report();
         godot::Dictionary d;
         d["litres"]=domain_.graph().finite();d["initial"]=domain_.graph().initial();
         d["injected"]=domain_.graph().injected();d["drained"]=domain_.graph().drained();
