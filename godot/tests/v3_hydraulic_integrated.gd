@@ -537,8 +537,9 @@ func _test() -> void:
         runtime.player.global_position+=Vector3(0.8,0,0)
         if not _frame(runtime,water,50000000):
             return
-        if int(runtime.session.hydraulic_report()["litres"])!=mass or int(water.call("get_report")["meshes"])==0:
-            _fail("movement mass/visibility")
+        var movement_state: Dictionary=runtime.session.hydraulic_report()
+        if int(movement_state["litres"])!=mass or int(water.call("get_report")["meshes"])==0:
+            _fail("movement mass/visibility expected="+str(mass)+" state="+str(movement_state)+" render="+str(water.call("get_report")))
             return
         await process_frame
     if not await _capture("06-movement"):

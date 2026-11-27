@@ -5,6 +5,7 @@
 #include "core/hydraulic_hybrid_surface.hpp"
 #include "../../experiments/v3/hybrid/coupler.hpp"
 #include "persistence/hydraulic_region_store.hpp"
+#include <array>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 namespace sandbox::hydraulic {
@@ -197,8 +198,10 @@ class IntegratedRuntime {
                 if(proof.compartments.empty())continue;
                 // The anchor remains a physical source/sink. Only pristine
                 // newly reached aggregate regions may be initialized at
-                // fixed head. Edited or local regions must fill by flow.
-                if(k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
+                // fixed head. After any edit, use flow until a pristine-path
+                // witness can independently certify initialization. This is
+                // deliberately conservative, not final large-world behavior.
+                if(rev==0&&k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
                     if(!model_.acquire_ocean(proof,rev,true))continue;
                     ++ocean_acquisitions_;
                 }else if(!model_.remember_ocean(proof,rev))continue;
