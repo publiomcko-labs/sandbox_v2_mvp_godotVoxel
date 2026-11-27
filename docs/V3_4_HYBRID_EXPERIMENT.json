@@ -580,6 +580,32 @@
           "gpu_resident_settles": 0,
           "offline_stream_steps": 45,
           "offline_stream_max_step_us": 4554
+        },
+        "i22a": {
+          "status": "CORE_PASS_NATIVE_REVISIT_FAIL_GPU_PREREQUISITE_FAIL",
+          "commit": "621456cf4772f49375c1005b7292bce3f04e950c",
+          "core_run": 46079269061,
+          "native_run": 46079269064,
+          "gpu_run": 46079269052,
+          "cold_owners": 120,
+          "hot_test_limit": 2,
+          "mass_litres": 1920000,
+          "native_failure": "source-reopen sea revisit: near_active_tiles=0"
+        },
+        "i22b": {
+          "status": "CORE_PASS_NATIVE_GPU_PENDING",
+          "commit": "1062f421d34cca88e0116a82521f9ed36b9bd685",
+          "core_run": 46079438753,
+          "native_run": 46079438817,
+          "gpu_run": 46079438767,
+          "disk_records_tested": 120,
+          "ledger_mismatch_rejected": true,
+          "remaining": [
+            "native cold lifecycle",
+            "visible-only cold cache",
+            "certified ocean expansion",
+            "performance"
+          ]
         }
       }
     },
