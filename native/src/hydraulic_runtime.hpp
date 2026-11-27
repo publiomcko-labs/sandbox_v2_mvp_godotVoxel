@@ -356,6 +356,10 @@ public:
             max_tick_us_=std::max(max_tick_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
         }
     }
+    Litres column_mass(core::Vec3 p)const {
+        if(!core::valid_point(p)||!integrated_)return -1;
+        return integrated_->column_mass(p);
+    }
     godot::Dictionary at(core::Vec3 p)const {
         if(integrated_)return integrated_->at(p,profile_.types);
         godot::Dictionary out;const auto wet=domain_.wet_at(p);if(!wet)return out;

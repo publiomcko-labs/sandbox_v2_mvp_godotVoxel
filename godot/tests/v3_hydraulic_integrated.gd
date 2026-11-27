@@ -23,8 +23,8 @@ func _tile(p: Vector3) -> Vector3i:
 func _find_breach(runtime,tool: VoxelTool) -> Dictionary:
     # Identify a genuinely dry, solid horizontal neighbour of a wet
     # column. Both probes belong to the carve, not the old liquid.
-    for z in range(8,48):
-        for x in range(-24,16):
+    for z in range(-48,64):
+        for x in range(-72,32):
             for y in range(-8,4):
                 var donor:=Vector3(x+0.5,y+0.5,z+0.5)
                 var wet: Dictionary=runtime.session.hydraulic_at(donor)
@@ -38,12 +38,12 @@ func _find_breach(runtime,tool: VoxelTool) -> Dictionary:
                         continue
                     if not tool.is_area_editable(AABB(center-Vector3(6,6,6),Vector3(12,12,12))):
                         continue
-                    if not runtime.session.hydraulic_at(near).is_empty() or not runtime.session.hydraulic_at(far).is_empty():
+                    if runtime.session.hydraulic_column_mass(near)!=0 or runtime.session.hydraulic_column_mass(far)!=0:
                         continue
                     if tool.get_voxel_f(Vector3i(near.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(far.floor()))>=-0.1:
                         continue
                     if runtime.submit_brush(center,false,3.0)=="accepted":
-                        return {"center":center,"near":near,"far":far,"donor":donor}
+                        return {"center":center,"near":near,"far":far,"donor":donor,"pre_edit_column_litres":[0,0]}
     return {}
 
 func _frame(runtime,water: Node3D,elapsed: int) -> bool:
@@ -129,8 +129,11 @@ func _test() -> void:
     if int(published["ticks"])!=before_ticks or int(published["litres"])!=mass or int(published["local_active"])<=0:
         _fail("exclusive edit remap "+str(published))
         return
-    if not runtime.session.hydraulic_at(near).is_empty() or not runtime.session.hydraulic_at(far).is_empty():
-        _fail("instant horizontal wetting")
+    var near_zero: int=runtime.session.hydraulic_column_mass(near)
+    var far_zero: int=runtime.session.hydraulic_column_mass(far)
+    print("V3_HYBRID_ZERO_TICK_COLUMN_MASS near=",near_zero," far=",far_zero)
+    if near_zero!=0 or far_zero!=0:
+        _fail("instant horizontal wetting "+str([near_zero,far_zero]))
         return
     if not await _capture("02-open-no-tick"):
         return
@@ -145,9 +148,9 @@ func _test() -> void:
         if int(state["litres"])!=mass or int(state["blocked_tiles"])>0:
             _fail("flow ledger or remap blocked "+str(state))
             return
-        if first_near<0 and not runtime.session.hydraulic_at(near).is_empty():
+        if first_near<0 and runtime.session.hydraulic_column_mass(near)>0:
             first_near=i+1
-        if first_far<0 and not runtime.session.hydraulic_at(far).is_empty():
+        if first_far<0 and runtime.session.hydraulic_column_mass(far)>0:
             first_far=i+1
         await process_frame
         var now:=Time.get_ticks_usec()

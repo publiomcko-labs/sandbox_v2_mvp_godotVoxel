@@ -26,6 +26,8 @@ class Local {
     std::vector<Liquid> types_;
     std::vector<Column> columns_;
     std::vector<Pipe> pipes_;
+    std::vector<std::vector<std::size_t>> column_index_;
+    int width_{},depth_{};
     Litres initial_{};
     static constexpr int substeps=4;
     static constexpr double dt=tick_s/substeps;
@@ -100,7 +102,8 @@ class Local {
 public:
     Local(const topology::Result &g,std::vector<Liquid> types):types_(std::move(types)) {
         if(g.step!=1||g.nx>32||g.nz>32||types_.empty())throw std::invalid_argument("R2 local bounds");
-        std::vector<std::vector<std::size_t>> indexes(g.column_runs.size());
+        width_=g.nx;depth_=g.nz;column_index_.resize(g.column_runs.size());
+        auto &indexes=column_index_;
         for(std::size_t i=0;i<g.column_runs.size();++i)for(const auto &s:g.column_runs[i]) {
             indexes[i].push_back(columns_.size());
             columns_.push_back({s.x,s.z,topology::span_floor_mm(g,s),(g.origin.y+s.top*g.step)*1000,1,0,no_liquid});
@@ -126,6 +129,10 @@ public:
             }
     }
     const auto& columns()const{return columns_;}
+    const auto& column_indices(int x,int z)const {
+        if(x<0||x>=width_||z<0||z>=depth_)throw std::out_of_range("local column");
+        return column_index_.at(static_cast<std::size_t>(z*width_+x));
+    }
     const auto& pipes()const{return pipes_;}
     void seed(std::size_t i,std::size_t type,Litres litres) {
         auto &c=columns_.at(i);

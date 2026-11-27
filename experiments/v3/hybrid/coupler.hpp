@@ -62,7 +62,7 @@ class Coupler {
         const int x=b.face==0?0:b.face==1?t.geometry->nx-1:b.along;
         const int z=b.face==2?0:b.face==3?t.geometry->nz-1:b.along;
         const auto &cells=t.local->columns();
-        for(std::size_t i=0;i<cells.size();++i)if(cells[i].x==x&&cells[i].z==z&&
+        for(auto i:t.local->column_indices(x,z))if(
             cells[i].floor_mm==b.bottom_mm&&cells[i].ceiling_mm==b.top_mm)return {t.geometry->origin,i,1};
         throw std::logic_error("R3 boundary interval");
     }
@@ -71,7 +71,7 @@ class Coupler {
         if(!s)throw std::invalid_argument("R3 ocean anchor");
         if(!t.local)return {t.geometry->origin,s->compartment,0};
         const auto &cells=t.local->columns();
-        for(std::size_t i=0;i<cells.size();++i)if(cells[i].x==s->x&&cells[i].z==s->z&&
+        for(auto i:t.local->column_indices(s->x,s->z))if(
             cells[i].floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cells[i].ceiling_mm==(t.geometry->origin.y+s->top)*1000)
             return {t.geometry->origin,i,1};
         throw std::logic_error("R3 ocean interval");
@@ -229,13 +229,33 @@ public:
         }
         return {keys.begin(),keys.end()};
     }
+    // Diagnostic occupancy of a whole XZ column, including every Y
+    // interval. -1 denotes uncertified/nonresident geometry.
+    Litres column_mass(core::Region k,int x,int z)const {
+        auto it=tiles_.find(k);if(it==tiles_.end()||!it->second.resident)return -1;
+        const auto &t=it->second;const auto &g=*t.geometry;
+        if(x<0||x>=g.nx||z<0||z>=g.nz)return -1;
+        Litres sum=0;
+        if(t.local) {
+            for(auto i:t.local->column_indices(x,z))sum+=t.local->columns()[i].litres;
+        }else for(const auto &s:g.column_runs.at(static_cast<std::size_t>(z*g.nx+x))) {
+            auto v=t.aggregate.find(s.compartment);if(v==t.aggregate.end()||!v->second.litres)continue;
+            const auto h=compartment(t,s.compartment).curve.level(v->second.litres);
+            const auto cap=(k.y+s.top)*1000-tp::span_floor_mm(g,s);
+            sum+=std::clamp(static_cast<Litres>(std::floor(h*1000.0-tp::span_floor_mm(g,s)+1e-7)),Litres(0),Litres(cap));
+        }
+        return sum;
+    }
     std::optional<std::tuple<std::size_t,Litres,double,double>> sample(core::Vec3 p,core::Region k)const {
         const auto it=tiles_.find(k);if(it==tiles_.end()||!it->second.resident)return {};
         const auto &t=it->second;const auto *s=tp::span_at(*t.geometry,p);if(!s)return {};
         const auto floor=tp::span_floor_mm(*t.geometry,*s)*0.001;
         if(t.local) {
-            for(const auto &cell:t.local->columns())if(cell.x==s->x&&cell.z==s->z&&cell.floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cell.ceiling_mm==(k.y+s->top)*1000)
-                if(cell.litres&&p.y<cell.head())return std::tuple{cell.type,cell.litres,cell.head(),floor};
+            for(auto i:t.local->column_indices(s->x,s->z)) {
+                const auto &cell=t.local->columns()[i];
+                if(cell.floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cell.ceiling_mm==(k.y+s->top)*1000&&cell.litres&&p.y<cell.head())
+                    return std::tuple{cell.type,cell.litres,cell.head(),floor};
+            }
             return {};
         }
         const auto v=t.aggregate.find(s->compartment);if(v==t.aggregate.end()||!v->second.litres)return {};

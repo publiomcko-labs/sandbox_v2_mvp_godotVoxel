@@ -124,6 +124,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_hydraulic_json"), &V3WorldSession::get_hydraulic_json);
     ClassDB::bind_method(D_METHOD("hydraulic_frame","world","position","elapsed_ns"), &V3WorldSession::hydraulic_frame);
     ClassDB::bind_method(D_METHOD("hydraulic_at","point"), &V3WorldSession::hydraulic_at);
+    ClassDB::bind_method(D_METHOD("hydraulic_column_mass","point"), &V3WorldSession::hydraulic_column_mass);
     ClassDB::bind_method(D_METHOD("hydraulic_surfaces"), &V3WorldSession::hydraulic_surfaces);
     ClassDB::bind_method(D_METHOD("hydraulic_mesh","id"), &V3WorldSession::hydraulic_mesh);
     ClassDB::bind_method(D_METHOD("hydraulic_report"), &V3WorldSession::hydraulic_report);
@@ -258,6 +259,9 @@ bool V3WorldSession::hydraulic_frame(WorldBootstrap *world,const Vector3 &positi
         state_->hydraulic->frame(terrain->get_voxel_tool(),{position.x,position.y,position.z},state_->core->revision(),static_cast<uint64_t>(elapsed_ns));
         return true;
     }catch(const std::exception &e){last_error_=String::utf8(e.what());return false;}
+}
+int64_t V3WorldSession::hydraulic_column_mass(const Vector3 &point) const {
+    return state_&&state_->hydraulic?state_->hydraulic->column_mass({point.x,point.y,point.z}):-1;
 }
 Dictionary V3WorldSession::hydraulic_at(const Vector3 &point) const {
     return state_&&state_->hydraulic?state_->hydraulic->at({point.x,point.y,point.z}):Dictionary();

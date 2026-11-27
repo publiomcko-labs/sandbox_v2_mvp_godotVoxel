@@ -134,6 +134,9 @@ public:
         const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
         max_tick_us_=std::max(max_tick_us_,us);if(tick_samples_.size()<4096)tick_samples_.push_back(us);
     }
+    Litres column_mass(core::Vec3 p)const {
+        const auto k=key(p);return model_.column_mass(k,static_cast<int>(std::floor(p.x))-k.x,static_cast<int>(std::floor(p.z))-k.z);
+    }
     godot::Dictionary at(core::Vec3 p,const std::vector<Liquid>& types)const {
         godot::Dictionary d;auto s=model_.sample(p,key(p));if(!s)return d;
         const auto [type,mass,head,floor]=*s;d["slot"]=static_cast<int64_t>(type);d["density"]=types.at(type).density;

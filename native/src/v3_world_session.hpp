@@ -37,6 +37,7 @@ public:
     String get_hydraulic_json() const;
     bool hydraulic_frame(WorldBootstrap *world,const Vector3 &position,int64_t elapsed_ns);
     Dictionary hydraulic_at(const Vector3 &point) const;
+    int64_t hydraulic_column_mass(const Vector3 &point) const;
     Array hydraulic_surfaces() const;
     Array hydraulic_mesh(int64_t id) const;
     Dictionary hydraulic_hybrid();
