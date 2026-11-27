@@ -26,11 +26,11 @@ inline std::vector<FlowFace> flow_faces(const topology::Result &a,Id from,
             if(x>=b.nx||z>=b.nz)continue;
             for(const auto &v:b.column_runs[static_cast<std::size_t>(z*b.nx+x)]) {
                 if(v.compartment!=to||b.origin.y+v.top*b.step!=surface_ceiling)continue;
-                const int floor_a=a.origin.y+u.bottom*a.step,floor_b=b.origin.y+v.bottom*b.step;
-                const int lo=std::max(floor_a,floor_b)*1000,hi=surface_ceiling*1000;
+                const int floor_a=topology::span_floor_mm(a,u),floor_b=topology::span_floor_mm(b,v);
+                const int lo=std::max(floor_a,floor_b),hi=surface_ceiling*1000;
                 if(lo!=sill_mm||hi!=soffit_mm||lo>=hi)continue;
                 const double top=std::min(high,hi*0.001-0.001);
-                const double bottom=std::max(low,double(floor_b));
+                const double bottom=std::max(low,double(floor_b)*0.001);
                 if(top-bottom<min_drop)continue;
                 const double ax=a.origin.x+u.x*a.step,az=a.origin.z+u.z*a.step;
                 // Slight receiver-side offset prevents coplanar terrain

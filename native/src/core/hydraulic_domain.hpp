@@ -90,7 +90,8 @@ public:
                 const auto &a=before[i],&b=geometry.column_runs[i];
                 if(a.size()!=b.size())return false;
                 for(std::size_t j=0;j<a.size();++j)
-                    if(a[j].bottom!=b[j].bottom||a[j].top!=b[j].top||a[j].compartment!=b[j].compartment)return false;
+                    if(a[j].bottom!=b[j].bottom||a[j].top!=b[j].top||a[j].compartment!=b[j].compartment||
+                        (old->second.geometry->refine_exposed&&a[j].floor_mm!=b[j].floor_mm))return false;
             }
         }
         // Copy-on-publication staging for this bounded prototype. Ticks do

@@ -29,6 +29,18 @@ int main(){
     // Newly carved disconnected capacity starts dry.
     const auto dry=tp::remap(split,merged,{});
     assert(dry&&dry->finite==0&&dry->contents.empty());
+    // Refined mass below the old binary floor must survive a remap.
+    tp::Snapshot shallow{{0,0,0},2,6,2,1,1,std::vector<std::uint8_t>(2*6*2,0)};
+    for(int z=0;z<2;++z)for(int x=0;x<2;++x)for(int y=1;y<6;++y)
+        shallow.air[static_cast<std::size_t>((z*2+x)*6+y)]=1;
+    shallow.surface_floor.assign(9,0.3f);shallow.refine_exposed=true;
+    const auto refined=tp::extract(shallow);
+    const auto shallow_mass=refined.compartments.front().curve.at_level(0.8);
+    assert(shallow_mass>0);
+    shallow.revision=2;shallow.surface_floor.assign(9,0.1f);
+    const auto shallow_remap=tp::remap(refined,tp::extract(shallow),{{refined.compartments.front().id,{0,shallow_mass}}});
+    assert(shallow_remap&&shallow_remap->finite==shallow_mass);
+    std::cout<<"V3_HYDRAULIC_REFINED_REMAP_PASS below_binary_floor exact_mass\n";
     tp::Worker worker;
     assert(worker.submit(s));
     assert(worker.submit(cut)); // invalidates the first result even if complete

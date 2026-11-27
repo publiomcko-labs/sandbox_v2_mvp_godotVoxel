@@ -44,6 +44,7 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
         if(previous<=0.0)floor=origin.y+extent.y;
         floors[static_cast<std::size_t>(z*size.x+x)]=static_cast<float>(floor);
     }
+    snapshot.refine_exposed=true;
     snapshot.surface_floor.resize(static_cast<std::size_t>(core_size.x*core_size.z));
     for(int z=0;z<core_size.z;++z)for(int x=0;x<core_size.x;++x)
         snapshot.surface_floor[static_cast<std::size_t>(z*core_size.x+x)]=floors[static_cast<std::size_t>((z+pad)*size.x+x+pad)];

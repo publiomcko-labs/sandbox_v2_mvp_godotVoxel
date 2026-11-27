@@ -308,7 +308,10 @@ public:
         const auto &g=*domain_.tiles().at(key(p)).geometry;
         const auto *span=tp::span_at(g,p);
         out["level"]=v.level();
+        // Preserve the binary sample-floor API for existing tools;
+        // physical_floor reports the conservative sub-metre capacity bound.
         out["floor"]=span?double(g.origin.y+span->bottom*g.step):v.curve.knots().front().mm*0.001;
+        out["physical_floor"]=span?double(tp::span_floor_mm(g,*span))*0.001:v.curve.knots().front().mm*0.001;
         out["id"]=static_cast<int64_t>(v.id);
         return out;
     }

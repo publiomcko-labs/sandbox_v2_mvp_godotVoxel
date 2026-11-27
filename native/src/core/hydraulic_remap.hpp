@@ -31,7 +31,7 @@ inline std::optional<Remap> remap(const Result &old,const Result &next,
         for(const auto &a:old.column_runs[col]) {
             auto l=levels.find(a.compartment);if(l==levels.end())continue;
             for(const auto &b:next.column_runs[col]) {
-                const int lo=mm(std::max(a.bottom,b.bottom)),hi=mm(std::min(a.top,b.top));
+                const int lo=std::max(span_floor_mm(old,a),span_floor_mm(next,b)),hi=mm(std::min(a.top,b.top));
                 if(lo>=hi)continue;
                 descendants[a.compartment].insert(b.compartment);
                 const int wet=std::max(0,std::min(hi,l->second)-lo);

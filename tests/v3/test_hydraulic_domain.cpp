@@ -275,5 +275,32 @@ int main(){
     std::cout<<"V3_HYDRAULIC_BANK_APRON_PASS solid_overlap capped_at_neighbor_floor\n";
     std::cout<<"V3_HYDRAULIC_BASIN_SURFACE_PASS interpolated_floor one_static_sheet\n";
     std::cout<<"V3_HYDRAULIC_CONTOUR_PASS diagonal_edges tile_bounds retained_unloaded\n";
+    // H13: a real sub-metre exposed saddle is below the declared
+    // 1.9m head, while its binary floor at 2m used to block the basin.
+    tp::Snapshot micro{{0,0,0},7,8,4,1,1,std::vector<std::uint8_t>(7*8*4,0)};
+    const std::array<int,7> micro_bottom{0,1,2,2,2,1,0};
+    const std::array<float,8> micro_floor{0,0,0.8f,1.6f,1.6f,0.8f,0,0};
+    for(int z=0;z<=4;++z)for(auto h:micro_floor)micro.surface_floor.push_back(h);
+    for(int z=0;z<4;++z)for(int x=0;x<7;++x)for(int y=micro_bottom[static_cast<std::size_t>(x)];y<8;++y)
+        micro.air[static_cast<std::size_t>((z*7+x)*8+y)]=1;
+    const auto coarse=tp::extract(micro);
+    micro.refine_exposed=true;
+    const auto refined=tp::extract(micro);
+    assert(coarse.compartments.size()==refined.compartments.size()&&refined.compartments.size()==2);
+    assert(coarse.openings.front().sill_mm==2000&&refined.openings.front().sill_mm>=1610&&refined.openings.front().sill_mm<=1611);
+    Domain micro_low({{"water",1,1000}},7,4,1,0),micro_high({{"water",1,1000}},7,4,1,0);
+    assert(micro_low.publish(refined)&&micro_high.publish(refined));
+    assert(micro_low.seed_surface_basin("low",{0.5,0.1,0.5},0,1.5,8,{micro.origin}));
+    assert(!micro_low.wet_at({6.5,0.1,0.5}));
+    assert(micro_high.seed_surface_basin("high",{0.5,0.1,0.5},0,1.9,8,{micro.origin}));
+    assert(micro_high.wet_at({6.5,0.1,0.5})&&micro_high.wet_at({3.5,1.8,0.5}));
+    const auto micro_mass=micro_high.graph().finite();
+    for(int i=0;i<40;++i)micro_high.tick();
+    assert(micro_high.graph().finite()==micro_mass);
+    // A covered opening is not lowered even with real exposed SDF.
+    auto covered=micro;covered.air[static_cast<std::size_t>((0*7+3)*8+7)]=0;
+    const auto roof=tp::extract(covered);
+    for(const auto &run:roof.column_runs[3])if(run.top!=8)assert(run.floor_mm==run.bottom*1000);
+    std::cout<<"V3_HYDRAULIC_SDF_PHYSICS_PASS submeter_saddle dry_below_sill no_covered_refinement exact_mass\n";
     std::cout<<"V3_HYDRAULIC_DOMAIN_PASS regional_publish boundary_flow unload mass_remap ocean_idempotent\n";
 }

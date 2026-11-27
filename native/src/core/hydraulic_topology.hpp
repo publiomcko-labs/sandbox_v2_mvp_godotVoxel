@@ -19,14 +19,17 @@ struct Snapshot {
     // halo_air are unused. It never creates compartments or portals.
     std::vector<float> halo_floor{};
     std::vector<std::uint8_t> halo_air{};
+    // Runtime SDF snapshots can certify a conservative sub-metre floor.
+    // Legacy archives and synthetic binary fixtures default to coarse floors.
+    bool refine_exposed=false;
     bool open(int x,int y,int z)const{
         return air.at(static_cast<std::size_t>((z*nx+x)*ny+y))==1;
     }
 };
-struct Span {int x{},z{},bottom{},top{};Id compartment{};};
+struct Span {int x{},z{},bottom{},top{};Id compartment{};int floor_mm=std::numeric_limits<int>::min();};
 struct Compartment {Id id{};Curve curve;std::vector<Span> spans;};
 struct Opening {Id a{},b{};int sill_mm{},soffit_mm{};double area_m2{};};
-struct Boundary {Id compartment{};int face{},along{},bottom_mm{},top_mm{};};
+struct Boundary {Id compartment{};int face{},along{},bottom_mm{},top_mm{};int coarse_bottom_mm{};bool exposed=false;};
 struct Result {
     core::Region origin;
     int nx{},nz{},step{};
@@ -38,7 +41,11 @@ struct Result {
     std::vector<float> surface_floor{};
     std::vector<float> halo_floor{};
     std::vector<std::vector<Span>> halo_runs{};
+    bool refine_exposed=false;
 };
+inline int span_floor_mm(const Result &r,const Span &s) {
+    return s.floor_mm==std::numeric_limits<int>::min()?(r.origin.y+s.bottom*r.step)*1000:s.floor_mm;
+}
 inline Result extract(const Snapshot &s) {
     if(s.nx<1||s.nx>32||s.nz<1||s.nz>32||s.ny<1||s.ny>128||
         s.step<1||s.step>4||std::abs(std::int64_t(s.origin.y))>99000||
@@ -56,7 +63,9 @@ inline Result extract(const Snapshot &s) {
     for(auto h:s.halo_floor)if(!std::isfinite(h)||h<s.origin.y||h>s.origin.y+s.ny*s.step)
         throw std::invalid_argument("hydraulic visual halo floor");
     for(auto v:s.halo_air)if(v>1)throw std::invalid_argument("hydraulic visual halo classification");
-    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor,s.halo_floor,{}};
+    if(s.refine_exposed&&s.surface_floor.empty())throw std::invalid_argument("refined exposed floor requires SDF");
+    Result result{s.origin,s.nx,s.nz,s.step,s.revision,{},{},{},{},s.surface_floor,s.halo_floor,{},s.refine_exposed};
+    const auto mm=[&](int y){return (s.origin.y+y*s.step)*1000;};
     if(!s.halo_air.empty()) {
         result.halo_runs.resize(static_cast<std::size_t>((s.nx+2)*(s.nz+2)));
         for(int z=-1;z<=s.nz;++z)for(int x=-1;x<=s.nx;++x) {
@@ -79,7 +88,18 @@ inline Result extract(const Snapshot &s) {
             const int bottom=y;
             while(y<s.ny&&s.open(x,y,z))++y;
             column(x,z).push_back(spans.size());
-            spans.push_back({x,z,bottom,y,0});
+            int floor=mm(bottom);
+            if(s.refine_exposed&&y==s.ny&&bottom>0) {
+                // The entire bilinearly interpolated column is open above
+                // the highest of its four last SDF zero crossings. Round
+                // upward and retain a 1cm margin; never lower by >1 sample.
+                double highest=s.origin.y;
+                for(int dz=0;dz<=1;++dz)for(int dx=0;dx<=1;++dx)
+                    highest=std::max(highest,double(s.surface_floor.at(static_cast<std::size_t>((z+dz)*(s.nx+1)+x+dx))));
+                const auto certified=static_cast<int>(std::ceil(highest*1000.0))+10;
+                floor=std::clamp(certified,mm(bottom-1),mm(bottom));
+            }
+            spans.push_back({x,z,bottom,y,0,floor});
         }
     }
     std::vector<std::size_t> parent(spans.size());
@@ -101,6 +121,16 @@ inline Result extract(const Snapshot &s) {
         a=root(a);b=root(b);
         if(a!=b)parent[std::max(a,b)]=std::min(a,b);
     });
+    // Preserve coarse plateau IDs and the monotonic downhill contract:
+    // a whole connected equal-floor plateau uses the highest certified
+    // floor of its members, so no sub-cell saddle is bypassed within it.
+    std::map<std::size_t,int> plateau_floor;
+    for(std::size_t i=0;i<spans.size();++i)if(spans[i].top==s.ny) {
+        const auto p=root(i);
+        auto [it,inserted]=plateau_floor.emplace(p,spans[i].floor_mm);
+        if(!inserted)it->second=std::max(it->second,spans[i].floor_mm);
+    }
+    for(std::size_t i=0;i<spans.size();++i)if(spans[i].top==s.ny)spans[i].floor_mm=plateau_floor.at(root(i));
     // First form equal-floor plateaus, then give each exposed plateau one
     // strictly descending outlet. Every path to its basin minimum stays
     // at or below its own floor: one free head is valid within the basin.
@@ -120,43 +150,53 @@ inline Result extract(const Snapshot &s) {
             downhill[a]=b;
     });
     for(auto [a,b]:downhill)parent[a]=b;
-    std::map<Id,std::vector<Span>> groups;
+    std::map<Id,std::set<int>> events;
     for(std::size_t i=0;i<spans.size();++i) {
         auto &v=spans[i];v.compartment=static_cast<Id>(root(i)+1);
+        events[v.compartment].insert(v.floor_mm);
+        events[v.compartment].insert(mm(v.top));
+    }
+    std::map<Id,std::vector<Span>> groups;
+    for(auto &v:spans) {
+        // Keep the existing bounded curve representation on pathological
+        // terrain; binary intervals remain a conservative fallback.
+        if(events.at(v.compartment).size()>256)v.floor_mm=mm(v.bottom);
         groups[v.compartment].push_back(v);
     }
     if(groups.size()>volume_count_limit)throw std::length_error("compartment limit");
-    const auto mm=[&](int y){return (s.origin.y+y*s.step)*1000;};
-    const auto litres=Litres(s.step)*s.step*s.step*1000;
+    const auto area=Litres(s.step)*s.step;
     for(auto &[id,group]:groups) {
         std::map<int,int> ends;
-        for(auto v:group){++ends[v.bottom];--ends[v.top];}
+        for(auto v:group){++ends[v.floor_mm];--ends[mm(v.top)];}
         std::vector<Knot> knots;
         Litres capacity=0;int active=0,previous=ends.begin()->first;
         for(auto [y,delta]:ends) {
-            capacity+=Litres(y-previous)*active*litres;
-            if(knots.empty()||capacity>knots.back().litres)knots.push_back({mm(y),capacity});
+            capacity+=Litres(y-previous)*active*area;
+            if(knots.empty()||capacity>knots.back().litres)knots.push_back({y,capacity});
             active+=delta;previous=y;
         }
         result.compartments.push_back({id,Curve(std::move(knots)),std::move(group)});
     }
-    std::map<std::array<Id,4>,double> apertures;
+    std::map<std::tuple<Id,Id,int,int>,double> apertures;
     pairs([&](std::size_t a,std::size_t b,int lo,int hi) {
         auto x=spans[a].compartment,y=spans[b].compartment;
         if(x==y)return;
         if(x>y)std::swap(x,y);
-        // Index height in local samples, avoiding unsigned world altitude.
-        apertures[{x,y,static_cast<Id>(lo),static_cast<Id>(hi)}]+=double(hi-lo)*s.step*s.step;
+        // Refine only the exposed/exposed aperture. Roofed intervals
+        // keep the exact conservative binary opening; no new cave portal.
+        const int floor=spans[a].top==s.ny&&spans[b].top==s.ny?
+            std::max(spans[a].floor_mm,spans[b].floor_mm):mm(lo);
+        apertures[{x,y,floor,mm(hi)}]+=double(mm(hi)-floor)*0.001*s.step;
     });
     if(apertures.size()>portal_count_limit)throw std::length_error("portal limit");
-    for(auto [k,area]:apertures)result.openings.push_back({k[0],k[1],mm(static_cast<int>(k[2])),mm(static_cast<int>(k[3])),area});
+    for(auto [k,opening_area]:apertures)result.openings.push_back({std::get<0>(k),std::get<1>(k),std::get<2>(k),std::get<3>(k),opening_area});
     result.column_runs.resize(static_cast<std::size_t>(s.nx*s.nz));
     for(auto v:spans) {
         result.column_runs[static_cast<std::size_t>(v.z*s.nx+v.x)].push_back(v);
-        if(v.x==0)result.boundaries.push_back({v.compartment,0,v.z,mm(v.bottom),mm(v.top)});
-        if(v.x==s.nx-1)result.boundaries.push_back({v.compartment,1,v.z,mm(v.bottom),mm(v.top)});
-        if(v.z==0)result.boundaries.push_back({v.compartment,2,v.x,mm(v.bottom),mm(v.top)});
-        if(v.z==s.nz-1)result.boundaries.push_back({v.compartment,3,v.x,mm(v.bottom),mm(v.top)});
+        if(v.x==0)result.boundaries.push_back({v.compartment,0,v.z,v.floor_mm,mm(v.top),mm(v.bottom),v.top==s.ny});
+        if(v.x==s.nx-1)result.boundaries.push_back({v.compartment,1,v.z,v.floor_mm,mm(v.top),mm(v.bottom),v.top==s.ny});
+        if(v.z==0)result.boundaries.push_back({v.compartment,2,v.x,v.floor_mm,mm(v.top),mm(v.bottom),v.top==s.ny});
+        if(v.z==s.nz-1)result.boundaries.push_back({v.compartment,3,v.x,v.floor_mm,mm(v.top),mm(v.bottom),v.top==s.ny});
     }
     return result;
 }
@@ -169,7 +209,7 @@ inline const Span* span_at(const Result &r,core::Vec3 point) {
     if(x<0||z<0||x>=r.nx||z>=r.nz)return {};
     const int ix=static_cast<int>(x),iz=static_cast<int>(z);
     for(const auto &s:r.column_runs.at(static_cast<std::size_t>(iz*r.nx+ix)))
-        if(y>=s.bottom&&y<s.top)return &s;
+        if(point.y*1000.0>=span_floor_mm(r,s)&&y<s.top)return &s;
     return nullptr;
 }
 inline std::optional<Id> compartment_at(const Result &r,core::Vec3 point) {
@@ -194,7 +234,9 @@ inline std::vector<Opening> connect_faces(const Result &a,const Result &b,int fa
         auto [first,last]=right.equal_range(offset_a+v.along*a.step);
         for(auto it=first;it!=last;++it) {
             const auto w=it->second;
-            const int lo=std::max(v.bottom_mm,w.bottom_mm),hi=std::min(v.top_mm,w.top_mm);
+            const int lo=v.exposed&&w.exposed?std::max(v.bottom_mm,w.bottom_mm):
+                std::max(v.coarse_bottom_mm,w.coarse_bottom_mm);
+            const int hi=std::min(v.top_mm,w.top_mm);
             if(lo<hi)merged[{v.compartment,w.compartment,lo,hi}]+=double(hi-lo)*0.001*a.step;
         }
     }

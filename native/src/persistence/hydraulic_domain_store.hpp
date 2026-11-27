@@ -14,7 +14,9 @@ inline Json encode_domain(const hy::Domain &d) {
             const auto &v=d.graph().volumes().at(id);
             if(v.litres)wet.push_back({local,d.graph().types().at(v.type).id,v.litres});
         }
-        tiles.push_back({{"origin",{key.x,key.y,key.z}},{"revision",g.revision},{"expected_revision",t.expected_revision},{"runs",runs},{"wet",wet}});
+        Json row={{"origin",{key.x,key.y,key.z}},{"revision",g.revision},{"expected_revision",t.expected_revision},{"runs",runs},{"wet",wet}};
+        if(g.refine_exposed)row["refined_surface_floor"]=g.surface_floor;
+        tiles.push_back(std::move(row));
     }
     for(const auto &[id,o]:d.oceans()) {
         const auto &v=d.graph().volumes().at(o.ocean);
@@ -34,7 +36,8 @@ inline hy::Domain decode_domain(const Json &j,const std::vector<hy::Liquid> &typ
         require(it!=types.end(),"hydraulic type absent");return static_cast<std::size_t>(it-types.begin());};
     std::map<sandbox::core::Region,std::uint64_t> revisions;
     for(const auto &t:j.at("tiles")) {
-        if(t.contains("expected_revision"))content::fields(t,{"origin","revision","expected_revision","runs","wet"});
+        if(t.contains("refined_surface_floor"))content::fields(t,{"origin","revision","expected_revision","runs","wet","refined_surface_floor"});
+        else if(t.contains("expected_revision"))content::fields(t,{"origin","revision","expected_revision","runs","wet"});
         else content::fields(t,{"origin","revision","runs","wet"});
         const auto &o=t.at("origin");require(o.is_array()&&o.size()==3,"tile origin");
         sandbox::core::Region key{integer(o[0],-1000000,1000000),integer(o[1],-32,-32),integer(o[2],-1000000,1000000)};
@@ -51,6 +54,16 @@ inline hy::Domain decode_domain(const Json &j,const std::vector<hy::Liquid> &typ
                 auto &v=s.air[static_cast<std::size_t>((z*16+x)*64+y)];
                 require(!v,"duplicate span");v=1;
             }
+        }
+        if(t.contains("refined_surface_floor")) {
+            const auto &floors=t.at("refined_surface_floor");
+            require(floors.is_array()&&floors.size()==17*17,"refined surface floor count");
+            for(const auto &v:floors) {
+                const auto h=hydraulic_number(v);
+                require(h>=-32&&h<=32,"refined surface floor range");
+                s.surface_floor.push_back(static_cast<float>(h));
+            }
+            s.refine_exposed=true;
         }
         require(d.publish(hy::tp::extract(s)),"restore tile");
         for(const auto &r:t.at("wet")) {
