@@ -161,7 +161,9 @@ public:
     // or above-head sill, a covered interval, or an already seeded body.
     // Later edits and new tiles use the ordinary conservative solver.
     bool seed_surface_basin(const std::string &source,core::Vec3 anchor,std::size_t type,
-            double level,int ceiling,const std::set<core::Region> &window) {
+            double level,int ceiling,const std::set<core::Region> &window,
+            std::set<core::Region>* frontier=nullptr) {
+        if(frontier)frontier->clear();
         if(source.empty()||!std::isfinite(level)||level<=anchor.y||
             type>=graph_.types().size()||seeded_.contains(source))return false;
         const auto root=volume_at(anchor);if(!root)return false;
@@ -191,6 +193,23 @@ public:
                 const auto next=p.a==id?p.b:p.a;
                 if(eligible(next)&&reached.insert(next).second)queue.push_back(next);
             }
+        }
+        // Discover only exposed, below-head boundaries of the component
+        // actually reached. Do not seed while a potential continuation
+        // has not been classified. The caller enforces the search budget.
+        if(frontier) {
+            constexpr std::array<core::Region,4> dirs{{{-1,0,0},{1,0,0},{0,0,-1},{0,0,1}}};
+            for(const auto &k:window) {
+                const auto &t=tiles_.at(k);
+                for(const auto &b:t.geometry->boundaries) {
+                    if(b.top_mm!=ceiling*1000||b.bottom_mm>=level*1000||
+                        !reached.contains(t.ids.at(b.compartment)))continue;
+                    const auto dir=dirs.at(static_cast<std::size_t>(b.face));
+                    const core::Region next{k.x+dir.x*width_,k.y,k.z+dir.z*depth_};
+                    if(!window.contains(next))frontier->insert(next);
+                }
+            }
+            if(!frontier->empty())return false;
         }
         auto staged=graph_;
         for(auto id:reached)

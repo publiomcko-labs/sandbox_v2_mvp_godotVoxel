@@ -15,7 +15,9 @@ class Runtime {
     Domain domain_;
     tp::Worker worker_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
-    std::set<core::Region> edited_tiles_,edit_group_;
+    std::set<core::Region> edited_tiles_,edit_group_,seed_interest_;
+    std::map<std::string,std::set<core::Region>> seed_windows_;
+    std::uint64_t seed_boundary_caps_=0;
     std::uint64_t edit_group_revision_=0;
     std::map<Id,std::pair<Transfer,std::uint64_t>> recent_flows_;
     std::uint64_t debt_=0,ticks_=0,visited_=0,moved_=0,publications_=0,max_tick_us_=0,max_snapshot_us_=0;
@@ -40,7 +42,7 @@ class Runtime {
         return t.renderable()||edited_tiles_.contains(k);
     }
     bool hydraulic_interest(core::Region k,core::Region center)const {
-        if(edited_tiles_.contains(k))return true;
+        if(edited_tiles_.contains(k)||seed_interest_.contains(k))return true;
         if(within_interest(k,center))return true;
         // Retain and expand around known wet bodies while their geometry
         // is editable. Simulation interest no longer follows only player.
@@ -101,6 +103,7 @@ class Runtime {
         return out;
     }
     void seed(const core::Region &center) {
+        seed_interest_.clear();
         for(const auto &rule:profile_.config.at("sources")) {
             const auto id=content::str(rule.at("id"));
             if(domain_.seeded().contains(id))continue;
@@ -127,12 +130,31 @@ class Runtime {
             if(rule.at("source_kind")=="fixed_head_ocean")
                 domain_.add_ocean(id,*chosen,slot,level,4,true);
             else {
-                // Seed only when all nine near-source tiles are available;
-                // do not reveal a rectangular single-tile lake on startup.
-                std::set<core::Region> window;
-                for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)
+                // Start with the near field, then follow only below-head
+                // exposed boundary spans of the reached component.
+                // Bound the initial source survey to seven by seven tiles.
+                auto &window=seed_windows_[id];
+                if(window.empty())for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)
                     window.insert({k.x+x*side,base,k.z+z*side});
-                domain_.seed_surface_basin(id,*chosen,slot,level,base+height,window);
+                std::set<core::Region> frontier;
+                if(domain_.seed_surface_basin(id,*chosen,slot,level,base+height,window,&frontier)) {
+                    seed_windows_.erase(id);
+                    continue;
+                }
+                if(!frontier.empty()) {
+                    bool expanded=false;
+                    for(const auto &q:frontier)
+                        if(std::abs(q.x-k.x)<=3*side&&std::abs(q.z-k.z)<=3*side&&window.size()<49)
+                            expanded=window.insert(q).second||expanded;
+                    if(!expanded) {
+                        // Explicitly bounded fallback for a very large
+                        // finite lake; never infer unknown terrain.
+                        if(domain_.seed_surface_basin(id,*chosen,slot,level,base+height,window)) {
+                            ++seed_boundary_caps_;seed_windows_.erase(id);continue;
+                        }
+                    }
+                }
+                seed_interest_.insert(window.begin(),window.end());
             }
         }
     }
@@ -186,6 +208,7 @@ public:
         seed(center);
         // At most one immutable copy per frame. Prioritize nearest tiles.
         std::vector<core::Region> candidates(edited_tiles_.begin(),edited_tiles_.end());
+        candidates.insert(candidates.end(),seed_interest_.begin(),seed_interest_.end());
         for(const auto &[k,t]:domain_.tiles())if(wet_tile(t)) {
             for(auto offset:{core::Region{0,0,0},core::Region{-1,0,0},core::Region{1,0,0},core::Region{0,0,-1},core::Region{0,0,1}}) {
                 const core::Region q{k.x+offset.x*side,base,k.z+offset.z*side};
@@ -281,6 +304,8 @@ public:
         d["tiles"]=static_cast<int64_t>(domain_.tiles().size());d["volumes"]=static_cast<int64_t>(domain_.graph().volumes().size());
         d["portals"]=static_cast<int64_t>(domain_.graph().portals().size());d["sources"]=static_cast<int64_t>(domain_.seeded().size());
         d["ticks"]=static_cast<int64_t>(ticks_);d["visited"]=static_cast<int64_t>(visited_);d["moved"]=static_cast<int64_t>(moved_);
+        d["seed_survey_tiles"]=static_cast<int64_t>(seed_interest_.size());
+        d["seed_boundary_caps"]=static_cast<int64_t>(seed_boundary_caps_);
         d["pending_edit_tiles"]=static_cast<int64_t>(edited_tiles_.size());
         d["edit_group_revision"]=static_cast<int64_t>(edit_group_revision_);
         godot::Array group;

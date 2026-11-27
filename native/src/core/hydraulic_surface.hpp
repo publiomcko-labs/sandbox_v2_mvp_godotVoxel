@@ -89,6 +89,12 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
         // interval sets the cap; no extension above that opening or into
         // unknown tiles. Full edges (rather than diagonal slivers) share
         // precisely the same boundary as the primary sheet.
+        // With actual SDF data, a full adjacent column is safe to
+        // represent below its first certified air interval. Its four
+        // actual zero crossings clip the shallow water, not the binary
+        // half-cell outline. Select exactly one lower neighbour per
+        // target column; synthetic/archived data keeps the old fallback.
+        if(!g.surface_floor.empty())continue;
         const auto bank_cap=[&](int nx,int nz) {
             if(!inside(nx,nz))return floor;
             int cap=ceiling;
@@ -122,6 +128,38 @@ inline std::vector<Patch> exposed_sheet(const topology::Result &g,const topology
             Point a=corner(dx>0?1:0,dz>0?1:0),b=a,e=a,q=a;
             b.x+=dx*0.5;e.z+=dz*0.5;q.x+=dx*0.5;q.z+=dz*0.5;
             if(dx==dz)quad(p,a,b,q,e);else quad(p,a,e,q,b);
+        }
+    }
+    if(!g.surface_floor.empty()) {
+        auto vertex=[&](int x,int z) {
+            return Point{double(x),double(z),g.surface_floor.at(static_cast<std::size_t>(z*(g.nx+1)+x))};
+        };
+        for(int z=0;z<g.nz;++z)for(int x=0;x<g.nx;++x) {
+            // Only the upper solid band: never cover a known lower air
+            // interval at the donor floor or join unrelated cave levels.
+            const topology::Span* donor=nullptr;
+            int cap=ceiling;
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+                if((!dx&&!dz)||!inside(x+dx,z+dz))continue;
+                for(const auto &v:column(x+dx,z+dz)) {
+                    if(v.top!=top)continue;
+                    int candidate_cap=ceiling;
+                    bool blocked=false;
+                    for(const auto &n:column(x,z)) {
+                        if(n.top==top&&n.compartment==v.compartment){blocked=true;break;}
+                        if(n.bottom<=v.bottom&&v.bottom<n.top){blocked=true;break;}
+                        if(n.bottom>v.bottom)candidate_cap=std::min(candidate_cap,g.origin.y+n.bottom*g.step);
+                    }
+                    if(blocked||candidate_cap<=g.origin.y+v.bottom*g.step)continue;
+                    if(!donor||std::tuple{v.bottom,v.compartment,v.x,v.z}<
+                        std::tuple{donor->bottom,donor->compartment,donor->x,donor->z}) {
+                        donor=&v;cap=candidate_cap;
+                    }
+                }
+            }
+            if(!donor||donor->compartment!=c.id)continue;
+            auto &p=aprons.try_emplace(cap,Patch{cap,{}}).first->second;
+            quad(p,vertex(x,z),vertex(x+1,z),vertex(x+1,z+1),vertex(x,z+1));
         }
     }
     if(!sheet.vertices.empty())out.push_back(std::move(sheet));

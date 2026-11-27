@@ -145,6 +145,15 @@ int main(){
         for(auto p:{a0,b0,c0})assert(p.x>=0&&p.x<=1&&p.z>=0&&p.z<=1&&p.floor<=1);
     }
     assert(primary_area==1);
+    auto precise=footprint;
+    precise.surface_floor={0.2f,0.4f,0.6f,0.4f,0.6f,0.8f,0.6f,0.8f,1.0f};
+    auto pg=tp::extract(precise);
+    const auto precise_patches=surface::build(pg,pg.compartments.front(),8);
+    bool full_corner=false;
+    for(const auto &patch:precise_patches)for(auto p:patch.vertices)
+        if(p.x==2&&p.z==2&&p.floor==1.0)full_corner=true;
+    assert(full_corner);
+    std::cout<<"V3_HYDRAULIC_FULL_SDF_APRON_PASS complete_adjacent_column actual_corners\n";
     bool corner_apron=false;
     for(const auto &patch:full)for(auto p:patch.vertices)if(p.x>1&&p.z>1)corner_apron=true;
     assert(corner_apron);
@@ -179,6 +188,11 @@ int main(){
     assert(!initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
     assert(initial.graph().finite()==0);
     assert(initial.publish(tp::extract(raised)));
+    std::set<sandbox::core::Region> frontier;
+    assert(!initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window,&frontier));
+    assert(frontier.contains({-4,0,0})&&frontier.contains({4,0,4}));
+    assert(!frontier.contains({12,0,0})&&initial.graph().finite()==0);
+    std::cout<<"V3_HYDRAULIC_SOURCE_FRONTIER_PASS no_seed_before_boundary_survey\n";
     assert(initial.seed_surface_basin("initial",{1,0.1,1},0,3,8,window));
     const auto ia=*initial.volume_at({1,1,1}),ib=*initial.volume_at({5,1,1});
     assert(std::abs(initial.graph().volumes().at(ia).level()-3)<0.001);
