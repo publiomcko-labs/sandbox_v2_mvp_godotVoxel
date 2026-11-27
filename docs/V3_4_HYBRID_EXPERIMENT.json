@@ -1,6 +1,6 @@
 {
   "schema": "v3_hydraulic_hybrid_experiment_v1",
-  "status": "EXPERIMENTAL_RUNTIME_INTEGRATION_IN_PROGRESS",
+  "status": "EXPERIMENTAL_INTEGRATED_CONTROLLED_PASS_GEOMETRY_OPEN",
   "base_commit": "ab3500f6d61bca0e71eb1d90a5de48485fd7892f",
   "branch": "exp/v3-hydraulic-hybrid",
   "baseline": "H14",
@@ -111,7 +111,7 @@
       "water_sign_flips": 35
     },
     "R3": {
-      "status": "CORE_PASS_RESTRICTED_NOT_RUNTIME_INTEGRATED",
+      "status": "INTEGRATED_CONTROLLED_I4_PASS_GEOMETRY_OPEN",
       "commit": "917b3500ef270cb9fa950015bc6bbc4291732235",
       "run": 45988106015,
       "mass_litres": 48000,
@@ -119,20 +119,42 @@
       "drain_litres": 33511,
       "mid_flow_reopen": true,
       "runtime": {
-        "status": "I2_CANDIDATE_VALIDATION_PENDING",
-        "commit": "6092f8fc0a71d2b9955aecd24cd1bae9f62df487",
-        "native_run": 45993282425,
-        "gpu_run": 45993385896,
+        "status": "I4_PASS_I5_CANDIDATE",
+        "commit": "6c1bf9d3394ebb623da5bb9553fead6d0effa7d4",
+        "native_run": 45994149578,
+        "gpu_run": 45994225680,
         "active_limit": 8,
         "tile_limit": 96,
-        "isolated_schema": "v3-hybrid-runtime-1"
+        "isolated_schema": "v3-hybrid-runtime-1",
+        "core_run": 45994385197,
+        "native_artifact": 15195152509,
+        "gpu_artifact": 15194279620,
+        "litres": 11314442,
+        "near_tick": 16,
+        "far_tick": 34,
+        "zero_tick_near_litres": 0,
+        "zero_tick_far_litres": 0,
+        "local_active": 4,
+        "local_intervals": 1993,
+        "settles": 0,
+        "visible_wet_tiles": 38,
+        "gpu_tick_p95_us": 3214,
+        "gpu_snapshot_max_us": 30104,
+        "gpu_combined_refresh_p95_us": 2064,
+        "i5": {
+          "commit": "6bbe344b4f4a91efc606a555e6a60c9c258b723f",
+          "native_run": 45995308441,
+          "core_run": 45995307789,
+          "gpu_run": 45995369956,
+          "status": "PENDING"
+        }
       }
     },
     "R4": {
       "status": "BLOCKED_GEOMETRY"
     },
     "R5": {
-      "status": "INTEGRATED_FIXTURE_PENDING"
+      "status": "CONTROLLED_RUNTIME_AND_GPU_PASS_GEOMETRY_OPEN"
     }
   }
 }
