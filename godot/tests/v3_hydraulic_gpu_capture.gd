@@ -64,6 +64,133 @@ func _diagnose_seams(water: Node3D,camera: Camera3D,label: String) -> void:
                 evidence.append({"id":id,"tile":str(tile),"head":q.y,"xz":str(p),"hits":[]})
         print("V3_GPU_SEAM_DIAG ",label," pixel=",pixel," ",JSON.stringify(evidence))
 
+func _sdf_at(tool: VoxelTool,p: Vector3) -> float:
+    var base:=Vector3i(p.floor())
+    var frac:=p-Vector3(base)
+    var sdf:=0.0
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                var weight: float=(frac.x if dx else 1.0-frac.x)*(frac.y if dy else 1.0-frac.y)*(frac.z if dz else 1.0-frac.z)
+                sdf+=weight*tool.get_voxel_f(base+Vector3i(dx,dy,dz))
+    return sdf
+
+func _diagnose_bank(runtime,tool: VoxelTool,camera: Camera3D) -> void:
+    for y: float in [380.5,460.5,520.5]:
+        var row: Array=[]
+        for x: float in [760.5,765.5,767.5,770.5,775.5,785.5]:
+            var pixel:=Vector2(x,y)
+            var origin:=camera.project_ray_origin(pixel)
+            var ray:=camera.project_ray_normal(pixel)
+            var p:=origin+ray*((4.0-origin.y)/ray.y)
+            if not tool.is_area_editable(AABB(Vector3(p.floor()),Vector3(2,2,2))):
+                row.append({"pixel":x,"point":str(p),"unknown":true})
+                continue
+            var wet: Dictionary=runtime.session.hydraulic_at(p-Vector3(0,0.05,0))
+            row.append({"pixel":x,"point":str(p),"sdf":_sdf_at(tool,p),"wet":wet})
+        print("V3_GPU_BANK_DIAG y=",y," ",JSON.stringify(row))
+
+func _visible_tiles(water: Node3D) -> Dictionary:
+    var nodes: Dictionary=water.get("_meshes")
+    var tiles: Dictionary=water.get("_mesh_tiles")
+    var result: Dictionary={}
+    for id: int in nodes:
+        if (nodes[id] as MeshInstance3D).visible:
+            result[tiles[id]]=true
+    return result
+
+func _next_shore_cut(runtime,tool: VoxelTool,previous: Array[Vector3]) -> Variant:
+    # Search near the viewer, require actual wet floor next to solid.
+    # Distinct centers prevent eight no-op excavations of the same hole.
+    for z in range(8,40,2):
+        for x in range(-24,8,2):
+            for y in range(-12,4):
+                var p:=Vector3(float(x)+0.5,float(y)+0.15,float(z)+0.5)
+                var wet: Dictionary=runtime.session.hydraulic_at(p)
+                if wet.is_empty() or absf(float(wet["floor"])-float(y))>0.01 or float(wet["level"])-p.y<0.35:
+                    continue
+                for direction: Vector3 in [Vector3.LEFT,Vector3.RIGHT,Vector3.FORWARD,Vector3.BACK]:
+                    var shore:=p+direction
+                    var target:=shore-Vector3(0,1.65,0)
+                    if not tool.is_area_editable(AABB(target-Vector3(5,5,5),Vector3(10,10,10))):
+                        continue
+                    if not runtime.session.hydraulic_at(shore).is_empty() or tool.get_voxel_f(Vector3i(shore.floor()))>=-0.1 or tool.get_voxel_f(Vector3i(target.floor()))>=-0.1:
+                        continue
+                    var distinct:=true
+                    for old: Vector3 in previous:
+                        if old.distance_to(target)<4.0:
+                            distinct=false
+                            break
+                    if distinct:
+                        return target
+    return null
+
+func _stress_shore(runtime,water: Node3D,tool: VoxelTool,first: Vector3,mass: int) -> bool:
+    var previous: Array[Vector3]=[first]
+    var accepted:=0
+    var holds:=0
+    while accepted<8:
+        var candidate: Variant=_next_shore_cut(runtime,tool,previous)
+        if candidate==null:
+            _fail("stress: insufficient distinct shore positions "+str(accepted))
+            return false
+        var target: Vector3=candidate
+        previous.append(target)
+        if runtime.submit_brush(target,false,3.0)!="accepted":
+            if previous.size()>24:
+                _fail("stress: too many rejected positions")
+                return false
+            continue
+        accepted+=1
+        var old_tiles:=_visible_tiles(water)
+        var deadline:=Time.get_ticks_msec()+20000
+        water.call("refresh")
+        var first_wet:=-1
+        for step in range(400):
+            if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
+                _fail("stress: hydraulic frame")
+                return false
+            water.call("refresh")
+            var swap: Dictionary=water.get("_swap_group")
+            var current:=_visible_tiles(water)
+            if not swap.is_empty():
+                holds+=1
+                for tile: Vector3i in old_tiles:
+                    if swap.has(tile) and not current.has(tile):
+                        _fail("stress: visible tile disappeared before grouped swap "+str(tile))
+                        return false
+            if int(runtime.session.hydraulic_report()["litres"])!=mass:
+                _fail("stress: lost mass")
+                return false
+            if first_wet<0 and not runtime.session.hydraulic_at(target).is_empty():
+                first_wet=step+1
+            if step>=39 and int(runtime.session.hydraulic_report()["pending_edit_tiles"])==0 and swap.is_empty():
+                break
+            if Time.get_ticks_msec()>deadline or step==399:
+                _fail("stress: edit publication timeout "+str(runtime.session.hydraulic_report()))
+                return false
+            await process_frame
+        for i in range(runtime.session.hydraulic_surfaces().size()+1):
+            water.call("refresh")
+        print("V3_GPU_STRESS_EDIT index=",accepted," point=",target," first_wet_step=",first_wet," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
+        if not await _capture("%02d-stress-edit" % (accepted+5)):
+            return false
+    for step in range(100):
+        if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,50000000):
+            _fail("stress: settling frame")
+            return false
+        water.call("refresh")
+        await process_frame
+    for i in range(runtime.session.hydraulic_surfaces().size()+1):
+        water.call("refresh")
+    if int(runtime.session.hydraulic_report()["litres"])!=mass:
+        _fail("stress: settling mass")
+        return false
+    if not await _capture("14-stress-settled"):
+        return false
+    print("V3_GPU_STRESS_PASS accepted=",accepted," observed_group_holds=",holds," state=",runtime.session.hydraulic_report()," presentation=",water.call("get_report"))
+    return true
+
 func _test() -> void:
     var write:=true
     if DisplayServer.get_name()=="headless" or OS.get_environment("V3_GPU_CAPTURE_ROOT").is_empty():
@@ -170,6 +297,7 @@ func _test() -> void:
         # excavate under that exact location, not a random dry cave.
         var tool: VoxelTool=runtime.terrain.get_voxel_tool()
         tool.channel=VoxelBuffer.CHANNEL_SDF
+        _diagnose_bank(runtime,tool,camera)
         var cut:=Vector3.ZERO
         var found:=false
         for z in range(16,32):
@@ -287,7 +415,11 @@ func _test() -> void:
             return
         _diagnose_seams(water,camera,"equilibrated")
         print("V3_GPU_EQUILIBRATED_REPORT ",runtime.session.hydraulic_report()," ",water.call("get_report"))
+        if not await _stress_shore(runtime,water,tool,cut,mass):
+            return
         # Dry excavation isolated from the surface source must not create mass.
+        var prior:=int(runtime.session.hydraulic_report()["publications"])
+        deadline=Time.get_ticks_msec()+20000
         var dry:=Vector3(-4,-20,28)
         if runtime.submit_brush(dry,false,3.0)!="accepted":
             _fail("dry excavation")
@@ -295,8 +427,7 @@ func _test() -> void:
         if not runtime.session.hydraulic_at(dry).is_empty():
             _fail("instant fill")
             return
-        var prior:=int(after["publications"])
-        while int(runtime.session.hydraulic_report()["publications"])<=prior:
+        while int(runtime.session.hydraulic_report()["publications"])<=prior or int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
             if not runtime.session.hydraulic_frame(runtime.world,runtime.player.global_position,0):
                 _fail("edited tile publication")
                 return

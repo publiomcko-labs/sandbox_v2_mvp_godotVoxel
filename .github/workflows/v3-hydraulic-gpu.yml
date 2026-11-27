@@ -1,4 +1,4 @@
-name: V3 H12 graphical shoreline evidence
+name: V3 H12 repeated shoreline qualification
 on:
   push:
     branches: [v3/hydraulic]
@@ -48,7 +48,7 @@ jobs:
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Existing Godot instance detected; refusing to interfere' }
       - uses: actions/checkout@v4
         with:
-          path: h12-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: h12-stress-${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/download-artifact@v4
@@ -56,9 +56,9 @@ jobs:
           name: v3-native-integration-evidence
           run-id: 45974215866
           github-token: ${{ github.token }}
-          path: h12-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: h12-stress-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Run isolated rendered Godot fixture and capture only game viewport
-        working-directory: h12-visual-${{ github.run_id }}-${{ github.run_attempt }}
+        working-directory: h12-stress-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
@@ -69,7 +69,7 @@ jobs:
           $root=(Get-Location).Path
           $project=Join-Path $root 'godot'
           $editor=Join-Path $root '.tools/godot.exe'
-          $capture=Join-Path $root 'reports/generated/h12-visual'
+          $capture=Join-Path $root 'reports/generated/h12-stress'
           New-Item -ItemType Directory -Force $capture,(Join-Path $project '.godot') | Out-Null
           [IO.File]::WriteAllText((Join-Path $project '.godot/extension_list.cfg'),("res://sandbox_native.gdextension"+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
           $env:V3_GPU_CAPTURE_ROOT=$capture
@@ -89,15 +89,16 @@ jobs:
           Get-Content $stdout
           Get-Content $stderr
           if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_GPU_VISUAL_FIXTURE_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw 'Graphical fixture failed' }
+          if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_GPU_STRESS_PASS')) { throw 'Repeated shore edit fixture missing' }
           if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|SCRIPT ERROR:|V3_HYDRAULIC_RUNTIME_FAIL:') { throw 'Graphical errors detected' }
-          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 5) { throw 'Expected five game viewport captures' }
+          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 14) { throw 'Expected fourteen game viewport captures' }
           Write-Host 'V3_GPU_CAPTURE_ARTIFACT_READY'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v3-h12-game-viewport
+          name: v3-h12-stress-viewport
           retention-days: 14
           if-no-files-found: warn
           path: |
-            h12-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h12-visual/*.png
-            h12-visual-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h12-visual/*.log
+            h12-stress-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h12-stress/*.png
+            h12-stress-${{ github.run_id }}-${{ github.run_attempt }}/reports/generated/h12-stress/*.log
