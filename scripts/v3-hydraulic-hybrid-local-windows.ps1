@@ -2,6 +2,8 @@ param(
     [string]$ArtifactZip='',
     [ValidateSet('A','B')]
     [string]$Renderer='B',
+    [ValidateSet('Hybrid','H14')]
+    [string]$Solver='Hybrid',
     [ValidateSet('Pond','Lava','Sea')]
     [string]$Spawn='Pond'
 )
@@ -9,18 +11,18 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Set-StrictMode -Version Latest
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$candidate='72b26851f4863d13a024aa937fd8e919ea4ef552'
-$visualCandidate='72b26851f4863d13a024aa937fd8e919ea4ef552'
-$run='45989013637'
+$candidate='864d6881eb1230a7b3d70ceaa2a9b053dd776c0a'
+$visualCandidate='864d6881eb1230a7b3d70ceaa2a9b053dd776c0a'
+$run='45996221454'
 $artifact='v3-native-integration-evidence'
-$zipSha='e1f6c30129264fd33981c570206d57b9dea2fb7c93dd50b8bddc257e6bd1aa6f'
+$zipSha='9db9c31cdbc8ea331c0baaa60d6eac8a706a2206aeae91a7637dd033d76810f6'
 if ((Get-Process -Id $PID).SessionId -eq 0) { throw 'Graphical fixture requires an interactive Windows session' }
 if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Close other Godot processes first' }
-& git -C $root diff --quiet $candidate HEAD -- native third_party.lock
+& git -C $root diff --quiet $candidate HEAD -- native experiments/v3/hybrid third_party.lock
 if ($LASTEXITCODE -ne 0) { throw 'Checkout native runtime differs from candidate' }
 & git -C $root diff --quiet $visualCandidate HEAD -- godot ':(exclude)godot/tests/v3_hydraulic_gpu_capture.gd'
 if ($LASTEXITCODE -ne 0) { throw 'Checkout visual runtime differs from experimental candidate' }
-& git -C $root diff --quiet HEAD -- godot native third_party.lock
+& git -C $root diff --quiet HEAD -- godot native experiments/v3/hybrid third_party.lock
 if ($LASTEXITCODE -ne 0) { throw 'Local tracked runtime modifications detected' }
 $stamp=[DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
 $report=Join-Path $root "reports/generated/v3-hydraulic-hybrid-visual/$stamp"
@@ -44,7 +46,7 @@ if ($ArtifactZip) {
     & gh.exe run download $run --repo publiomcko-labs/sandbox_v2_mvp_godotVoxel --name $artifact --dir $stage
     if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI download failed: download artifact manually and pass -ArtifactZip' }
 } else {
-    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45989013637/artifacts/15192153492 and pass -ArtifactZip <path>'
+    throw 'Download https://github.com/publiomcko-labs/sandbox_v2_mvp_godotVoxel/actions/runs/45996221454/artifacts/15195977471 and pass -ArtifactZip <path>'
 }
 $dll='godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
 foreach ($file in @($dll,'extension_api.json')) {
@@ -60,6 +62,12 @@ $project=Join-Path $root 'godot'
 $cache=Join-Path $project '.godot'
 New-Item -ItemType Directory -Force $cache | Out-Null
 [IO.File]::WriteAllText((Join-Path $cache 'extension_list.cfg'),("res://sandbox_native.gdextension"+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
+if ($Solver -eq 'Hybrid') {
+    $env:V3_HYBRID_SOLVER='1'
+    $Renderer='B'
+} else {
+    Remove-Item Env:V3_HYBRID_SOLVER -ErrorAction SilentlyContinue
+}
 $env:V3_HYBRID_RENDERER=$Renderer
 $env:V3_WORLD_ROOT=Join-Path $report 'worlds'
 $env:V3_MOD_ROOT=Join-Path $root 'examples/v3/mods'
@@ -76,11 +84,11 @@ New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
 $stdout=Join-Path $report 'godot-stdout.txt'
 $stderr=Join-Path $report 'godot-stderr.txt'
 $editor=Join-Path $root '.tools/godot.exe'
-Write-Host 'V3 hybrid R1 B2 experimental visual comparison A/B; H14 physics unchanged. Inspect shoreline, movement and edits; close normally. Lava/Sea are exploratory.'
+Write-Host 'V3 R3 I6 experimental solver=$Solver renderer=$Renderer. Inspect progressive shoreline flow, caves, movement and edits; close normally. Lava/Sea are exploratory.'
 $p=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','res://scenes/v3_hydraulic_main.tscn') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 $null=$p.Handle
 $p.WaitForExit()
-$meta=[ordered]@{candidate=$candidate;visual_candidate=$visualCandidate;renderer=$Renderer;run_id=$run;profile=$env:V3_CAVE_PROFILE;seed=$env:V3_WORLD_SEED;spawn=$Spawn;exit_code=$p.ExitCode;native_dll_sha256=(Get-FileHash -LiteralPath (Join-Path $root $dll) -Algorithm SHA256).Hash;visual_gate='USER_OBSERVATION_REQUIRED'}
+$meta=[ordered]@{candidate=$candidate;visual_candidate=$visualCandidate;renderer=$Renderer;solver=$Solver;run_id=$run;profile=$env:V3_CAVE_PROFILE;seed=$env:V3_WORLD_SEED;spawn=$Spawn;exit_code=$p.ExitCode;native_dll_sha256=(Get-FileHash -LiteralPath (Join-Path $root $dll) -Algorithm SHA256).Hash;visual_gate='USER_OBSERVATION_REQUIRED'}
 $meta | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $report 'metadata.json') -Encoding UTF8
 $zip=Join-Path $report 'v3_hydraulic_hybrid_visual_evidence.zip'
 Compress-Archive -LiteralPath @($stdout,$stderr,(Join-Path $report 'metadata.json')) -DestinationPath $zip -Force

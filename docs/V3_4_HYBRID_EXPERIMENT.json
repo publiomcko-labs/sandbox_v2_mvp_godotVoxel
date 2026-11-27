@@ -1,6 +1,6 @@
 {
   "schema": "v3_hydraulic_hybrid_experiment_v1",
-  "status": "EXPERIMENTAL_INTEGRATED_CONTROLLED_PASS_GEOMETRY_OPEN",
+  "status": "EXPERIMENTAL_INTEGRATED_PARTIAL",
   "base_commit": "ab3500f6d61bca0e71eb1d90a5de48485fd7892f",
   "branch": "exp/v3-hydraulic-hybrid",
   "baseline": "H14",
@@ -111,7 +111,7 @@
       "water_sign_flips": 35
     },
     "R3": {
-      "status": "INTEGRATED_CONTROLLED_I4_PASS_GEOMETRY_OPEN",
+      "status": "CONTROLLED_WATER_RUNTIME_PASS_PARTIAL_QUALIFICATION",
       "commit": "917b3500ef270cb9fa950015bc6bbc4291732235",
       "run": 45988106015,
       "mass_litres": 48000,
@@ -152,14 +152,36 @@
           "gpu_tick_p95_us": 3052,
           "gpu_combined_refresh_p95_us": 1767,
           "mask_b2_only": 10268
-        }
+        },
+        "i6": {
+          "status": "CORE_NATIVE_GPU_PASS_GEOMETRY_PARTIAL_PERFORMANCE_OPEN",
+          "commit": "864d6881eb1230a7b3d70ceaa2a9b053dd776c0a",
+          "core_run": 45996221567,
+          "native_run": 45996221454,
+          "gpu_run": 45996275388,
+          "native_artifact": 15195977471,
+          "gpu_artifact": 15195658543,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "local_active": 4,
+          "local_intervals": 1993,
+          "settles": 0,
+          "gpu_tick_p95_us": 3129,
+          "gpu_snapshot_max_us": 28997,
+          "gpu_combined_refresh_p95_us": 5973,
+          "mask_b2_only": 947,
+          "mask_i6_only": 71,
+          "mask_interior_missing": 138
+        },
+        "launcher": "scripts/v3-hydraulic-hybrid-local-windows.ps1"
       }
     },
     "R4": {
       "status": "BLOCKED_GEOMETRY"
     },
     "R5": {
-      "status": "CONTROLLED_RUNTIME_AND_GPU_PASS_GEOMETRY_OPEN"
+      "status": "CONTROLLED_WATER_GPU_REOPEN_PASS_PARTIAL_OTHER_SCENARIOS"
     }
   }
 }
