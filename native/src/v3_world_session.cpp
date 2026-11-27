@@ -213,6 +213,7 @@ bool V3WorldSession::open_impl(const String &first_party,const String &external,
                     next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),std::move(domain));
                 }
             }else next->hydraulic=std::make_unique<sandbox::hydraulic::Runtime>(std::move(*hydraulic_profile),coupled);
+            if(coupled)next->hydraulic->configure_cold_store(next->store.path());
         }
         const auto c=next->store.header().core;
         constexpr auto limit=static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
@@ -313,6 +314,7 @@ bool V3WorldSession::flush_hydraulic() {
         if(state_->hydraulic) {
             if(!state_->hydraulic->integrated_mode())ps::save_domain(state_->store.path(),state_->hydraulic->domain());
             else {
+                state_->hydraulic->checkpoint_cold_store();
                 const auto tmp=state_->store.path()/"session_pending"/"hydraulic_domain.tmp";
                 const auto bytes=state_->hydraulic->archive().dump();
                 ct::require(bytes.size()<=ps::hydraulic_archive_limit&&!fs::exists(fs::symlink_status(tmp)),"hybrid archive bounds");

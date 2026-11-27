@@ -17,6 +17,7 @@ class Runtime {
     Domain domain_;
     bool integrated_mode_=false;
     std::unique_ptr<IntegratedRuntime> integrated_;
+    std::filesystem::path cold_world_;
     tp::Worker worker_;
     hybrid::Renderer hybrid_renderer_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
@@ -234,6 +235,10 @@ public:
         else throw std::invalid_argument("hybrid save schema");
     }
     bool integrated_mode()const{return integrated_mode_;}
+    void configure_cold_store(const std::filesystem::path& world) {
+        cold_world_=world;if(integrated_)integrated_->configure_cold_store(world);
+    }
+    void checkpoint_cold_store(){if(integrated_)integrated_->checkpoint_cold_store();}
     nlohmann::json archive()const {
         if(integrated_)return integrated_->encode();
         if(integrated_mode_)return {{"schema","v3-hybrid-bootstrap-1"},{"bootstrap",persistence::encode_domain(domain_)}};
@@ -328,6 +333,7 @@ public:
         });
         if(integrated_mode_&&(!domain_.seeded().empty()||!near_source)) {
             integrated_=std::make_unique<IntegratedRuntime>(domain_,pristine_surveyed_.size());
+            if(!cold_world_.empty())integrated_->configure_cold_store(cold_world_);
             domain_=Domain(profile_.types); // relinquish bootstrap mass owner
             return;
         }

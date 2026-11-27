@@ -118,8 +118,12 @@ public:
         if (fresh) {
             header_={world_id,seed,0,pins,{},std::string(generator)};
         } else {
-            for (const auto &entry:fs::directory_iterator(world_))
-                plain_unique_file(entry.path());
+            for (const auto &entry:fs::directory_iterator(world_)) {
+                if(generator.starts_with("v3_4_hybrid_runtime_v1:")&&entry.path().filename()=="hydraulic_regions"){
+                    const auto checked=content::checked_root(entry.path());
+                    require(content::contained(world_,checked),"cold store path escaped");
+                }else plain_unique_file(entry.path());
+            }
             header_=decode(read_json(world_/"checkpoint.json"),generator);
             require(header_.world_id==world_id && header_.seed==seed && header_.pins==pins,
                     "world identity, seed or content pins mismatch");

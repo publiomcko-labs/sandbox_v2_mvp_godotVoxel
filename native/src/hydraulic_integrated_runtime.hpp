@@ -4,12 +4,14 @@
 #include "core/hydraulic_worker.hpp"
 #include "core/hydraulic_hybrid_surface.hpp"
 #include "../../experiments/v3/hybrid/coupler.hpp"
-#include "persistence/hydraulic_domain_store.hpp"
+#include "persistence/hydraulic_region_store.hpp"
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 namespace sandbox::hydraulic {
 class IntegratedRuntime {
     experiment::Coupler model_;
+    std::unique_ptr<persistence::HydraulicRegionStore> cold_store_;
+    std::uint64_t cold_evictions_{},cold_restores_{};
     std::set<std::string> sources_;
     std::map<std::string,std::set<core::Region>> source_windows_;
     std::set<core::Region> source_interest_;
@@ -126,6 +128,93 @@ class IntegratedRuntime {
             else {source_conflicts_.insert(id);source_diagnostics_[id]="wet/local owner or invalid capacity at certified anchor";}
         }
     }
+    static nlohmann::json encode_geometry(core::Region k,const experiment::CoupledTile& t,bool retain_render) {
+        using J=nlohmann::json;
+        const auto &g=*t.geometry;J runs=J::array();
+        for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
+        J row={{"key",{k.x,k.y,k.z}},{"revision",g.revision},{"runs",runs},{"floor",g.surface_floor},{"refined",g.refine_exposed}};
+        if(!g.render_sdf.empty()&&(retain_render)){
+            constexpr char hex[]="0123456789abcdef";
+            std::string packed;packed.reserve(g.render_sdf.size()*4);
+            for(auto v:g.render_sdf){const auto u=static_cast<std::uint16_t>(v);for(int shift:{12,8,4,0})packed.push_back(hex[(u>>shift)&15]);}
+            row["render_sdf"]=std::move(packed);row["render_pad"]=g.render_pad;
+        }
+        if(!g.halo_runs.empty()){
+            J hr=J::array();for(const auto &col:g.halo_runs)for(const auto &s:col)hr.push_back({s.x,s.z,s.bottom,s.top});
+            row["halo_runs"]=std::move(hr);row["halo_floor"]=g.halo_floor;
+        }
+        return row;
+    }
+    static std::shared_ptr<const tp::Result> decode_geometry(const nlohmann::json& row) {
+        const auto &a=row.at("key");core::Region k{a[0].get<int>(),a[1].get<int>(),a[2].get<int>()};
+        if(k.y!=base||k.x%16||k.z%16||row.at("runs").size()>16384)throw std::invalid_argument("hybrid archive geometry");
+        tp::Snapshot s{k,16,64,16,1,row.at("revision").get<std::uint64_t>(),std::vector<std::uint8_t>(16*64*16)};
+        for(const auto &v:row.at("runs")){
+            const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
+            if(x<0||x>=16||z<0||z>=16||lo<0||hi>64||lo>=hi)throw std::invalid_argument("hybrid archive run");
+            for(int y=lo;y<hi;++y){auto &air=s.air.at(static_cast<std::size_t>((z*16+x)*64+y));if(air)throw std::invalid_argument("hybrid archive duplicate run");air=1;}
+        }
+        s.surface_floor=row.at("floor").get<std::vector<float>>();s.refine_exposed=row.at("refined").get<bool>();
+        if(row.contains("render_sdf")){
+            s.render_pad=row.at("render_pad").get<int>();
+            if(s.render_pad<0||s.render_pad>1)throw std::invalid_argument("render archive pad");
+            const auto &packed=row.at("render_sdf").get_ref<const std::string&>();
+            const auto w=17+2*s.render_pad;
+            if(packed.size()!=static_cast<std::size_t>(w*w*65*4))throw std::invalid_argument("render archive shape");
+            auto nibble=[](char c){if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;throw std::invalid_argument("render archive hex");};
+            for(std::size_t q=0;q<packed.size();q+=4){int n=0;for(std::size_t j=0;j<4;++j)n=n*16+nibble(packed[q+j]);s.render_sdf.push_back(static_cast<std::int16_t>(n>=32768?n-65536:n));}
+        }
+        if(row.contains("halo_runs")){
+            s.halo_floor=row.at("halo_floor").get<std::vector<float>>();s.halo_air.resize(18*18*64);
+            for(const auto &v:row.at("halo_runs")){
+                const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
+                if(x< -1||x>16||z< -1||z>16||(x>=0&&x<16&&z>=0&&z<16)||lo<0||hi>64||lo>=hi)throw std::invalid_argument("render archive halo");
+                for(int y=lo;y<hi;++y)s.halo_air.at(static_cast<std::size_t>(((z+1)*18+x+1)*64+y))=1;
+            }
+        }
+        return std::make_shared<const tp::Result>(tp::extract(s));
+    }
+    bool cold_contains(core::Region k)const {
+        return cold_store_&&model_.cold_count()&&cold_store_->contains(k);
+    }
+    bool reclaimable(core::Region k)const {
+        return model_.can_archive(k)&&!dirty_.contains(k)&&!pending_.contains(k)&&!interested(k)&&
+            ((!model_.tile_mass(k)&&!model_.tiles().at(k).local)||cold_store_);
+    }
+    bool archive_owner(core::Region k) {
+        if(!cold_store_||!reclaimable(k))return false;
+        const auto amount=model_.tile_mass(k);
+        try{
+            const auto &t=model_.tiles().at(k);
+            cold_store_->put(k,encode_geometry(k,t,true),model_.encode_tile(k),amount);
+            if(!model_.detach_cold(k)||!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))
+                throw std::logic_error("cold detach ledger");
+            ++cold_evictions_;return true;
+        }catch(...){cold_store_->poison();throw;}
+    }
+    bool reclaim_slot() {
+        for(const auto &[k,t]:model_.tiles())if(reclaimable(k)&&!t.local&&!model_.tile_mass(k))
+            return model_.forget_dry(k);
+        for(const auto &[k,t]:model_.tiles()){(void)t;if(reclaimable(k))return archive_owner(k);}
+        return false;
+    }
+    bool restore_owner(core::Region k,std::uint64_t rev) {
+        if(!cold_contains(k)||dirty_.contains(k))return false;
+        try{
+            const auto row=cold_store_->get(k);
+            const auto &owner=row.at("owner");
+            if(owner.at("local").get<bool>()&&model_.active()>=model_.active_limit())return false;
+            auto geometry=decode_geometry(row.at("geometry"));
+            // Old hydraulic geometry is a derived checkpoint, not terrain.
+            // A missing current revision certificate must not publish it.
+            if(geometry->origin!=k||!provenance_.certifies(k,geometry->revision,rev))return false;
+            if(model_.tiles().size()>=model_.tile_limit()&&!reclaim_slot())return false;
+            if(!model_.restore_cold(std::move(geometry),owner))throw std::logic_error("cold restore owner");
+            cold_store_->erase(k,row.at("mass").get<Litres>());
+            if(!cold_store_->consistent(model_.cold_count(),model_.cold_mass()))throw std::logic_error("cold restore ledger");
+            ++cold_restores_;++publications_;return true;
+        }catch(...){cold_store_->poison();throw;}
+    }
     bool activate(core::Region k) {
         if(model_.tiles().at(k).local)return true;
         if(!model_.activate(k))return false;
@@ -135,10 +224,20 @@ public:
     explicit IntegratedRuntime(const Domain& bootstrap,std::size_t surveyed=0):model_(experiment::Coupler::adopt(bootstrap)),sources_(bootstrap.seeded()),pristine_survey_tiles_(surveyed){}
     IntegratedRuntime(experiment::Coupler model,std::set<std::string> sources):model_(std::move(model)),sources_(std::move(sources)){}
     const auto& model()const{return model_;}
+    void configure_cold_store(const std::filesystem::path& world) {
+        if(cold_store_)throw std::logic_error("cold store already configured");
+        cold_store_=std::make_unique<persistence::HydraulicRegionStore>(world,model_.cold_count(),model_.cold_mass());
+    }
+    void checkpoint_cold_store() {
+        if(cold_store_)cold_store_->checkpoint(model_.cold_count(),model_.cold_mass());
+        else if(model_.cold_count())throw std::logic_error("cold store absent");
+    }
     bool allows_edit(core::Vec3 p,double radius,bool add,const godot::Ref<godot::VoxelTool>& tool,std::uint64_t next_revision,bool exact_brush) {
         if(!core::valid_point(p)||!std::isfinite(radius)||radius<0.5||radius>8)return false;
         std::size_t needed=0,new_tiles=0;
         const auto keys=affected(p,radius);
+        // Never mutate terrain whose cold hydraulic owner has not been loaded.
+        for(auto k:keys)if(cold_contains(k))return false;
         bool near_wet=false;
         for(auto k:keys)if(model_.tiles().contains(k)&&model_.tile_mass(k))near_wet=true;
         for(auto k:keys) {
@@ -195,6 +294,11 @@ public:
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
         }
+        // One distant wet/local owner can leave the hot set per frame.
+        // Keep everything in the visible interest and all source anchors.
+        if(cold_store_)for(const auto &[k,t]:model_.tiles()){
+            if((t.local||model_.tile_mass(k))&&reclaimable(k)){archive_owner(k);break;}
+        }
         if(auto result=worker_.poll()) {
             const auto k=result->origin;pending_.erase(k);
             const bool surveyed=pending_survey_.erase(k)>0;
@@ -205,11 +309,8 @@ public:
             if(interested(k)&&(loaded||certified)&&(!(surveyed||streamed)||certified)&&(!dirty_.contains(k)||result->revision>=dirty_.at(k))) {
                 auto geometry=std::make_shared<const tp::Result>(std::move(*result));
                 const bool exists=model_.tiles().contains(k);
-                if(!exists&&model_.tiles().size()>=model_.tile_limit()) {
-                    std::optional<core::Region> evict;
-                    for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){evict=q;break;}
-                    if(evict)model_.forget_dry(*evict);
-                }
+                if(!exists&&cold_contains(k))throw std::logic_error("snapshot would overwrite cold owner");
+                if(!exists&&model_.tiles().size()>=model_.tile_limit())reclaim_slot();
                 if(exists?model_.replace_geometry(geometry,construction_pending_.contains(k)):model_.publish(geometry)) {
                     if(activate_pending_.contains(k)&&!activate(k)){
                         model_.set_resident(k,false);blocked_[k]=rev;
@@ -235,6 +336,14 @@ public:
             if(dirty_.contains(a)!=dirty_.contains(b))return dirty_.contains(a);
             return std::abs(a.x-center_.x)+std::abs(a.z-center_.z)<std::abs(b.x-center_.x)+std::abs(b.z-center_.z);
         });
+        // Restore an exact persisted owner before acquiring any replacement
+        // geometry. Near-player, wet-front and source-window candidates
+        // share the same bounded priority queue.
+        if(model_.cold_count())for(auto k:ordered){
+            if(!model_.tiles().contains(k)&&cold_contains(k)){
+                if(restore_owner(k,rev))break;
+            }
+        }
         // Drop a partial snapshot when its certificate or interest changes.
         if(stream_job_&&(!stream.valid()||stream_job_->durable_revision()!=stream.durable_revision||
             !interested(stream_job_->key())||!provenance_.certifies(stream_job_->key(),stream_job_->revision(),rev)||
@@ -260,7 +369,7 @@ public:
             for(auto k:ordered) {
             auto it=model_.tiles().find(k);
             if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
-            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev))continue;
+            if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev)||cold_contains(k))continue;
             const bool loaded=resident(tool,k);
             const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
             const bool archived=!loaded&&pass==1&&!survey&&!stream_retry_frames_&&stream.valid()&&
@@ -268,7 +377,7 @@ public:
                 (it==model_.tiles().end()||dirty_.contains(k)||it->second.geometry->render_sdf.empty());
             if((pass==0&&!loaded)||(pass==1&&!survey&&!archived))continue;
             if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
-                bool can_reclaim=false;for(const auto &[q,t]:model_.tiles())if(!t.resident&&!t.local&&!dirty_.contains(q)&&!interested(q)&&!model_.tile_mass(q)){can_reclaim=true;break;}
+                bool can_reclaim=false;for(const auto &[q,t]:model_.tiles()){(void)t;if(reclaimable(q)){can_reclaim=true;break;}}
                 if(!can_reclaim)continue;
             }
             const auto start=std::chrono::steady_clock::now();
@@ -385,6 +494,8 @@ public:
         d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);
         d["suspended_reclaims"]=static_cast<int64_t>(suspended_reclaims_);
+        d["cold_tiles"]=static_cast<int64_t>(model_.cold_count());d["cold_litres"]=model_.cold_mass();
+        d["cold_evictions"]=static_cast<int64_t>(cold_evictions_);d["cold_restores"]=static_cast<int64_t>(cold_restores_);
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
@@ -403,57 +514,18 @@ public:
     }
     nlohmann::json encode()const {
         using J=nlohmann::json;J geometry=J::array(),dirty=J::array(),activate_pending=J::array(),construction_pending=J::array();
-        for(const auto &[k,t]:model_.tiles()){
-            const auto &g=*t.geometry;J runs=J::array();
-            for(const auto &col:g.column_runs)for(const auto &s:col)runs.push_back({s.x,s.z,s.bottom,s.top});
-            geometry.push_back({{"key",{k.x,k.y,k.z}},{"revision",g.revision},{"runs",runs},{"floor",g.surface_floor},{"refined",g.refine_exposed}});
-            if(!g.render_sdf.empty()&&(model_.tile_mass(k)||t.local)){
-                constexpr char hex[]="0123456789abcdef";
-                std::string packed;packed.reserve(g.render_sdf.size()*4);
-                for(auto v:g.render_sdf){const auto u=static_cast<std::uint16_t>(v);for(int shift:{12,8,4,0})packed.push_back(hex[(u>>shift)&15]);}
-                geometry.back()["render_sdf"]=std::move(packed);geometry.back()["render_pad"]=g.render_pad;
-            }
-            if(!g.halo_runs.empty()){
-                J hr=J::array();for(const auto &col:g.halo_runs)for(const auto &s:col)hr.push_back({s.x,s.z,s.bottom,s.top});
-                geometry.back()["halo_runs"]=std::move(hr);geometry.back()["halo_floor"]=g.halo_floor;
-            }
-        }
+        for(const auto &[k,t]:model_.tiles())geometry.push_back(encode_geometry(k,t,model_.tile_mass(k)>0||t.local.has_value()));
         for(const auto &[k,rev]:dirty_)dirty.push_back({k.x,k.y,k.z,rev});
         for(const auto &k:activate_pending_)activate_pending.push_back({k.x,k.y,k.z});
         for(const auto &k:construction_pending_)construction_pending.push_back({k.x,k.y,k.z});
-        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"provenance",provenance_.encode()},{"dirty",dirty},{"activate_pending",activate_pending},{"construction_pending",construction_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_},{"activations",activations_},{"settles",settles_},{"suspended_reclaims",suspended_reclaims_}};
+        return {{"schema","v3-hybrid-runtime-1"},{"geometry",geometry},{"coupler",model_.encode()},{"sources",sources_},{"provenance",provenance_.encode()},{"dirty",dirty},{"activate_pending",activate_pending},{"construction_pending",construction_pending},{"revision",revision_},{"ticks",ticks_},{"debt",debt_},{"moved",moved_},{"activations",activations_},{"settles",settles_},{"suspended_reclaims",suspended_reclaims_},{"cold_evictions",cold_evictions_},{"cold_restores",cold_restores_}};
     }
     static std::unique_ptr<IntegratedRuntime> decode(const nlohmann::json& j,const std::vector<Liquid>& types) {
         if(j.at("schema")!="v3-hybrid-runtime-1"||!j.at("geometry").is_array()||j.at("geometry").size()>128)throw std::invalid_argument("hybrid runtime archive");
         std::map<core::Region,std::shared_ptr<const tp::Result>> geometry;
         for(const auto &row:j.at("geometry")){
-            const auto &a=row.at("key");core::Region k{a[0].get<int>(),a[1].get<int>(),a[2].get<int>()};
-            if(k.y!=base||k.x%16||k.z%16||geometry.contains(k)||row.at("runs").size()>16384)throw std::invalid_argument("hybrid archive geometry");
-            tp::Snapshot s{k,16,64,16,1,row.at("revision").get<std::uint64_t>(),std::vector<std::uint8_t>(16*64*16)};
-            for(const auto &v:row.at("runs")){
-                const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
-                if(x<0||x>=16||z<0||z>=16||lo<0||hi>64||lo>=hi)throw std::invalid_argument("hybrid archive run");
-                for(int y=lo;y<hi;++y){auto &air=s.air.at(static_cast<std::size_t>((z*16+x)*64+y));if(air)throw std::invalid_argument("hybrid archive duplicate run");air=1;}
-            }
-            s.surface_floor=row.at("floor").get<std::vector<float>>();s.refine_exposed=row.at("refined").get<bool>();
-            if(row.contains("render_sdf")){
-                s.render_pad=row.at("render_pad").get<int>();
-                if(s.render_pad<0||s.render_pad>1)throw std::invalid_argument("render archive pad");
-                const auto &packed=row.at("render_sdf").get_ref<const std::string&>();
-                const auto w=17+2*s.render_pad;
-                if(packed.size()!=static_cast<std::size_t>(w*w*65*4))throw std::invalid_argument("render archive shape");
-                auto nibble=[](char c){if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;throw std::invalid_argument("render archive hex");};
-                for(std::size_t q=0;q<packed.size();q+=4){int n=0;for(std::size_t j=0;j<4;++j)n=n*16+nibble(packed[q+j]);s.render_sdf.push_back(static_cast<std::int16_t>(n>=32768?n-65536:n));}
-            }
-            if(row.contains("halo_runs")){
-                s.halo_floor=row.at("halo_floor").get<std::vector<float>>();s.halo_air.resize(18*18*64);
-                for(const auto &v:row.at("halo_runs")){
-                    const int x=v[0].get<int>(),z=v[1].get<int>(),lo=v[2].get<int>(),hi=v[3].get<int>();
-                    if(x< -1||x>16||z< -1||z>16||(x>=0&&x<16&&z>=0&&z<16)||lo<0||hi>64||lo>=hi)throw std::invalid_argument("render archive halo");
-                    for(int y=lo;y<hi;++y)s.halo_air.at(static_cast<std::size_t>(((z+1)*18+x+1)*64+y))=1;
-                }
-            }
-            geometry.emplace(k,std::make_shared<const tp::Result>(tp::extract(s)));
+            auto g=decode_geometry(row);const auto k=g->origin;
+            if(!geometry.emplace(k,std::move(g)).second)throw std::invalid_argument("duplicate hydraulic geometry");
         }
         auto model=experiment::Coupler::decode(j.at("coupler"),types,geometry);model.suspend_all();
         auto out=std::make_unique<IntegratedRuntime>(std::move(model),j.at("sources").get<std::set<std::string>>());
@@ -473,6 +545,7 @@ public:
         out->ticks_=j.at("ticks").get<std::uint64_t>();
         out->activations_=j.value("activations",std::uint64_t(0));out->settles_=j.value("settles",std::uint64_t(0));
         out->suspended_reclaims_=j.value("suspended_reclaims",std::uint64_t(0));
+        out->cold_evictions_=j.value("cold_evictions",std::uint64_t(0));out->cold_restores_=j.value("cold_restores",std::uint64_t(0));
         if(out->suspended_reclaims_>out->settles_)throw std::invalid_argument("hybrid lifecycle counters");
         out->debt_=j.at("debt").get<std::uint64_t>();out->moved_=j.at("moved").get<std::uint64_t>();
         if(out->debt_>100000000)throw std::invalid_argument("hybrid archive tick debt");
