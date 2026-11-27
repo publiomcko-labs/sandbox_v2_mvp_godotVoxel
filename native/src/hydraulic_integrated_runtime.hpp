@@ -63,8 +63,9 @@ class IntegratedRuntime {
     bool visible(core::Region k)const {
         return std::abs(k.x-center_.x)<=view_distance_+side&&std::abs(k.z-center_.z)<=view_distance_+side;
     }
-    bool interested(core::Region k)const {
-        if(ocean_interest_.contains(k))return true;
+    // Ocean topology work may acquire geometry, but cannot pin a local
+    // physics owner outside the actual simulation interest.
+    bool physics_interested(core::Region k)const {
         if(dirty_.contains(k)||source_interest_.contains(k))return true;
         if(std::abs(k.x-center_.x)<=side&&std::abs(k.z-center_.z)<=side)return true;
         if(std::abs(k.x-center_.x)>view_distance_+side||std::abs(k.z-center_.z)>view_distance_+side)return false;
@@ -73,6 +74,9 @@ class IntegratedRuntime {
             if(model_.tiles().contains(n)&&(model_.tile_mass(n)||model_.tiles().at(n).local))return true;
         }
         return false;
+    }
+    bool interested(core::Region k)const {
+        return physics_interested(k)||ocean_interest_.contains(k);
     }
     bool source_certified(core::Region k,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool)const {
         const auto it=model_.tiles().find(k);
@@ -234,8 +238,14 @@ class IntegratedRuntime {
         for(std::size_t i=0;i<std::min<std::size_t>(4,ordered.size());++i){
             ocean_interest_.insert(ordered[i]);ocean_interest_.insert(frontier.at(ordered[i]));
         }
-        // Keep pending topology candidates until they have been processed.
-        for(auto k:ocean_dirty_)if(model_.tiles().contains(k)&&!visible(k))ocean_interest_.insert(k);
+        // Pin at most the four queued remote topology candidates, not the
+        // entire dirty set after a revision change. Never pin a distant local
+        // physics owner just because its geometry awaits a certificate.
+        std::vector<core::Region> remote_pending;
+        for(auto k:ocean_dirty_)if(model_.tiles().contains(k)&&!visible(k)&&!model_.tiles().at(k).local)
+            remote_pending.push_back(k);
+        std::sort(remote_pending.begin(),remote_pending.end(),[&](auto a,auto b){return distance(a)<distance(b);});
+        for(std::size_t i=0;i<std::min<std::size_t>(4,remote_pending.size());++i)ocean_interest_.insert(remote_pending[i]);
     }
     static nlohmann::json encode_geometry(core::Region k,const experiment::CoupledTile& t,bool retain_render) {
         using J=nlohmann::json;
@@ -466,7 +476,7 @@ public:
         view_distance_=std::clamp(view_distance,16.0,4096.0);
         discover_sources(rules,rev,tool,p);
         advance_ocean(rev);
-        for(const auto &[k,t]:model_.tiles())if(t.resident&&(!interested(k)||!resident(tool,k))){
+        for(const auto &[k,t]:model_.tiles())if(t.resident&&(!physics_interested(k)||!resident(tool,k))){
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
         }
@@ -491,7 +501,8 @@ public:
                     if(activate_pending_.contains(k)&&!activate(k)){
                         model_.set_resident(k,false);blocked_[k]=rev;
                     }else {
-                        if(!loaded){model_.set_resident(k,false);++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
+                        if(!loaded||!physics_interested(k))model_.set_resident(k,false);
+                        if(!loaded){++visual_survey_tiles_;if(rev)++post_edit_survey_tiles_;}
                         if(streamed)++stream_survey_tiles_;
                         activate_pending_.erase(k);construction_pending_.erase(k);dirty_.erase(k);blocked_.erase(k);++publications_;ocean_changed(k);
                     }
@@ -549,6 +560,9 @@ public:
             if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
             if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev)||cold_contains(k))continue;
             const bool loaded=resident(tool,k);
+            // A certified hot owner used only as an ocean witness does not
+            // require another live snapshot every frame.
+            if(it!=model_.tiles().end()&&!physics_interested(k)&&certified_geometry(k,*it->second.geometry,rev))continue;
             const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
             const bool archived=!loaded&&pass==1&&!survey&&!stream_retry_frames_&&stream.valid()&&
                 provenance_.certifies(k,stream.durable_revision,rev)&&
