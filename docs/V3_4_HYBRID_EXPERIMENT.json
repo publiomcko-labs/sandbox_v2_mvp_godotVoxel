@@ -593,7 +593,7 @@
           "native_failure": "source-reopen sea revisit: near_active_tiles=0"
         },
         "i22b": {
-          "status": "CORE_PASS_NATIVE_GPU_PENDING",
+          "status": "CORE_NATIVE_GPU_PASS_COLD_STREAMING_PARTIAL",
           "commit": "1062f421d34cca88e0116a82521f9ed36b9bd685",
           "core_run": 46079438753,
           "native_run": 46079438817,
@@ -605,7 +605,44 @@
             "visible-only cold cache",
             "certified ocean expansion",
             "performance"
-          ]
+          ],
+          "native_artifact": 15236204563,
+          "gpu_artifact": 15236911309,
+          "native_artifact_sha256": "9f1b21ff824bee105054e1f063056ffd3e1fc3b44fd90a6f0a127b6a946007cf",
+          "gpu_artifact_sha256": "e4f3ec77313e94c56dca3b692388b019bfc9f440d8c61065de07a51dcf0d1d5e",
+          "dll_sha256": "344138078a0ebe56a060a7640a9d1a7234c2c6c2f7941806d16bacf8e391a24a",
+          "native_cold_tiles": 34,
+          "native_cold_litres": 9896672,
+          "native_restored": 33,
+          "global_litres": 11378442,
+          "gpu_tick_p95_us": 4972,
+          "gpu_refresh_p95_us": 6525,
+          "gpu_refresh_p99_us": 8827,
+          "gpu_frame_p95_us": 48429,
+          "gpu_snapshot_max_us": 29334
+        },
+        "i22c": {
+          "status": "CORE_NATIVE_PASS_GPU_PENDING",
+          "commit": "7dcefba2aac5482e039a6a2c97aafa804e3ac52a",
+          "core_run": 46079910682,
+          "native_run": 46079910662,
+          "gpu_run": 46079910638,
+          "native_artifact": 15236711366,
+          "close_cold_regions": 10,
+          "close_cold_litres": 1893734,
+          "reopen_cold_regions": 1,
+          "reopen_cold_litres": 26737,
+          "reopen_visual_tiles": 1,
+          "column_litres": 5159,
+          "global_litres": 11378442
+        },
+        "i22d": {
+          "status": "CORE_COMPILE_FIX_PENDING_VALIDATION_RUNTIME_INTEGRATION_OPEN",
+          "commit": "27b6c016543a62997183b1a1344fea89c904608b",
+          "fix_commit": "ed50599b75082184b08d3850ccc07f699ffa9258",
+          "failed_core_run": 46080159646,
+          "failed_reason": "topology namespace alias missing",
+          "corrected_native_run": 46080357679
         }
       }
     },
