@@ -126,6 +126,7 @@ void V3WorldSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("hydraulic_surfaces"), &V3WorldSession::hydraulic_surfaces);
     ClassDB::bind_method(D_METHOD("hydraulic_mesh","id"), &V3WorldSession::hydraulic_mesh);
     ClassDB::bind_method(D_METHOD("hydraulic_report"), &V3WorldSession::hydraulic_report);
+    ClassDB::bind_method(D_METHOD("hydraulic_hybrid"), &V3WorldSession::hydraulic_hybrid);
     ClassDB::bind_method(D_METHOD("flush_hydraulic"), &V3WorldSession::flush_hydraulic);
     ClassDB::bind_method(D_METHOD("get_cave_json"), &V3WorldSession::get_cave_json);
     ClassDB::bind_method(D_METHOD("get_geology_json"), &V3WorldSession::get_geology_json);
@@ -257,6 +258,9 @@ Array V3WorldSession::hydraulic_surfaces() const {
 Array V3WorldSession::hydraulic_mesh(int64_t id) const {
     if(!state_||!state_->hydraulic||id<=0||id>std::numeric_limits<sandbox::hydraulic::Id>::max())return {};
     return state_->hydraulic->mesh(static_cast<sandbox::hydraulic::Id>(id));
+}
+Dictionary V3WorldSession::hydraulic_hybrid() {
+    return state_&&state_->hydraulic?state_->hydraulic->hybrid_render():Dictionary();
 }
 Dictionary V3WorldSession::hydraulic_report() const {
     return state_&&state_->hydraulic?state_->hydraulic->report():Dictionary();

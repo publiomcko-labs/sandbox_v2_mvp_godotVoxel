@@ -1,7 +1,7 @@
 name: V3 core contracts
 on:
   push:
-    branches: [v3/hydraulic]
+    branches: [v3/hydraulic, exp/v3-hydraulic-hybrid]
     paths:
       - 'native/src/content_registry/**'
       - 'native/src/core/**'
@@ -41,6 +41,8 @@ jobs:
           /tmp/v3-hydraulic-remap
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_hydraulic_domain.cpp -o /tmp/v3-hydraulic-domain
           /tmp/v3-hydraulic-domain
+          g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -pedantic -I native/src tests/v3/test_hydraulic_hybrid_surface.cpp -o /tmp/v3-hybrid-surface
+          /tmp/v3-hybrid-surface
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -I native/src -I .deps/json/single_include tests/v3/test_hydraulic_store.cpp -lcrypto -o /tmp/v3-hydraulic-store
           /tmp/v3-hydraulic-store
           g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I native/src -I .deps/json/single_include tests/v3/test_checkpoint.cpp -lcrypto -o /tmp/v3-checkpoint
@@ -95,6 +97,10 @@ jobs:
           cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I native\src tests\v3\test_hydraulic_domain.cpp /Fe:v3-hydraulic-domain.exe
           if errorlevel 1 exit /b 1
           v3-hydraulic-domain.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I native\src tests\v3\test_hydraulic_hybrid_surface.cpp /Fe:v3-hybrid-surface.exe
+          if errorlevel 1 exit /b 1
+          v3-hybrid-surface.exe
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I native\src /external:I .deps\json\single_include /external:W0 tests\v3\test_hydraulic_store.cpp bcrypt.lib /Fe:v3-hydraulic-store.exe
           if errorlevel 1 exit /b 1

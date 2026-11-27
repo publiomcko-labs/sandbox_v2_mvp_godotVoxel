@@ -3,6 +3,7 @@
 #include "core/hydraulic_domain.hpp"
 #include "core/hydraulic_worker.hpp"
 #include "core/hydraulic_surface.hpp"
+#include "core/hydraulic_hybrid_surface.hpp"
 #include "content_registry/hydraulic_profile.hpp"
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -14,6 +15,7 @@ class Runtime {
     content::HydraulicProfile profile_;
     Domain domain_;
     tp::Worker worker_;
+    hybrid::Renderer hybrid_renderer_;
     std::map<core::Region,std::uint64_t> pending_,blocked_;
     std::set<core::Region> capacity_blocked_;
     std::uint64_t capacity_rejections_=0,dry_evictions_=0;
@@ -382,6 +384,54 @@ public:
             }
             out.push_back(vertices);out.push_back(uv);return out;
         }
+        return out;
+    }
+    godot::Dictionary hybrid_render() {
+        using namespace godot;
+        const auto started=std::chrono::steady_clock::now();
+        const auto wanted=hybrid::snapshot(domain_,height);
+        const auto snapshots_us=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-started).count();
+        auto done=hybrid_renderer_.poll(wanted);
+        Array updates,keys,ready;
+        for(const auto &[k,in]:wanted) {
+            Vector3i tile(k.x,k.y,k.z);keys.push_back(tile);
+            if(hybrid_renderer_.current(in))ready.push_back(tile);
+        }
+        // Retain prior revision during edit cohort, but never schedule
+        // construction from invalidated geometry.
+        for(const auto &k:edited_tiles_)if(!wanted.contains(k)&&domain_.tiles().contains(k)&&wet_tile(domain_.tiles().at(k)))
+            keys.push_back(Vector3i(k.x,k.y,k.z));
+        for(auto &batch:done) {
+            Dictionary row;
+            const auto k=batch.input.tile;
+            row["tile"]=Vector3i(k.x,k.y,k.z);
+            row["revision"]=static_cast<int64_t>(batch.input.geometry->revision);
+            row["build_us"]=static_cast<int64_t>(batch.build_us);
+            row["fallback_columns"]=static_cast<int64_t>(batch.fallback_columns);
+            Array materials;
+            for(const auto &[slot,verts]:batch.materials) {
+                if(verts.empty())continue;
+                PackedVector3Array vertices;PackedVector2Array uv;
+                vertices.resize(static_cast<int64_t>(verts.size()));uv.resize(static_cast<int64_t>(verts.size()));
+                for(std::size_t i=0;i<verts.size();++i) {
+                    const auto &v=verts[i];
+                    vertices.set(static_cast<int64_t>(i),Vector3(v.x,v.y,v.z));
+                    uv.set(static_cast<int64_t>(i),Vector2(v.floor,v.ceiling));
+                }
+                Array item;item.push_back(static_cast<int64_t>(slot));item.push_back(vertices);item.push_back(uv);materials.push_back(item);
+            }
+            row["materials"]=materials;updates.push_back(row);
+        }
+        Dictionary out;out["updates"]=updates;out["wanted"]=keys;out["ready"]=ready;
+        out["snapshot_us"]=static_cast<int64_t>(snapshots_us);
+        // Physical fingerprint for frozen A/B replay. Includes every
+        // compartment's exact ledger and its revision/availability.
+        std::uint64_t hash=1469598103934665603ULL;
+        auto mix=[&](std::uint64_t x){hash^=x;hash*=1099511628211ULL;};
+        mix(static_cast<std::uint64_t>(domain_.graph().finite()));mix(ticks_);
+        for(const auto &[id,v]:domain_.graph().volumes()){mix(id);mix(v.type);mix(static_cast<std::uint64_t>(v.litres));}
+        for(const auto &[k,t]:domain_.tiles()){mix(static_cast<std::uint64_t>(k.x));mix(static_cast<std::uint64_t>(k.z));mix(t.geometry->revision);mix(t.expected_revision);mix(t.available?1:0);}
+        out["physics_digest"]=String::utf8(std::to_string(hash).c_str());
         return out;
     }
     godot::Dictionary report()const {

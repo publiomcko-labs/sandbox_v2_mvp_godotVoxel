@@ -1,7 +1,7 @@
 name: V3 native integration and isolated SQLite reopen
 on:
   push:
-    branches: [v3/hydraulic]
+    branches: [v3/hydraulic, exp/v3-hydraulic-hybrid]
     paths:
       - 'native/src/v3_world_session.*'
       - 'native/src/hydraulic_voxel_snapshot.hpp'

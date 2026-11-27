@@ -39,6 +39,7 @@ public:
     Dictionary hydraulic_at(const Vector3 &point) const;
     Array hydraulic_surfaces() const;
     Array hydraulic_mesh(int64_t id) const;
+    Dictionary hydraulic_hybrid();
     Dictionary hydraulic_report() const;
     bool flush_hydraulic();
     String get_geology_json() const;
