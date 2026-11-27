@@ -511,8 +511,31 @@
           "gpu_frame_p95_us": 50118
         },
         "i19": {
+          "status": "NATIVE_GPU_PASS_AUTHORITATIVE_OFFLINE_EDITED_STREAM_COST_OPEN",
+          "focus": "authoritative saved edited terrain stream snapshot and offline dirty publication",
+          "commit": "d39b72a74959fe6f249f123f8c22ad81f2dcd389",
+          "native_run": 46073001512,
+          "gpu_run": 46073001397,
+          "native_artifact": 15234231139,
+          "gpu_artifact": 15233362781,
+          "native_artifact_sha256": "9a89be76b0a96e1cfe4db57c3e27fdf1c17a998f94ad42c5e397b55526632a73",
+          "gpu_artifact_sha256": "9e4a2858a21129f2611d5548db5f42f47fef0c21adc69f931ab77ca0b387f739",
+          "sdf_digest": "aed03023105e9816",
+          "stream_found_blocks": 2,
+          "stream_absent_blocks": 43,
+          "stream_capacity_litres": 8874232,
+          "offline_mass_litres": 11314442,
+          "native_stream_snapshot_us": 113628,
+          "native_reopen_max_snapshot_us": 194727,
+          "gpu_near_tick": 16,
+          "gpu_far_tick": 34,
+          "gpu_combined_refresh_p95_us": 6208,
+          "gpu_combined_refresh_p99_us": 8539,
+          "gpu_frame_p95_us": 48197
+        },
+        "i20": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "authoritative saved edited terrain stream snapshot and offline dirty publication"
+          "focus": "incremental saved-stream acquisition and bounded read cache"
         }
       }
     },

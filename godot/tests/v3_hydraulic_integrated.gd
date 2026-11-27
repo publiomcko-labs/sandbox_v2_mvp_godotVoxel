@@ -324,7 +324,7 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
         await process_frame
     if streaming:
         var offline: Dictionary=runtime.session.hydraulic_report()
-        if int(offline["stream_survey_tiles"])<1 or int(offline["stream_found_blocks"])<1 or int(offline["litres"])!=mass:
+        if int(offline["stream_survey_tiles"])<1 or int(offline["stream_found_blocks"])<1 or int(offline["stream_steps"])<2 or int(offline["litres"])!=mass:
             _fail("stream publication "+str(offline))
             return
         print("V3_HYBRID_STREAM_PUBLICATION_PASS ",offline)

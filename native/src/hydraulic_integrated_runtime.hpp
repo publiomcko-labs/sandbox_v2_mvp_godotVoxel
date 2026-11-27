@@ -23,6 +23,9 @@ class IntegratedRuntime {
     hybrid::LayeredInputCache surface_cache_;
     EditProvenance provenance_;
     std::set<core::Region> pending_survey_,pending_stream_;
+    std::optional<StreamSnapshotJob> stream_job_;
+    StreamBlockCache stream_cache_;
+    std::uint64_t stream_steps_{},stream_cached_blocks_{},stream_max_step_us_{},stream_retry_frames_{};
     std::uint64_t visual_survey_tiles_{},post_edit_survey_tiles_{},suspended_reclaims_{};
     std::uint64_t stream_survey_tiles_{},stream_found_blocks_{},stream_generated_blocks_{},stream_read_failures_{};
     std::vector<std::uint64_t> tick_samples_;
@@ -176,6 +179,7 @@ public:
             if(model_.tiles().contains(k)){dirty_[k]=rev;group_.insert(k);model_.set_resident(k,false);}
             else if(near_wet){dirty_[k]=rev;group_.insert(k);activate_pending_.insert(k);}
             worker_.invalidate(k);pending_.erase(k);pending_survey_.erase(k);pending_stream_.erase(k);blocked_.erase(k);
+            if(stream_job_&&stream_job_->key()==k)stream_job_.reset();
         }
     }
     void frame(const godot::Ref<godot::VoxelTool>& tool,core::Vec3 p,std::uint64_t rev,std::uint64_t elapsed,const nlohmann::json& rules,const StreamSnapshotSource& stream) {
@@ -226,14 +230,35 @@ public:
             if(dirty_.contains(a)!=dirty_.contains(b))return dirty_.contains(a);
             return std::abs(a.x-center_.x)+std::abs(a.z-center_.z)<std::abs(b.x-center_.x)+std::abs(b.z-center_.z);
         });
+        // Drop a partial snapshot when its certificate or interest changes.
+        if(stream_job_&&(!stream.valid()||stream_job_->durable_revision()!=stream.durable_revision||
+            !interested(stream_job_->key())||!provenance_.certifies(stream_job_->key(),stream_job_->revision(),rev)||
+            resident(tool,stream_job_->key())))stream_job_.reset();
+        if(stream_retry_frames_)--stream_retry_frames_;
         bool acquired=false;
-        if(pending_.size()<2)for(int pass=0;pass<2&&!acquired;++pass)for(auto k:ordered) {
+        if(pending_.size()<2)for(int pass=0;pass<2&&!acquired;++pass){
+            if(pass==1&&stream_job_){
+                const auto begin=std::chrono::steady_clock::now();
+                stream_job_->step(&stream_cache_);++stream_steps_;
+                if(stream_job_->done()){
+                    const auto k=stream_job_->key();const auto wanted_revision=stream_job_->revision();
+                    const auto stats=stream_job_->stats();stream_found_blocks_+=stats.found;stream_generated_blocks_+=stats.generated;stream_cached_blocks_+=stats.cached;
+                    auto snapshot=stream_job_->finish();
+                    if(snapshot&&worker_.submit(std::move(*snapshot))){pending_[k]=wanted_revision;pending_stream_.insert(k);}
+                    else {++stream_read_failures_;stream_retry_frames_=20;}
+                    stream_job_.reset();
+                }
+                const auto us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-begin).count());
+                stream_max_step_us_=std::max(stream_max_step_us_,us);max_snapshot_us_=std::max(max_snapshot_us_,us);
+                break;
+            }
+            for(auto k:ordered) {
             auto it=model_.tiles().find(k);
             if(it!=model_.tiles().end()&&it->second.resident&&!dirty_.contains(k))continue;
             if(pending_.contains(k)||(blocked_.contains(k)&&blocked_.at(k)==rev))continue;
             const bool loaded=resident(tool,k);
             const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
-            const bool archived=!loaded&&pass==1&&!survey&&stream.valid()&&
+            const bool archived=!loaded&&pass==1&&!survey&&!stream_retry_frames_&&stream.valid()&&
                 provenance_.certifies(k,stream.durable_revision,rev)&&
                 (it==model_.tiles().end()||dirty_.contains(k)||it->second.geometry->render_sdf.empty());
             if((pass==0&&!loaded)||(pass==1&&!survey&&!archived))continue;
@@ -243,12 +268,14 @@ public:
             }
             const auto start=std::chrono::steady_clock::now();
             const auto wanted_revision=survey?0:archived?stream.durable_revision:dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
-            StreamSnapshotStats stats;
-            auto s=archived?copy_stream_snapshot(stream,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,&stats):
-                copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
+            if(archived){
+                stream_job_.emplace(stream,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
+                acquired=true;break;
+            }
+            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
             max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
-            if(archived){stream_found_blocks_+=stats.found;stream_generated_blocks_+=stats.generated;if(!s){++stream_read_failures_;break;}}
-            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);if(archived)pending_stream_.insert(k);acquired=true;break;}
+            if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);acquired=true;break;}
+            }
         }
         constexpr std::uint64_t period=50000000;
         debt_=std::min(debt_+std::min(elapsed,period*2),period*2);
@@ -346,6 +373,8 @@ public:
         d["stream_survey_tiles"]=static_cast<int64_t>(stream_survey_tiles_);
         d["stream_found_blocks"]=static_cast<int64_t>(stream_found_blocks_);d["stream_generated_blocks"]=static_cast<int64_t>(stream_generated_blocks_);
         d["stream_read_failures"]=static_cast<int64_t>(stream_read_failures_);
+        d["stream_cached_blocks"]=static_cast<int64_t>(stream_cached_blocks_);d["stream_steps"]=static_cast<int64_t>(stream_steps_);
+        d["stream_max_step_us"]=static_cast<int64_t>(stream_max_step_us_);
         d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());
         d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);

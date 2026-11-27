@@ -1,6 +1,6 @@
 # Hybrid hydraulic continuation checkpoint — 2026-11-27
 
-Branch: `exp/v3-hydraulic-hybrid` only. Latest validated runtime `19b0b403da188bdb08936273affe9db8e9adb7d5` (I18); status EXPERIMENTAL_INTEGRATED_PARTIAL. Preserve R1/R2/R3/H14 history. No merge/release qualification. See V3_4_HYBRID_RESULTS.md and V3_4_HYBRID_EXPERIMENT.json for full per-commit evidence.
+Branch: `exp/v3-hydraulic-hybrid` only. Latest validated runtime `d39b72a74959fe6f249f123f8c22ad81f2dcd389` (I19); status EXPERIMENTAL_INTEGRATED_PARTIAL. Preserve R1/R2/R3/H14 history. No merge/release qualification. See V3_4_HYBRID_RESULTS.md and V3_4_HYBRID_EXPERIMENT.json for full per-commit evidence.
 
 ## Completed and verified
 - I11b focal seam closure preserved; I12 fractional signed depth geometry and arbitrary segment overlap; I12b consistent normalization removed repeating serration; I13 promotes receiving local region before discharge and replaces long rectilinear tile boundary with more continuous physical progression (72–84L previously dry boundary columns). Rough stepped margins remain.
@@ -27,3 +27,5 @@ I17 core passed; native late lava failed closed (original mass unchanged; no sou
 I17b core/native/GPU passed: lava finite +64,000L once, all 3 source IDs persisted, ocean injection 9L then 18L after reopen. Ocean drain/large view coverage and source graphics remain unqualified; mod version 1.1.0 uses new pins. I18 adds exact quantized material-brush preflight and conservative displacement within wet connected descendants, candidate pending. Continue streaming next after actual barrier validation.
 
 I18 fully passed core/native/GPU for controlled within-tile construction and prior breach/lifecycle/sources regressions. Cross-tile displacement remains unqualified. I19 candidate reads authoritative flushed stream blocks only for provenance-certified revisions; test actual offline edited dirty publication. Do not claim unlimited visible-range/ocean coverage or asynchronous acquisition cost qualification.
+
+I19 native/GPU passed. Actual unloaded edited tile SDF digest and capacity exact vs live, 2 stored +43 absent blocks, unsaved read deferred, offline remap and revisit exact ledger. Reopen max synchronous snapshot 194.727ms; controlled stream copy 113.628ms. I20 candidate splits one block per frame, ephemeral 64-block cache per certificate; no full visual range claim. Need quantify step max, retain only measured benefit, then continue source/coverage working set.

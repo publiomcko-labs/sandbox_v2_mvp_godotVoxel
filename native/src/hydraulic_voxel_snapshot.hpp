@@ -93,43 +93,114 @@ struct StreamSnapshotSource {
     bool valid()const{return stream.is_valid()&&generator.is_valid()&&format.is_valid()&&
         block_size>=8&&block_size<=64&&(block_size&(block_size-1))==0;}
 };
-struct StreamSnapshotStats {std::uint64_t found{},generated{};};
+struct StreamSnapshotStats {std::uint64_t found{},generated{},cached{};};
+inline godot::Ref<godot::VoxelBuffer> create_stream_buffer(const StreamSnapshotSource& source,godot::Vector3i dims){
+    using namespace godot;
+    Ref<VoxelBuffer> out;out.instantiate();
+    for(int i=0;i<VoxelBuffer::MAX_CHANNELS;++i)
+        out->set_channel_depth(i,source.format->get_channel_depth(static_cast<VoxelBuffer::ChannelId>(i)));
+    out->create(dims.x,dims.y,dims.z);return out;
+}
+// Ephemeral, bounded cache of authoritative stream results. No writes to
+// terrain, no persisted duplicate. A new save certificate clears it.
+class StreamBlockCache {
+    struct Entry {godot::Ref<godot::VoxelBuffer> block;std::uint64_t stamp;};
+    std::map<core::Region,Entry> blocks_;
+    godot::Ref<godot::VoxelStream> stream_;
+    std::uint64_t revision_{},stamp_{};
+    int size_{};
+    static constexpr std::size_t limit=64;
+public:
+    void bind(const StreamSnapshotSource& s){
+        if(stream_!=s.stream||revision_!=s.durable_revision||size_!=s.block_size){
+            blocks_.clear();stream_=s.stream;revision_=s.durable_revision;size_=s.block_size;stamp_=0;
+        }
+    }
+    godot::Ref<godot::VoxelBuffer> get(core::Region k){
+        auto it=blocks_.find(k);if(it==blocks_.end())return {};
+        it->second.stamp=++stamp_;return it->second.block;
+    }
+    void put(core::Region k,const godot::Ref<godot::VoxelBuffer>& v){
+        if(size_>32)return; // bound worst-case full-channel allocation
+        if(blocks_.size()>=limit&&!blocks_.contains(k)){
+            auto old=std::min_element(blocks_.begin(),blocks_.end(),[](const auto&a,const auto&b){return a.second.stamp<b.second.stamp;});
+            blocks_.erase(old);
+        }
+        blocks_.insert_or_assign(k,Entry{v,++stamp_});
+    }
+};
+// A single tile acquisition is spread across frames. Each step performs
+// at most one actual stream load/generation, or one cached block copy.
+// Classification still produces plain immutable C++ data for the worker.
+class StreamSnapshotJob {
+    StreamSnapshotSource source_;
+    godot::Vector3i origin_,extent_,lo_,hi_;
+    std::uint64_t revision_{};
+    godot::Ref<godot::VoxelBuffer> buffer_;
+    std::vector<godot::Vector3i> blocks_;
+    std::size_t next_{};
+    StreamSnapshotStats stats_;
+    bool failed_=false;
+public:
+    StreamSnapshotJob(const StreamSnapshotSource& source,godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision):
+        source_(source),origin_(origin),extent_(extent),revision_(revision) {
+        using namespace godot;
+        if(!source.valid()||revision>source.durable_revision||extent.x<1||extent.x>16||
+            extent.z<1||extent.z>16||extent.y<1||extent.y>64||
+            std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
+            std::abs(std::int64_t(origin.z))>1000000){failed_=true;return;}
+        const int n=source.block_size;
+        lo_=origin-Vector3i(1,0,1);const auto size=extent+Vector3i(3,1,3);hi_=lo_+size;
+        auto floor_block=[&](int v){return v>=0?v/n:(v-n+1)/n;};
+        buffer_=create_stream_buffer(source,size);
+        for(int z=floor_block(lo_.z);z<=floor_block(hi_.z-1);++z)
+            for(int x=floor_block(lo_.x);x<=floor_block(hi_.x-1);++x)
+                for(int y=floor_block(lo_.y);y<=floor_block(hi_.y-1);++y)blocks_.push_back(Vector3i(x,y,z));
+    }
+    core::Region key()const{return {origin_.x,origin_.y,origin_.z};}
+    std::uint64_t revision()const{return revision_;}
+    std::uint64_t durable_revision()const{return source_.durable_revision;}
+    bool done()const{return failed_||next_==blocks_.size();}
+    bool failed()const{return failed_;}
+    const StreamSnapshotStats& stats()const{return stats_;}
+    void step(StreamBlockCache* cache=nullptr){
+        using namespace godot;
+        if(done())return;
+        const int n=source_.block_size;
+        const auto bp=blocks_[next_],bo=bp*n,end=bo+Vector3i(n,n,n);
+        const core::Region k{bp.x,bp.y,bp.z};
+        Ref<VoxelBuffer> block;
+        if(cache){cache->bind(source_);block=cache->get(k);}
+        if(block.is_valid())++stats_.cached;
+        else{
+            block=create_stream_buffer(source_,Vector3i(n,n,n));
+            const auto result=source_.stream->load_voxel_block(block,bp,0);
+            if(result==VoxelStream::RESULT_BLOCK_FOUND)++stats_.found;
+            else if(result==VoxelStream::RESULT_BLOCK_NOT_FOUND){
+                source_.generator->generate_block(block,Vector3(bo),0);++stats_.generated;
+            }else{failed_=true;return;}
+            if(block->get_size()!=Vector3i(n,n,n)||
+                block->get_channel_depth(VoxelBuffer::CHANNEL_SDF)!=buffer_->get_channel_depth(VoxelBuffer::CHANNEL_SDF)){failed_=true;return;}
+            if(cache)cache->put(k,block);
+        }
+        const Vector3i a(std::max(lo_.x,bo.x),std::max(lo_.y,bo.y),std::max(lo_.z,bo.z));
+        const Vector3i b(std::min(hi_.x,end.x),std::min(hi_.y,end.y),std::min(hi_.z,end.z));
+        buffer_->copy_channel_from_area(block,a-bo,b-bo,a-lo_,VoxelBuffer::CHANNEL_SDF);
+        ++next_;
+    }
+    std::optional<tp::Snapshot> finish()const{
+        if(failed_||!done())return {};
+        return classify_air_buffer(buffer_,origin_,extent_,revision_,true,1);
+    }
+};
+// Explicit diagnostic only: an independently read entire stream snapshot.
+// The gameplay scheduler uses StreamSnapshotJob incrementally.
 inline std::optional<tp::Snapshot> copy_stream_snapshot(const StreamSnapshotSource& source,
         godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,StreamSnapshotStats* stats=nullptr) {
-    using namespace godot;
-    if(!source.valid()||revision>source.durable_revision||extent.x<1||extent.x>16||
-        extent.z<1||extent.z>16||extent.y<1||extent.y>64||
-        std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
-        std::abs(std::int64_t(origin.z))>1000000)return {};
-    const int n=source.block_size;
-    const auto lo=origin-Vector3i(1,0,1),size=extent+Vector3i(3,1,3),hi=lo+size;
-    auto floor_block=[&](int v){return v>=0?v/n:(v-n+1)/n;};
-    auto create=[&](Vector3i dims){
-        Ref<VoxelBuffer> out;out.instantiate();
-        for(int i=0;i<VoxelBuffer::MAX_CHANNELS;++i)
-            out->set_channel_depth(i,source.format->get_channel_depth(static_cast<VoxelBuffer::ChannelId>(i)));
-        out->create(dims.x,dims.y,dims.z);return out;
-    };
-    auto buffer=create(size);
-    StreamSnapshotStats counts;
-    for(int z=floor_block(lo.z);z<=floor_block(hi.z-1);++z)
-        for(int x=floor_block(lo.x);x<=floor_block(hi.x-1);++x)
-            for(int y=floor_block(lo.y);y<=floor_block(hi.y-1);++y){
-                auto block=create(Vector3i(n,n,n));
-                const Vector3i bp(x,y,z),bo(x*n,y*n,z*n),end=bo+Vector3i(n,n,n);
-                const auto result=source.stream->load_voxel_block(block,bp,0);
-                if(result==VoxelStream::RESULT_BLOCK_FOUND)++counts.found;
-                else if(result==VoxelStream::RESULT_BLOCK_NOT_FOUND){
-                    source.generator->generate_block(block,Vector3(bo),0);++counts.generated;
-                }else return {};
-                if(block->get_size()!=Vector3i(n,n,n)||
-                    block->get_channel_depth(VoxelBuffer::CHANNEL_SDF)!=buffer->get_channel_depth(VoxelBuffer::CHANNEL_SDF))return {};
-                const Vector3i a(std::max(lo.x,bo.x),std::max(lo.y,bo.y),std::max(lo.z,bo.z));
-                const Vector3i b(std::min(hi.x,end.x),std::min(hi.y,end.y),std::min(hi.z,end.z));
-                buffer->copy_channel_from_area(block,a-bo,b-bo,a-lo,VoxelBuffer::CHANNEL_SDF);
-            }
-    if(stats)*stats=counts;
-    return classify_air_buffer(buffer,origin,extent,revision,true,1);
+    StreamSnapshotJob job(source,origin,extent,revision);
+    while(!job.done())job.step();
+    if(stats)*stats=job.stats();
+    return job.finish();
 }
 // Must be called on the engine main thread. The returned snapshot owns
 // plain C++ data only, suitable for off-thread topology extraction later.
