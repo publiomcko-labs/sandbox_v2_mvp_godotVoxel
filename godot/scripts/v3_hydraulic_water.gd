@@ -202,7 +202,10 @@ func hybrid_refresh() -> Dictionary:
         _hybrid_group_revision=revision
         for tile: Vector3i in state["edit_group_tiles"]:
             _hybrid_group[tile]=true
-            if _hybrid_stage.has(tile):
+            # Integrated native cache tracks accepted output, including
+            # staged meshes. Keep the last accepted stage until replacement
+            # or removal; the edit group already gates visible publication.
+            if OS.get_environment("V3_HYBRID_SOLVER")!="1" and _hybrid_stage.has(tile):
                 _free_hybrid_nodes(_hybrid_stage[tile])
                 _hybrid_stage.erase(tile)
     var data: Dictionary=session.hydraulic_hybrid()

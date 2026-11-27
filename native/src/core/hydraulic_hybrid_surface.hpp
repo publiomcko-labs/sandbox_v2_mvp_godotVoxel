@@ -30,7 +30,7 @@ struct Input {
     std::vector<Cell> cells{},neighbors{};
     bool layered=false;
     std::set<core::Region> adjacent_geometry{};
-    bool same(const Input& o)const{return geometry==o.geometry&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors&&layered==o.layered&&adjacent_geometry==o.adjacent_geometry;}
+    bool same(const Input& o)const{return geometry==o.geometry&&exposed_top==o.exposed_top&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors&&layered==o.layered&&adjacent_geometry==o.adjacent_geometry;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{}; bool operator==(const Vertex&) const=default;};
 struct Batch {
@@ -256,12 +256,50 @@ inline std::map<core::Region,Input> snapshot(const Domain& domain,int exposed_to
 }
 // Bounded read-only background work. A result from an older terrain
 // geometry is never published, even if it finished after an edit.
+// Dry target ownership is needed only within one column of an exposed
+// donor. Covered layers cannot create bank aprons.
+inline bool bank_has_donor(const Input& wet,const core::Region& target) {
+    const auto &g=*wet.geometry;
+    const int ceiling=(g.origin.y+wet.exposed_top)*1000;
+    return std::any_of(wet.cells.begin(),wet.cells.end(),[&](const Cell& c){
+        return c.ceiling_mm==ceiling&&c.x>=target.x-1&&c.x<=target.x+g.nx&&
+            c.z>=target.z-1&&c.z<=target.z+g.nz;
+    });
+}
+// Conservative dependency groups: all dirty tiles sharing a cardinal
+// edge or corner in either accepted or requested ownership are atomic.
+// Unchanged inputs need no rebuild; disjoint groups cannot share a halo.
+inline std::map<core::Region,core::Region> dirty_groups(
+    const std::vector<Input>& jobs,const std::map<core::Region,Input>& previous) {
+    std::map<core::Region,std::set<core::Region>> links;
+    for(const auto &in:jobs)links.try_emplace(in.tile);
+    for(const auto &in:jobs) {
+        auto connect=[&](const std::set<core::Region>& neighbors){
+            for(const auto &q:neighbors)if(links.contains(q)){
+                links.at(in.tile).insert(q);links.at(q).insert(in.tile);
+            }
+        };
+        connect(in.adjacent_geometry);
+        auto old=previous.find(in.tile);
+        if(old!=previous.end())connect(old->second.adjacent_geometry);
+    }
+    std::map<core::Region,core::Region> groups;
+    for(const auto &[k,neighbors]:links){
+        (void)neighbors;
+        if(groups.contains(k))continue;
+        std::vector<core::Region> queue{k};groups.emplace(k,k);
+        for(std::size_t i=0;i<queue.size();++i)
+            for(const auto &q:links.at(queue[i]))if(groups.emplace(q,k).second)queue.push_back(q);
+    }
+    return groups;
+}
 class Renderer {
     std::map<core::Region,Input> presented_;
     // Exact accepted output cache; never cache a rejected revision as published.
     std::map<core::Region,std::map<std::size_t,std::vector<Vertex>>> published_meshes_;
     std::optional<core::Region> cursor_;
     std::optional<std::future<std::vector<Batch>>> running_;
+    std::map<core::Region,core::Region> running_groups_;
     // The async task is sole writer; shared lifetime survives destruction.
     std::shared_ptr<std::map<core::Region,CachedTile>> cache_=std::make_shared<std::map<core::Region,CachedTile>>();
 public:
@@ -270,29 +308,42 @@ public:
         if(running_&&running_->wait_for(std::chrono::seconds(0))==std::future_status::ready) {
             auto results=running_->get();running_.reset();
             const bool coherent=!results.empty()&&results.front().input.layered;
-            bool rejected=false;
+            std::set<core::Region> rejected_groups;
             std::vector<Batch> accepted;
             for(auto &result:results) {
                 const auto it=wanted.find(result.input.tile);
-                if(it==wanted.end()||it->second.geometry!=result.input.geometry){rejected=true;continue;}
+                auto reject=[&]{if(coherent)rejected_groups.insert(running_groups_.at(result.input.tile));};
+                if(it==wanted.end()||it->second.geometry!=result.input.geometry){reject();continue;}
                 // Drop obsolete wet membership, not merely the changing
                 // head: a dry column cannot be resurrected by a worker.
-                if(it->second.wet.size()!=result.input.wet.size()){rejected=true;continue;}
+                if(it->second.wet.size()!=result.input.wet.size()){reject();continue;}
                 bool same_members=true;
                 for(std::size_t i=0;i<it->second.wet.size();++i) {
                     const auto &a=it->second.wet[i],&b=result.input.wet[i];
                     if(a.id!=b.id||a.type!=b.type){same_members=false;break;}
                 }
-                if(!same_members){rejected=true;continue;}
+                if(!same_members){reject();continue;}
                 auto membership=[](const Cell& a){return std::tuple{a.x,a.z,a.floor_mm,a.ceiling_mm,a.type};};
                 std::set<std::tuple<int,int,int,int,std::size_t>> current;
                 for(const auto &cell:it->second.cells)current.insert(membership(cell));
                 for(const auto &cell:result.input.cells)if(!current.contains(membership(cell))){same_members=false;break;}
-                if(!same_members){rejected=true;continue;}
+                if(!same_members){reject();continue;}
+                if(coherent) {
+                    // A stale dry donor in the halo can resurrect an apron
+                    // even if all primary cells are still wet.
+                    current.clear();
+                    for(const auto &cell:it->second.neighbors)current.insert(membership(cell));
+                    for(const auto &cell:result.input.neighbors)
+                        if(!current.contains(membership(cell))){same_members=false;break;}
+                    if(!same_members||it->second.adjacent_geometry!=result.input.adjacent_geometry){
+                        reject();continue;
+                    }
+                }
                 accepted.push_back(std::move(result));
             }
-            if(!coherent||!rejected)for(auto &result:accepted){
+            for(auto &result:accepted){
                 const auto k=result.input.tile;
+                if(coherent&&rejected_groups.contains(running_groups_.at(k)))continue;
                 presented_.insert_or_assign(k,result.input);
                 // Empty bank tiles and quantized inputs may produce identical
                 // geometry. Advance the accepted input but avoid Godot churn.
@@ -301,6 +352,7 @@ public:
                 if(coherent)published_meshes_.insert_or_assign(k,result.materials);
                 done.push_back(std::move(result));
             }
+            running_groups_.clear();
         }
         for(auto it=presented_.begin();it!=presented_.end();) {
             if(!wanted.contains(it->first)){published_meshes_.erase(it->first);it=presented_.erase(it);}else ++it;
@@ -312,7 +364,10 @@ public:
             auto first=cursor_?wanted.upper_bound(*cursor_):wanted.begin();
             for(auto it=first;it!=wanted.end();++it)order.push_back(it->first);
             for(auto it=wanted.begin();it!=first;++it)order.push_back(it->first);
-            const std::size_t limit=!wanted.empty()&&wanted.begin()->second.layered?128:4;
+            const bool layered=!wanted.empty()&&wanted.begin()->second.layered;
+            // The integrated model bounds known tiles; never split a dirty
+            // dependency group at an arbitrary batch-size threshold.
+            const std::size_t limit=layered?wanted.size():4;
             for(int pass=0;pass<2&&jobs.size()<limit;++pass)for(const auto &k:order) {
                 const auto &in=wanted.at(k);
                 auto old=presented_.find(k);
@@ -326,6 +381,7 @@ public:
             for(auto it=cache_->begin();it!=cache_->end();) {
                 if(!wanted.contains(it->first))it=cache_->erase(it);else ++it;
             }
+            if(layered)running_groups_=dirty_groups(jobs,presented_);
             if(!jobs.empty())running_.emplace(std::async(std::launch::async,[items=std::move(jobs),cache=cache_]() mutable {
                 std::vector<Batch> out;
                 for(auto &in:items) {

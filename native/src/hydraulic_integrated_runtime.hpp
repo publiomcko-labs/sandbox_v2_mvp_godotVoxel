@@ -176,7 +176,8 @@ public:
         // when it contains no hydraulic mass. Never synthesize unknown.
         std::set<core::Region> banks;
         for(const auto &[k,in]:out){(void)in;for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz){
-            core::Region q{k.x+dx*side,base,k.z+dz*side};if(!out.contains(q)&&!dirty_.contains(q)&&model_.tiles().contains(q))banks.insert(q);
+            core::Region q{k.x+dx*side,base,k.z+dz*side};
+            if(!out.contains(q)&&!dirty_.contains(q)&&model_.tiles().contains(q)&&hybrid::bank_has_donor(in,q))banks.insert(q);
         }}
         for(auto k:banks){hybrid::Input in{k,model_.tiles().at(k).geometry,{},height,{}};in.layered=true;out.emplace(k,std::move(in));}
         // Only the one-column wet halo is copied between neighboring

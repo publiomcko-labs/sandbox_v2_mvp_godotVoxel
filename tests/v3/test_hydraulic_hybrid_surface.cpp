@@ -101,6 +101,21 @@ int main(){
     desired.clear();cached_renderer.poll(desired);
     desired.emplace(empty.tile,empty);
     await_current(1);
+    // I7b: only exposed border donors require a dry target. Dirty
+    // groups include old ownership links and diagonal neighbors.
+    assert(hybrid::bank_has_donor(il,right.origin));
+    auto interior=il;
+    interior.cells={{0,0,0,8000,0,2.0,{2,2,2,2}}};
+    assert(!hybrid::bank_has_donor(interior,right.origin));
+    interior.cells={{1,0,0,1000,0,0.5,{0.5,0.5,0.5,0.5}}};
+    assert(!hybrid::bank_has_donor(interior,right.origin));
+    auto a=il,b=ir,c=ir;
+    c.tile.x=20;
+    a.adjacent_geometry={};b.adjacent_geometry={};c.adjacent_geometry={};
+    auto prev=a;prev.adjacent_geometry.insert(b.tile);
+    const auto groups=hybrid::dirty_groups({a,b,c},{{a.tile,prev}});
+    assert(groups.at(a.tile)==groups.at(b.tile)&&groups.at(a.tile)!=groups.at(c.tile));
+    std::cout<<"V3_HYBRID_I7_GROUPS_PASS\n";
     std::cout<<"V3_HYBRID_I7_IDENTICAL_OUTPUT_PASS\n";
     std::cout<<"V3_HYBRID_I2_SURFACE_PASS shared_edge=1 dry_primary=1 independent_layer=1\n";
     std::cout<<"V3_HYBRID_R1_PASS layers=2 baseline_support_equivalent=1 dry_island_physics=1 mass="<<mass<<" triangles="<<v.size()/3<<" stale_rejected=1\n";
