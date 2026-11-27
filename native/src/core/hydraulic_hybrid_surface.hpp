@@ -33,11 +33,17 @@ struct Input {
     bool same(const Input& o)const{return geometry==o.geometry&&exposed_top==o.exposed_top&&wet==o.wet&&cells==o.cells&&neighbors==o.neighbors&&layered==o.layered&&adjacent_geometry==o.adjacent_geometry;}
 };
 struct Vertex {double x{},y{},z{},floor{},ceiling{}; bool operator==(const Vertex&) const=default;};
+using MaterialVertices=std::map<std::size_t,std::vector<Vertex>>;
+using Edge=std::array<Vertex,2>;
+using EdgeKey=std::tuple<int,double,std::size_t>;
+using BoundaryEdges=std::map<EdgeKey,std::vector<Edge>>;
+using TileEdges=std::array<BoundaryEdges,4>;
 struct Batch {
     Input input;
     std::map<std::size_t,std::vector<Vertex>> materials;
     std::uint64_t build_us{};
     std::size_t fallback_columns{};
+    TileEdges edges{};
 };
 inline Vertex lerp_vertex(const Vertex& a,const Vertex& b,double f) {
     return {a.x+(b.x-a.x)*f,a.y+(b.y-a.y)*f,a.z+(b.z-a.z)*f,a.floor+(b.floor-a.floor)*f,a.ceiling+(b.ceiling-a.ceiling)*f};
@@ -469,14 +475,10 @@ inline std::map<core::Region,core::Region> dirty_groups(
 // edge. The original quad footprints and material/roof ownership remain
 // unchanged. One canonical owner emits only a vertical seam face, never
 // a horizontal apron or a new physical wet cell.
-using MaterialVertices=std::map<std::size_t,std::vector<Vertex>>;
-inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,const MaterialVertices& b,bool x_axis,int boundary) {
-    using Edge=std::array<Vertex,2>;
-    using Key=std::tuple<int,double,std::size_t>;
+inline BoundaryEdges collect_tile_edges(const MaterialVertices& src,bool x_axis,int boundary,bool lower_side) {
+    BoundaryEdges edges;
     auto fixed=[&](const Vertex& v){return x_axis?v.x:v.z;};
     auto along=[&](const Vertex& v){return x_axis?v.z:v.x;};
-    auto collect=[&](const MaterialVertices& src,bool lower_side){
-        std::map<Key,std::vector<Edge>> edges;
         for(const auto &[slot,verts]:src)for(std::size_t i=0;i+2<verts.size();i+=3){
             const std::array<Vertex,3> q{verts[i],verts[i+1],verts[i+2]};
             for(std::size_t n=0;n<3;++n){
@@ -488,9 +490,10 @@ inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,con
                 edges[{static_cast<int>(std::floor((along(u)+along(v))*0.5)),u.ceiling,slot}].push_back({u,v});
             }
         }
-        return edges;
-    };
-    const auto left=collect(a,true),right=collect(b,false);
+    return edges;
+}
+inline void stitch_edges(MaterialVertices& dst,const BoundaryEdges& left,const BoundaryEdges& right,bool x_axis) {
+    auto along=[&](const Vertex& v){return x_axis?v.z:v.x;};
     for(const auto &[key,edges]:left){
         const auto other=right.find(key);if(other==right.end())continue;
         std::vector<double> breaks;
@@ -527,10 +530,14 @@ inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,con
         }
     }
 }
+inline void stitch_tile_edge(MaterialVertices& dst,const MaterialVertices& a,const MaterialVertices& b,bool x_axis,int boundary) {
+    stitch_edges(dst,collect_tile_edges(a,x_axis,boundary,true),collect_tile_edges(b,x_axis,boundary,false),x_axis);
+}
 class Renderer {
     std::map<core::Region,Input> presented_;
     // Exact accepted output cache; never cache a rejected revision as published.
-    std::map<core::Region,MaterialVertices> published_meshes_,stitched_meshes_;
+    std::map<core::Region,MaterialVertices> published_meshes_,published_seams_;
+    std::map<core::Region,TileEdges> accepted_edges_;
     std::optional<core::Region> cursor_;
     std::optional<std::future<std::vector<Batch>>> running_;
     std::map<core::Region,core::Region> running_groups_;
@@ -539,7 +546,7 @@ class Renderer {
 public:
     std::vector<Batch> poll(const std::map<core::Region,Input>& wanted) {
         std::vector<Batch> done;
-        std::set<core::Region> stitch_dirty;
+        std::set<core::Region> stitch_dirty,base_changed;
         std::map<core::Region,std::pair<std::uint64_t,std::size_t>> stitch_metrics;
         auto mark_stitch=[&](core::Region k,const Input& in){
             stitch_dirty.insert(k);
@@ -592,7 +599,13 @@ public:
                 if(coherent&&old!=published_meshes_.end()&&old->second==result.materials)continue;
                 if(coherent){
                     published_meshes_.insert_or_assign(k,std::move(result.materials));
-                    mark_stitch(k,result.input);
+                    base_changed.insert(k);stitch_dirty.insert(k);
+                    auto previous=accepted_edges_.find(k);
+                    if(previous==accepted_edges_.end()||previous->second[0]!=result.edges[0])
+                        stitch_dirty.insert({k.x-result.input.geometry->nx,k.y,k.z});
+                    if(previous==accepted_edges_.end()||previous->second[2]!=result.edges[2])
+                        stitch_dirty.insert({k.x,k.y,k.z-result.input.geometry->nz});
+                    accepted_edges_.insert_or_assign(k,std::move(result.edges));
                     stitch_metrics[k]={result.build_us,result.fallback_columns};
                 }else done.push_back(std::move(result));
             }
@@ -601,21 +614,24 @@ public:
         for(auto it=presented_.begin();it!=presented_.end();) {
             if(!wanted.contains(it->first)){
                 if(published_meshes_.contains(it->first))mark_stitch(it->first,it->second);
-                published_meshes_.erase(it->first);stitched_meshes_.erase(it->first);it=presented_.erase(it);
+                published_meshes_.erase(it->first);published_seams_.erase(it->first);accepted_edges_.erase(it->first);it=presented_.erase(it);
             }else ++it;
         }
         for(auto k:stitch_dirty){
             auto own=published_meshes_.find(k);if(own==published_meshes_.end())continue;
             const auto &in=presented_.at(k);
             const auto &g=*in.geometry;
+            MaterialVertices seams;
+            const auto &edges=accepted_edges_.at(k);
+            auto east=accepted_edges_.find({k.x+g.nx,k.y,k.z});
+            if(east!=accepted_edges_.end())stitch_edges(seams,edges[1],east->second[0],true);
+            auto south=accepted_edges_.find({k.x,k.y,k.z+g.nz});
+            if(south!=accepted_edges_.end())stitch_edges(seams,edges[3],south->second[2],false);
+            auto old=published_seams_.find(k);
+            if(!base_changed.contains(k)&&old!=published_seams_.end()&&old->second==seams)continue;
+            published_seams_.insert_or_assign(k,seams);
             MaterialVertices combined=own->second;
-            auto east=published_meshes_.find({k.x+g.nx,k.y,k.z});
-            if(east!=published_meshes_.end())stitch_tile_edge(combined,own->second,east->second,true,k.x+g.nx);
-            auto south=published_meshes_.find({k.x,k.y,k.z+g.nz});
-            if(south!=published_meshes_.end())stitch_tile_edge(combined,own->second,south->second,false,k.z+g.nz);
-            auto old=stitched_meshes_.find(k);
-            if(old!=stitched_meshes_.end()&&old->second==combined)continue;
-            stitched_meshes_.insert_or_assign(k,combined);
+            for(const auto &[slot,verts]:seams){auto &dst=combined[slot];dst.insert(dst.end(),verts.begin(),verts.end());}
             const auto m=stitch_metrics[k];
             done.push_back({in,std::move(combined),m.first,m.second});
         }
@@ -648,7 +664,17 @@ public:
                 std::vector<Batch> out;
                 for(auto &in:items) {
                     const auto k=in.tile;
-                    out.push_back(build(std::move(in),&(*cache)[k]));
+                    auto batch=build(std::move(in),&(*cache)[k]);
+                    if(batch.input.layered){
+                        const auto start=std::chrono::steady_clock::now();
+                        const auto &g=*batch.input.geometry;
+                        batch.edges={collect_tile_edges(batch.materials,true,k.x,false),
+                            collect_tile_edges(batch.materials,true,k.x+g.nx,true),
+                            collect_tile_edges(batch.materials,false,k.z,false),
+                            collect_tile_edges(batch.materials,false,k.z+g.nz,true)};
+                        batch.build_us+=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count());
+                    }
+                    out.push_back(std::move(batch));
                 }
                 return out;
             }));

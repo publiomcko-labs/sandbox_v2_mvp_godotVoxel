@@ -469,6 +469,7 @@ public:
         }
         Dictionary out;out["updates"]=updates;out["wanted"]=keys;out["ready"]=ready;
         out["snapshot_us"]=static_cast<int64_t>(snapshots_us);
+        out["edit_state"]=integrated_?integrated_->render_state():report();
         // Physical fingerprint for frozen A/B replay. Includes every
         // compartment's exact ledger and its revision/availability.
         std::uint64_t hash=1469598103934665603ULL;

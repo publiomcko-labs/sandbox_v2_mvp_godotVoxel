@@ -203,6 +203,13 @@ public:
     }
     const auto& dirty()const{return dirty_;}
     bool retained_wet(core::Region k)const{return model_.tiles().contains(k)&&model_.tile_mass(k)>0;}
+    godot::Dictionary render_state()const {
+        using namespace godot;Dictionary d;
+        d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());
+        d["edit_group_revision"]=static_cast<int64_t>(revision_);
+        Array group;for(auto k:group_)group.push_back(Vector3i(k.x,k.y,k.z));d["edit_group_tiles"]=group;
+        return d;
+    }
     godot::Dictionary report()const {
         using namespace godot;Dictionary d;
         d["solver"]="hybrid";d["litres"]=model_.mass();d["initial"]=model_.initial();d["injected"]=model_.injected();d["drained"]=model_.drained();

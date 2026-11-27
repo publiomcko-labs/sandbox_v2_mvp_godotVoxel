@@ -364,8 +364,28 @@
           "filled_mask_added": 0
         },
         "i13": {
+          "status": "CORE_NATIVE_GPU_PASS_FRONT_EXPANSION_PARTIAL_GEOMETRY_COST_OPEN",
+          "focus": "local front promotion before boundary discharge",
+          "commit": "0cfc9ab43c197bdbc093a1527820be1da4379287",
+          "core_run": 46067239862,
+          "native_run": 46067239321,
+          "gpu_run": 46067239326,
+          "native_artifact": 15231208071,
+          "gpu_artifact": 15231253141,
+          "litres": 11314442,
+          "near_tick": 16,
+          "far_tick": 34,
+          "gpu_activations": 5,
+          "gpu_settles": 0,
+          "gpu_tick_p95_us": 4387,
+          "gpu_worker_p95_us": 1543,
+          "gpu_combined_refresh_p95_us": 6569,
+          "gpu_combined_refresh_p99_us": 10336,
+          "gpu_frame_p95_us": 54497
+        },
+        "i14": {
           "status": "CANDIDATE_VALIDATION_PENDING",
-          "focus": "local front promotion before boundary discharge"
+          "focus": "worker boundary extraction and incremental seam-only cache"
         }
       }
     },

@@ -64,6 +64,8 @@ func _ready() -> void:
 func refresh() -> void:
     if _hybrid_only:
         hybrid_refresh()
+        if OS.get_environment("V3_HYBRID_SOLVER")=="1":
+            return # integrated runtime exposes no flow rows yet
         var flow_rows: Dictionary={}
         for row: Array in session.hydraulic_surfaces():
             if row.size()>4:
@@ -250,7 +252,8 @@ func _try_hybrid_buffers(tile: Vector3i, materials: Array) -> bool:
 
 func hybrid_refresh() -> Dictionary:
     var started:=Time.get_ticks_usec()
-    var state: Dictionary=session.hydraulic_report()
+    var data: Dictionary=session.hydraulic_hybrid()
+    var state: Dictionary=data["edit_state"]
     var revision:=int(state["edit_group_revision"])
     if revision!=_hybrid_group_revision:
         _hybrid_group_revision=revision
@@ -262,7 +265,6 @@ func hybrid_refresh() -> Dictionary:
             if OS.get_environment("V3_HYBRID_SOLVER")!="1" and _hybrid_stage.has(tile):
                 _free_hybrid_nodes(_hybrid_stage[tile])
                 _hybrid_stage.erase(tile)
-    var data: Dictionary=session.hydraulic_hybrid()
     _hybrid_digest=str(data["physics_digest"])
     if _hybrid_snapshot_us.size()<4096:
         _hybrid_snapshot_us.append(int(data["snapshot_us"]))
