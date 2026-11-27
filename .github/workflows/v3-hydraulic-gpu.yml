@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 55); do
-            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45977400026")
-            test "$(jq -r .head_sha <<< "$result")" = "949f49130944c2f5ad7c0712f6cb359e34325b25"
+            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45977720014")
+            test "$(jq -r .head_sha <<< "$result")" = "5f99bb606b9965c4cd985fc226f6bc180a354443"
             if [ "$(jq -r .status <<< "$result")" = completed ]; then
               test "$(jq -r .conclusion <<< "$result")" = success
               exit 0
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: v3-native-integration-evidence
-          run-id: 45977400026
+          run-id: 45977720014
           github-token: ${{ github.token }}
           path: h13-stress-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Run isolated rendered Godot fixture and capture only game viewport
@@ -62,7 +62,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
-          git diff --quiet 949f49130944c2f5ad7c0712f6cb359e34325b25 HEAD -- native godot/scripts godot/shaders godot/scenes godot/mods third_party.lock
+          git diff --quiet 5f99bb606b9965c4cd985fc226f6bc180a354443 HEAD -- native godot/scripts godot/shaders godot/scenes godot/mods third_party.lock
           if ($LASTEXITCODE -ne 0) { throw 'Runtime differs from validated native candidate' }
           if (@(Get-Process -Name 'godot*' -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Godot already running' }
           ./scripts/bootstrap-windows.ps1 -RuntimeOnly
