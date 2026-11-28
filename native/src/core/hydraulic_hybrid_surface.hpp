@@ -196,7 +196,12 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             if(!open)return mean_depth;
             // A 5 cm transition scale is geometric only; deep water
             // retains full support, shallow fronts acquire fractional edges.
-            return (sum-0.05*open)/(wet_count+open);
+            // Subcell contour support is confined to the certified
+            // physically wet footprint. Use a bounded corner transition
+            // even for a deep cell facing a verified open/dry recipient;
+            // otherwise neighbouring 1m cells expose square steps.
+            // A solid bank is still clipped by the actual terrain SDF.
+            return (sum-0.15*open)/(wet_count+open);
         };
         for(const auto &cell:out.input.cells) {
             std::array<Vertex,4> vertices;
@@ -208,9 +213,19 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
                 vertices[j]={double(x),corner(cell,x,z),double(z),clip,ceiling};
             }
             auto &v=out.materials[cell.type];
-            // At most three dry samples meet a wet cell at a corner.
-            // A depth above 15cm cannot cross zero: exact fast path.
-            if(cell.ceiling_mm==exposed_ceiling&&!g.render_sdf.empty()&&cell.head-cell.floor_mm*0.001<=0.15){
+            // Clip only a physically wet exposed cell: a shallow front,
+            // or a deeper front whose adjacent dry side is certified
+            // open. Interior/deep water keeps the two-triangle fast path.
+            bool needs_front=cell.head-cell.floor_mm*0.001<=0.15;
+            if(!needs_front&&cell.ceiling_mm==exposed_ceiling)for(const auto [dx,dz]:std::array<std::pair<int,int>,4>{{{-1,0},{1,0},{0,-1},{0,1}}}){
+                const int xx=cell.x+dx,zz=cell.z+dz;
+                auto it=columns.find({xx,zz});
+                bool wet=false;
+                if(it!=columns.end())for(const auto *candidate:it->second)if(candidate->type==cell.type&&candidate->ceiling_mm==cell.ceiling_mm&&
+                    std::max(candidate->floor_mm,cell.floor_mm)<std::min(candidate->ceiling_mm,cell.ceiling_mm)){wet=true;break;}
+                if(!wet&&dry_open(xx,zz,cell.head)){needs_front=true;break;}
+            }
+            if(cell.ceiling_mm==exposed_ceiling&&!g.render_sdf.empty()&&needs_front){
                 std::array<Vertex,8> ring{};std::array<double,8> f{};
                 bool clipped=false;
                 for(std::size_t i=0;i<4;++i){

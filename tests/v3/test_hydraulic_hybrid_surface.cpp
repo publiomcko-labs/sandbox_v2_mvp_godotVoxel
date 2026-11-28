@@ -235,6 +235,24 @@ int main(){
     hybrid::stitch_tile_edge(overlap,west_patch,partial,true,2);
     assert(overlap.at(0).size()==12);
     for(std::size_t i=6;i<12;++i)assert(overlap.at(0)[i].z>=0.25&&overlap.at(0)[i].z<=0.75);
+    // Exposed deep front adjacent to certified open air has a rounded
+    // subcell contour strictly inside its physically wet 1m footprint.
+    // Solid banks and all fully wet interiors retain the fast path.
+    auto deep_front=front;
+    deep_front.cells.resize(1);
+    deep_front.cells[0].head=2.0;
+    deep_front.cells[0].corners={2,2,2,2};
+    const auto deep_build=hybrid::build(deep_front);
+    double deep_area=0;
+    for(std::size_t i=0;i<deep_build.materials.at(0).size();i+=3){
+        const auto &v=deep_build.materials.at(0);
+        deep_area+=std::abs((v[i+1].x-v[i].x)*(v[i+2].z-v[i].z)-
+            (v[i+1].z-v[i].z)*(v[i+2].x-v[i].x))*0.5;
+        for(std::size_t k=0;k<3;++k)
+            assert(v[i+k].x>=0&&v[i+k].x<=1&&v[i+k].z>=0&&v[i+k].z<=1);
+    }
+    assert(deep_area>0.25&&deep_area<1.0);
+    std::cout<<"V3_HYBRID_I25_DEEP_FRONT_CONTOUR_PASS area="<<deep_area<<" footprint=bounded\\n";
     // Uniform adjacent shallow centers: on their common edge the
     // subcell surface must retain a shared interval, not a point.
     front.cells.push_back({1,0,0,8000,0,0.005,{0.005,0.005,0.005,0.005}});
