@@ -268,7 +268,11 @@ class IntegratedRuntime {
                 // portal. Pristine target tiles can be acquired even after
                 // unrelated terrain edits; edited owners retain real mass
                 // and must fill by flow, never by reinitialization.
-                if(k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
+                // The certified source tile is also a real wet tile. Do not
+                // leave a square dry hole under an otherwise full ocean.
+                // acquire_ocean is idempotent and never overwrites an
+                // existing owner: it explicitly ledgers only additions.
+                if(!it->second.local&&provenance_.pristine(k,rev)){
                     if(!model_.acquire_ocean(proof,rev,true))continue;
                     ++ocean_acquisitions_;
                 }else if(!model_.remember_ocean(proof,rev))continue;

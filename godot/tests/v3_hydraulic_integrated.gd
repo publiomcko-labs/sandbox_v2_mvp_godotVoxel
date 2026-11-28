@@ -545,6 +545,14 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     if not reached or int(ready["litres"])!=int(ready["initial"])+int(ready["injected"])-int(ready["drained"]):
         _fail("ocean visible >96 coverage or ledger "+str(ready)+" render="+str(water.call("get_report")))
         return
+    # The source tile itself must be physically wet at head 30.
+    # Previously it was deliberately excluded, leaving a conspicuous
+    # 16x16m square of dry terrain in an otherwise connected ocean.
+    var source_root_mass:=runtime.session.hydraulic_column_mass(Vector3(112.5,0,112.5))
+    if source_root_mass<=0:
+        _fail("ocean source root square hole "+str(ready))
+        return
+    print("V3_HYBRID_OCEAN_SOURCE_ROOT_PASS litres=",source_root_mass)
     if not await _capture("08-ocean-wide"):
         return
     # Explicit fixed-head sink is physically connected to the same

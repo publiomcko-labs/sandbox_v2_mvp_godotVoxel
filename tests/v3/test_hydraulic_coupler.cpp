@@ -227,7 +227,10 @@ int main(){
     auto proof=OceanReach::extend("extended",2,8,1,*a,a->compartments.front().id,{});
     assert(proof.compartments.size()==1&&proof.frontier(*a).contains(kb));
     assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000&&extended.initial()==0);
-    assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000);
+    // The physical source tile must also be filled by its own certified
+    // fixed-head source, exactly once, without skipping its root geometry.
+    assert(extended.tile_mass(ka)==32000&&extended.injected()==32000);
+    assert(extended.acquire_ocean(proof,1,true)&&extended.mass()==32000&&extended.injected()==32000);
     auto previous=a;
     nlohmann::json archived_ocean;
     for(int x=1;x<=120;++x){
