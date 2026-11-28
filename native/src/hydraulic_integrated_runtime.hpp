@@ -647,9 +647,14 @@ public:
             // Prefer a durable, revision- and halo-certified read of the
             // existing VoxelStream/generator for unchanged geometry.
             // A live unsaved terrain edit never takes this path.
-            const bool stream_safe=!stream_retry_frames_&&stream.valid()&&!dirty_.contains(k)&&
+            // A once-dirty owner can be reacquired from the authoritative
+            // VoxelStream after the edit AND its one-voxel halo are durably
+            // committed. The previous exclusion of dirty tiles blocked
+            // offscreen construction forever, even after a clean flush.
+            // Before durability the provenance guard fails closed.
+            const bool stream_safe=!stream_retry_frames_&&stream.valid()&&
                 provenance_.certifies_halo(k,stream.durable_revision,rev)&&
-                (it==model_.tiles().end()||it->second.geometry->render_sdf.empty());
+                (dirty_.contains(k)||it==model_.tiles().end()||it->second.geometry->render_sdf.empty());
             const bool survey=!loaded&&pass==1&&!stream_safe&&it==model_.tiles().end()&&
                 provenance_.pristine(k,rev);
             const bool archived=pass==1&&stream_safe;
