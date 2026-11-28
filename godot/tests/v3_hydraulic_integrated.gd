@@ -284,8 +284,12 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
         if int(state["injected"])>int(start["injected"]):
             break
     var after: Dictionary=runtime.session.hydraulic_report()
-    if int(after["sources"])!=3 or int(after["injected"])<=int(start["injected"]):
-        _fail("late ocean did not inject "+str(after))
+    # The first encounter must demonstrate real source transfer. On
+    # reopen the same finite receiving volume may already be at the
+    # boundary head: a zero-flux equilibrium is correct, not a failure.
+    # Both paths still require a registered source and the exact ledger.
+    if int(after["sources"])!=3 or int(after["injected"])<int(start["injected"]) or (not reopen and int(after["injected"])<=int(start["injected"])) or int(after["litres"])!=int(after["initial"])+int(after["injected"])-int(after["drained"]):
+        _fail("late ocean source or ledger "+str(after))
         return
     print("V3_HYBRID_SOURCES_PASS phase=",("reopen" if reopen else "write")," initial=",finite," state=",after)
     runtime.request_close()
