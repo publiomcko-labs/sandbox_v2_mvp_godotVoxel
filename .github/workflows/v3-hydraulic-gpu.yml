@@ -61,7 +61,7 @@ jobs:
   interactive-gpu:
     needs: validate-candidate
     runs-on: [self-hosted, interactive-gpu]
-    timeout-minutes: 18
+    timeout-minutes: 23
     defaults:
       run:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
@@ -134,6 +134,27 @@ jobs:
           Get-Content $stressErr
           if ($s.ExitCode -ne 0 -or !(Select-String -LiteralPath $stressOut -SimpleMatch 'V3_HYBRID_OCEAN_STRESS_PASS phase=write') -or !(Select-String -LiteralPath $stressOut -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw 'Ocean stress GPU failed' }
           if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 9) { throw 'Expected seven standard and two ocean captures' }
+          # Representative GL Compatibility flight, edit and water benchmark.
+          # Max FPS is 60 for this sample; the prior visual fixture is 30.
+          $env:V3_MOD_ROOT=Join-Path $root 'examples/v3/mods'
+          $env:V3_WORLD_ID='h26_gameplay_benchmark_gpu'
+          $env:V3_CAVE_SPAWN='-4,12,28'
+          $benchOut=Join-Path $capture 'gameplay-benchmark.stdout.log'
+          $benchErr=Join-Path $capture 'gameplay-benchmark.stderr.log'
+          $b=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','--resolution','1280x720','--position','80,80','--max-fps','60','--script','res://tests/v3_hydraulic_gameplay_benchmark.gd') -PassThru -RedirectStandardOutput $benchOut -RedirectStandardError $benchErr
+          $null=$b.Handle
+          if (!$b.WaitForExit(420000)) { $b.Kill(); $b.WaitForExit(); throw 'Gameplay benchmark GPU timeout' }
+          $b.WaitForExit()
+          Get-Content $benchOut
+          Get-Content $benchErr
+          if ($b.ExitCode -ne 0 -or !(Select-String -LiteralPath $benchOut -SimpleMatch 'V3_HYBRID_GAMEPLAY_BENCH_PASS') -or !(Select-String -LiteralPath $benchOut -SimpleMatch 'V3_HYBRID_LAVA_GPU_PASS') -or !(Select-String -LiteralPath $benchOut -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($benchOut,$benchErr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_GAMEPLAY_BENCH_FAIL:')) { throw 'Gameplay benchmark GPU failed' }
+          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 12) { throw 'Expected seven standard, two ocean, two gameplay and one lava capture' }
+          # Exercise the actual end-user launcher against the exact
+          # downloaded candidate DLL. No manual Windows intervention.
+          $dll=Join-Path $root 'godot/bin/sandbox_native.windows.template_debug.x86_64.dll'
+          $expectedDll=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          & ./scripts/v3-hydraulic-hybrid-local-windows.ps1 -AutomatedSmoke -ArtifactDirectory $root -CandidateCommit $env:GITHUB_SHA -ExpectedDllSha256 $expectedDll
+          if (!$? -or $LASTEXITCODE -ne 0) { throw 'Windows launcher smoke invocation failed' }
           Write-Host 'V3_GPU_CAPTURE_ARTIFACT_READY'
       - uses: actions/upload-artifact@v4
         if: always()

@@ -48,7 +48,7 @@ class IntegratedRuntime {
     std::uint64_t stream_steps_{},stream_cached_blocks_{},stream_max_step_us_{},stream_retry_frames_{};
     std::uint64_t visual_survey_tiles_{},post_edit_survey_tiles_{},suspended_reclaims_{};
     std::uint64_t stream_survey_tiles_{},stream_found_blocks_{},stream_generated_blocks_{},stream_read_failures_{};
-    std::vector<std::uint64_t> tick_samples_;
+    std::vector<std::uint64_t> tick_samples_,voxel_copy_samples_,classification_samples_;
     std::size_t pristine_survey_tiles_=0;
     std::uint64_t revision_{},debt_{},ticks_{},moved_{},publications_{},activations_{},settles_{},max_tick_us_{},max_snapshot_us_{};
     core::Region center_{};
@@ -645,7 +645,9 @@ public:
                 stream_job_.emplace(stream,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
                 acquired=true;break;
             }
-            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey);
+            SnapshotTiming timing;
+            auto s=copy_air_snapshot(tool,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision,true,survey,nullptr,&timing);
+            if(voxel_copy_samples_.size()<4096){voxel_copy_samples_.push_back(timing.voxel_copy_us);classification_samples_.push_back(timing.classification_us);}
             max_snapshot_us_=std::max(max_snapshot_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
             if(s&&worker_.submit(std::move(*s))){pending_[k]=wanted_revision;if(survey)pending_survey_.insert(k);acquired=true;break;}
             }
@@ -765,6 +767,20 @@ public:
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);
         d["max_tick_us"]=static_cast<int64_t>(max_tick_us_);d["max_snapshot_us"]=static_cast<int64_t>(max_snapshot_us_);
+        auto sample_stats=[](const std::vector<std::uint64_t>& input) {
+            std::array<std::uint64_t,3> result{};
+            if(input.empty())return result;
+            auto values=input;std::sort(values.begin(),values.end());
+            result[0]=values[(values.size()*95-1)/100];
+            result[1]=values[(values.size()*99-1)/100];
+            result[2]=values.back();
+            return result;
+        };
+        const auto copy_stats=sample_stats(voxel_copy_samples_),classify_stats=sample_stats(classification_samples_);
+        d["voxel_copy_p95_us"]=static_cast<int64_t>(copy_stats[0]);d["voxel_copy_p99_us"]=static_cast<int64_t>(copy_stats[1]);
+        d["voxel_copy_max_us"]=static_cast<int64_t>(copy_stats[2]);
+        d["classification_p95_us"]=static_cast<int64_t>(classify_stats[0]);d["classification_p99_us"]=static_cast<int64_t>(classify_stats[1]);
+        d["classification_max_us"]=static_cast<int64_t>(classify_stats[2]);
         d["pending_edit_tiles"]=static_cast<int64_t>(dirty_.size());d["blocked_tiles"]=static_cast<int64_t>(blocked_.size());
         d["wet_preflights"]=static_cast<int64_t>(wet_preflights_);d["wet_preflight_rejections"]=static_cast<int64_t>(wet_preflight_rejections_);d["construction_commits"]=static_cast<int64_t>(construction_commits_);
         d["edit_group_revision"]=static_cast<int64_t>(revision_);

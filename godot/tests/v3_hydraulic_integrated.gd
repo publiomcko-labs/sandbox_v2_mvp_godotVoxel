@@ -400,6 +400,135 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
     print("V3_HYBRID_BARRIER_PASS mass=",mass," center=",center," state=",state)
     runtime.request_close()
 
+# A resident wet interval must become aggregate only after twenty
+# genuinely stable physical ticks, while its exact mass remains owned.
+# A terrain brush spanning two independently owned wet tiles must
+# remap both sides conservatively without bridging solid or double-count.
+func _cross_tile_live(runtime,water: Node3D) -> void:
+    var initial: Dictionary=runtime.session.hydraulic_report()
+    var before_mass:=int(initial["litres"])
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var tile:=_tile(runtime.player.global_position)
+    var accepted:=false
+    var center:=Vector3.ZERO
+    for dz in range(-1,2):
+        for dx in range(-1,2):
+            var k:=tile+Vector3i(dx*16,0,dz*16)
+            for axis in range(2):
+                if accepted:
+                    break
+                for v in range(3,14,2):
+                    if accepted:
+                        break
+                    for y in range(-7,4):
+                        var p:=Vector3(k.x+16.0,y+0.5,k.z+float(v)+0.5) if axis==0 else Vector3(k.x+float(v)+0.5,y+0.5,k.z+16.0)
+                        var step:=Vector3(0.5,0,0) if axis==0 else Vector3(0,0,0.5)
+                        var a: Dictionary=runtime.session.hydraulic_at(p-step)
+                        var b: Dictionary=runtime.session.hydraulic_at(p+step)
+                        if a.is_empty() or b.is_empty() or tool.get_voxel_f(Vector3i(p.floor()))<0.1:
+                            continue
+                        if runtime.submit_brush(p,true,1.1)=="accepted":
+                            center=p
+                            accepted=true
+                            break
+            if accepted:
+                break
+        if accepted:
+            break
+    if not accepted:
+        _fail("no admissible cross-tile wet barrier "+str(runtime.session.hydraulic_report()))
+        return
+    var same_frame: Dictionary=runtime.session.hydraulic_report()
+    if int(same_frame["litres"])!=before_mass:
+        _fail("cross tile edit lost mass "+str(same_frame))
+        return
+    var deadline:=Time.get_ticks_msec()+30000
+    while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("cross tile revision publication timeout")
+            return
+        await process_frame
+    var committed: Dictionary=runtime.session.hydraulic_report()
+    if int(committed["construction_commits"])!=1 or committed.get("edit_group_tiles",[]).size()<2 or int(committed["litres"])!=int(committed["initial"])+int(committed["injected"])-int(committed["drained"]) or not runtime.session.hydraulic_at(center).is_empty():
+        _fail("cross tile coherent construction "+str(committed))
+        return
+    for i in range(30):
+        if not _frame(runtime,water,50000000):
+            return
+        await process_frame
+    var after: Dictionary=runtime.session.hydraulic_report()
+    if int(after["litres"])!=int(after["initial"])+int(after["injected"])-int(after["drained"]) or not runtime.session.hydraulic_at(center).is_empty():
+        _fail("cross tile barrier after flow "+str(after))
+        return
+    print("V3_HYBRID_CROSS_TILE_EDIT_PASS mass=",after["litres"]," group=",committed["edit_group_tiles"]," position=",center)
+    runtime.request_close()
+
+func _settle_live(runtime,water: Node3D) -> void:
+    var initial: Dictionary=runtime.session.hydraulic_report()
+    var initial_settles:=int(initial["settles"])
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var tile:=_tile(runtime.player.global_position)
+    var accepted:=false
+    for dz in range(-1,2):
+        for dx in range(-1,2):
+            var k:=tile+Vector3i(dx*16,0,dz*16)
+            var wet:=false
+            for z in range(k.z,k.z+16):
+                for x in range(k.x,k.x+16):
+                    if runtime.session.hydraulic_column_mass(Vector3(x+0.5,0,z+0.5))>0:
+                        wet=true
+                        break
+                if wet:
+                    break
+            if not wet:
+                continue
+            for y in range(-29,-15):
+                var p:=Vector3(k.x+8,y,k.z+8)
+                if tool.get_voxel_f(Vector3i(p)) < -0.5 and runtime.submit_brush(p,false,0.5)=="accepted":
+                    accepted=true
+                    break
+            if accepted:
+                break
+        if accepted:
+            break
+    if not accepted:
+        _fail("settle fixture no admissible wet edit")
+        return
+    var deadline:=Time.get_ticks_msec()+30000
+    while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+        if not _frame(runtime,water,0):
+            return
+        if Time.get_ticks_msec()>deadline:
+            _fail("settle publication timeout")
+            return
+        await process_frame
+    var active: Dictionary=runtime.session.hydraulic_report()
+    if int(active["local_active"])<=0:
+        _fail("settle local promotion "+str(active))
+        return
+    var finished:=false
+    for i in range(120):
+        if not _frame(runtime,water,50000000):
+            return
+        var next: Dictionary=runtime.session.hydraulic_report()
+        if int(next["litres"])!=int(next["initial"])+int(next["injected"])-int(next["drained"]):
+            _fail("settle mass ledger "+str(next))
+            return
+        if int(next["settles"])>initial_settles and int(next["local_active"])<int(active["local_active"]):
+            finished=true
+            break
+        await process_frame
+    var last: Dictionary=runtime.session.hydraulic_report()
+    if not finished:
+        _fail("resident wet region did not settle/reaggregate "+str(last))
+        return
+    print("V3_HYBRID_RESIDENT_SETTLE_PASS ticks=",last["ticks"]," settles=",last["settles"]," hot=",last["local_active"]," mass=",last["litres"])
+    runtime.request_close()
+
 func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     var deadline:=Time.get_ticks_msec()+180000
     var reached:=false
@@ -408,7 +537,7 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
             return
         var state: Dictionary=runtime.session.hydraulic_report()
         var render: Dictionary=water.call("get_report")
-        if "wide_sea:head" in state.get("source_ids",[]) and int(state.get("visible_wet_tiles",0))>96 and int(state.get("cold_visual_tiles",0))>=5 and int(state.get("tiles",1000))<=96 and int(render.get("meshes",0))>96 and bool(water.get("_hybrid_ready")):
+        if "wide_sea:head" in state.get("source_ids",[]) and "wide_sea:z_sink" in state.get("source_ids",[]) and int(state.get("visible_wet_tiles",0))>96 and int(state.get("cold_visual_tiles",0))>=5 and int(state.get("tiles",1000))<=96 and int(render.get("meshes",0))>96 and bool(water.get("_hybrid_ready")):
             reached=true
             break
         await process_frame
@@ -418,6 +547,27 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
         return
     if not await _capture("08-ocean-wide"):
         return
+    # Explicit fixed-head sink is physically connected to the same
+    # volume as the higher source. Verify real drain transfer over ticks,
+    # not just registration or a synthetic ledger.
+    var drained_before:=int(ready["drained"])
+    var proved_sink:=false
+    for i in range(320):
+        if not _frame(runtime,water,50000000):
+            return
+        var flowing: Dictionary=runtime.session.hydraulic_report()
+        if int(flowing["litres"])!=int(flowing["initial"])+int(flowing["injected"])-int(flowing["drained"]):
+            _fail("ocean physical drain ledger "+str(flowing))
+            return
+        if int(flowing["drained"])>drained_before and int(flowing["injected"])>0:
+            proved_sink=true
+            break
+        await process_frame
+    if not proved_sink:
+        _fail("ocean source/sink no physical drain "+str(runtime.session.hydraulic_report()))
+        return
+    var flowing_final: Dictionary=runtime.session.hydraulic_report()
+    print("V3_HYBRID_OCEAN_PHYSICAL_DRAIN_PASS phase=",phase," drained=",flowing_final["drained"]," injected=",flowing_final["injected"]," ticks=",flowing_final["ticks"])
     var origin: Vector3=runtime.player.global_position
     runtime.player.global_position=origin+Vector3(128,0,0)
     for i in range(60):
@@ -447,6 +597,8 @@ func _test() -> void:
     var remote_basin: bool="--phase=remote-basin" in args or "--phase=remote-basin-reopen" in args
     var remote_reopen: bool="--phase=remote-basin-reopen" in args
     var ocean_stress: bool="--phase=ocean-stress" in args or "--phase=ocean-stress-reopen" in args
+    var settle_live: bool="--phase=settle" in args
+    var cross_tile: bool="--phase=cross-tile" in args
     var old_spawn:=OS.get_environment("V3_CAVE_SPAWN")
     if remote_basin or sources:
         OS.set_environment("V3_CAVE_SPAWN","16,12,112")
@@ -498,6 +650,12 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if cross_tile:
+        await _cross_tile_live(runtime,water)
+        return
+    if settle_live:
+        await _settle_live(runtime,water)
         return
     if ocean_stress:
         await _ocean_stress(runtime,water,("reopen" if "--phase=ocean-stress-reopen" in args else "write"))

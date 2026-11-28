@@ -9,11 +9,13 @@
 #include <godot_cpp/variant/vector3i.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <cstring>
+#include <chrono>
 
 namespace sandbox::hydraulic {
 namespace tp=topology;
 // Same quantized SDF operation used by the authoritative material brush.
 struct BrushPreview {godot::Vector3 center;double radius;bool add;};
+struct SnapshotTiming {std::uint64_t voxel_copy_us{},classification_us{};};
 inline double brush_sdf(const godot::Vector3& point,const BrushPreview& brush,double old){
     const double shape=point.distance_to(brush.center)-brush.radius;
     if(shape>1)return old;
@@ -206,7 +208,7 @@ inline std::optional<tp::Snapshot> copy_stream_snapshot(const StreamSnapshotSour
 // plain C++ data only, suitable for off-thread topology extraction later.
 // It is a geometric classification, not an additional terrain store.
 inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::VoxelTool>& tool,
-        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false,bool pristine_survey=false,const BrushPreview* preview=nullptr) {
+        godot::Vector3i origin,godot::Vector3i extent,std::uint64_t revision,bool render=false,bool pristine_survey=false,const BrushPreview* preview=nullptr,SnapshotTiming* timing=nullptr) {
     using namespace godot;
     if(extent.x<1||extent.x>16||extent.z<1||extent.z>16||extent.y<1||extent.y>64||
         std::abs(std::int64_t(origin.x))>1000000||std::abs(std::int64_t(origin.y))>98000||
@@ -224,7 +226,9 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
     const auto size=halo?halo_size:core_size;
     Ref<VoxelBuffer> buffer;buffer.instantiate();buffer->create(size.x,size.y,size.z);
     const auto copy_origin=halo?halo_origin:origin;
+    const auto copy_begin=std::chrono::steady_clock::now();
     tool->copy(copy_origin,buffer,1<<VoxelBuffer::CHANNEL_SDF,false);
+    if(timing)timing->voxel_copy_us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-copy_begin).count());
     if(preview){
         if(pristine_survey)throw std::invalid_argument("preview requires authoritative resident data");
         for(int z=0;z<size.z;++z)for(int x=0;x<size.x;++x)for(int y=0;y<size.y;++y){
@@ -233,6 +237,9 @@ inline std::optional<tp::Snapshot> copy_air_snapshot(const godot::Ref<godot::Vox
             if(next!=old)buffer->set_voxel_f(next,x,y,z,VoxelBuffer::CHANNEL_SDF);
         }
     }
-    return classify_air_buffer(buffer,origin,extent,revision,render,pad);
+    const auto classify_begin=std::chrono::steady_clock::now();
+    auto classified=classify_air_buffer(buffer,origin,extent,revision,render,pad);
+    if(timing)timing->classification_us=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-classify_begin).count());
+    return classified;
 }
 }
