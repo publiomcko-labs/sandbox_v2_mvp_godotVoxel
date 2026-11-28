@@ -747,6 +747,15 @@ public:
         d["cold_tiles"]=static_cast<int64_t>(model_.cold_count());d["cold_litres"]=model_.cold_mass();
         d["cold_evictions"]=static_cast<int64_t>(cold_evictions_);d["cold_restores"]=static_cast<int64_t>(cold_restores_);
         d["cold_visual_tiles"]=static_cast<int64_t>(cold_visible_.size());d["cold_visual_reads"]=static_cast<int64_t>(cold_visual_reads_);
+        if(cold_store_){
+            const auto io=cold_store_->metrics();
+            for(const auto &key:{"read_count","read_total_us","read_max_us","read_p95_upper_us","read_bytes",
+                "write_count","write_total_us","write_max_us","write_p95_upper_us","write_bytes",
+                "erase_count","erase_total_us","erase_max_us"}){
+                const std::string label="cold_io_"+std::string(key);
+                d[String::utf8(label.c_str())]=static_cast<int64_t>(io.at(key).get<std::uint64_t>());
+            }
+        }
         d["basin_completed"]=static_cast<int64_t>(basin_completed_);d["basin_surveyed_tiles"]=static_cast<int64_t>(basin_surveyed_tiles_);
         d["basin_wet_tiles"]=static_cast<int64_t>(basin_wet_tiles_);d["basin_cold_seeds"]=static_cast<int64_t>(basin_cold_seeds_);
         d["basin_initial_litres"]=basin_initial_litres_;d["basin_commit_max_us"]=static_cast<int64_t>(basin_commit_max_us_);

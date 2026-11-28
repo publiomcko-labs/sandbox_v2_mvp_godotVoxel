@@ -1,6 +1,7 @@
 #include "persistence/hydraulic_region_store.hpp"
 #include <cassert>
 #include <iostream>
+#include <fstream>
 namespace hy=sandbox::hydraulic;
 namespace ps=sandbox::persistence;
 int main(){
@@ -60,6 +61,8 @@ int main(){
             cold.put(key,{{"key",k},{"revision",4}},{{"tile",k},{"revision",4},{"resident",false},{"content",ps::Json::array({ps::Json::array({1,"hydro:water",1000})})}},1000);
         }
         assert(cold.consistent(120,120000));
+        assert(cold.metrics().at("write_count")==120);
+        assert(cold.metrics().at("write_bytes").get<std::uint64_t>()>12000);
         cold.checkpoint(120,120000);
     }
     {
@@ -68,11 +71,27 @@ int main(){
         assert(cold.contains(key)&&cold.get(key).at("mass")==1000);
         cold.erase(key,1000);
         assert(!cold.contains(key)&&cold.consistent(119,119000));
+        assert(cold.metrics().at("read_count")>=2&&cold.metrics().at("erase_count")==1);
         cold.checkpoint(119,119000);
     }
     bool mismatch=false;
     try{ps::HydraulicRegionStore wrong(world,120,120000);}catch(const std::exception&){mismatch=true;}
     assert(mismatch);
+    // Reopen must reject a modified owner/topology even if count and
+    // mass remain unchanged in the summary ledger.
+    {
+        ps::HydraulicRegionStore cold(world,119,119000);
+        const auto path=world/"hydraulic_regions/r_32_0.json";
+        std::ifstream in(path,std::ios::binary);
+        const auto j=sandbox::content::strict_json(std::string(std::istreambuf_iterator<char>(in),{}));
+        assert(j.at("schema")=="hydraulic-cold-region-2"&&j.at("sha256").get<std::string>().size()==64);
+        auto corrupted=j;corrupted["geometry"]["revision"]=500;
+        in.close();std::ofstream out(path,std::ios::binary|std::ios::trunc);
+        out<<corrupted.dump();out.close();
+        bool rejected_corruption=false;
+        try{(void)cold.get({32,-32,0});}catch(const std::exception&){rejected_corruption=true;}
+        assert(rejected_corruption&&!cold.consistent(119,119000));
+    }
     ps::fs::remove_all(world);
     std::cout<<"V3_HYBRID_I22_REGION_STORE_PASS 120_records reopen ledger_mismatch_rejected\n";
     std::cout<<"V3_HYDRAULIC_REFINED_STORE_PASS exact_mass below_binary_floor revalidate\n";

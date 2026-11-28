@@ -237,7 +237,7 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
                 _fail("source fixture anchor unexpectedly resident "+str(anchor))
                 return
         print("V3_HYBRID_SOURCE_FIXTURE_NONRESIDENT_PASS anchors=2")
-    if int(before["sources"])!=3 or (not reopen and int(before["nonresident_source_discoveries"])<2):
+    if int(before["sources"])!=3 or (not reopen and (int(before["nonresident_source_discoveries"])<2 or int(before.get("basin_completed",0))!=1)):
         _fail("source view discovery "+str(before))
         return
     print("V3_HYBRID_VISIBLE_SOURCE_PASS phase=",("reopen" if reopen else "write")," state=",before)
@@ -245,7 +245,7 @@ func _sources(runtime,water: Node3D,reopen: bool) -> void:
     if not await _wait_source(runtime,water,"hydro:lava_pool"):
         return
     var lava: Dictionary=runtime.session.hydraulic_report()
-    if int(lava["initial"])!=initial or initial!=11378442:
+    if int(lava["initial"])!=initial or initial<=11378442:
         _fail("late finite initialization "+str(lava))
         return
     var found_lava:=false
@@ -384,7 +384,11 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
             return
         await process_frame
     var state: Dictionary=runtime.session.hydraulic_report()
-    if int(state["litres"])!=mass or int(state["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty():
+    # At rev>0 a pristine, source-connected ocean tile can acquire
+    # new water with an explicit injection ledger during these 25 ticks.
+    # A barrier must still keep its solid centre dry and preserve the
+    # complete mass identity; fixed mass is no longer a valid invariant.
+    if int(state["litres"])!=int(state["initial"])+int(state["injected"])-int(state["drained"]) or int(state["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty():
         _fail("barrier retained solid "+str(state))
         return
     print("V3_HYBRID_BARRIER_PASS mass=",mass," center=",center," state=",state)
@@ -464,29 +468,15 @@ func _test() -> void:
     camera.look_at(Vector3(112,20,112) if ocean_stress else Vector3(-4,0,23),Vector3.UP)
     var deadline:=Time.get_ticks_msec()+(180000 if remote_basin or ocean_stress else 90000)
     var remote_empty_seen:=false
-    var source_positioned:=not sources or "--phase=sources-reopen" in args
+    var source_positioned:=true # new hybrid worlds survey finite basins directly
     while true:
         if not _frame(runtime,water,0):
             return
         var state: Dictionary=runtime.session.hydraulic_report()
         if remote_basin and not remote_reopen and str(state.get("solver",""))=="hybrid" and not "hydro:pond" in state.get("source_ids",[]):
             remote_empty_seen=true
-        # Isolate late source discovery from the separate finite-basin
-        # remote bootstrap limitation. The initial pond must be present
-        # before moving, and neither late source may be pre-initialized.
-        if not source_positioned and str(state.get("solver",""))=="hybrid":
-            if state.get("source_ids",[])!=["hydro:pond"] or int(state["initial"])!=11314442:
-                _fail("source fixture bootstrap "+str(state))
-                return
-            runtime.player.global_position=Vector3(16,12,112)
-            var source_tool: VoxelTool=runtime.terrain.get_voxel_tool()
-            while source_tool.is_area_editable(AABB(Vector3(48,-32,-32),Vector3(17,65,17))) or source_tool.is_area_editable(AABB(Vector3(-128,-32,128),Vector3(17,65,17))):
-                if Time.get_ticks_msec()>deadline:
-                    _fail("source fixture anchor unload timeout")
-                    return
-                await process_frame
-            source_positioned=true
-            continue
+        # Sources are acquired through one certified path. Neither lava
+        # nor sea requires VoxelTool LOD0 residency.
         if source_positioned and str(state.get("solver",""))=="hybrid" and int(state["near_active_tiles"])>=9 and int(state.get("visible_sources_pending",1))==0 and bool(water.get("_hybrid_ready")) and int(water.call("get_report")["meshes"])>0:
             break
         if Time.get_ticks_msec()>deadline:

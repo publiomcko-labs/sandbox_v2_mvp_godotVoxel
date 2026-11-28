@@ -167,6 +167,33 @@ int main(){
     auto basin_reopened=Coupler::decode(surveyed_basin.encode(),types,{});
     assert(basin_reopened.restore_cold(first_basin,basin_rows.front())&&basin_reopened.mass()==basin_mass);
     std::cout<<"V3_HYBRID_I22_FINITE_SURVEY_PASS regions=121 mass="<<basin_mass<<" hot=0\n";
+    // A 2m structural wall spans the shared boundary of two independently
+    // owned local tiles. Both edits are preflighted on one staged model;
+    // no mass is lost and no artificial cross-wall portal survives.
+    Coupler cross_tile(types,2,2);
+    assert(cross_tile.publish(a)&&cross_tile.publish(b));
+    assert(cross_tile.seed(ka,a->compartments.front().id,0,32000));
+    assert(cross_tile.seed(kb,b->compartments.front().id,0,32000));
+    assert(cross_tile.activate(ka)&&cross_tile.activate(kb));
+    const auto original_cross=cross_tile.encode();
+    tp::Snapshot left_cut{{0,0,0},4,8,4,1,2,std::vector<std::uint8_t>(4*8*4,1)};
+    tp::Snapshot right_cut{{4,0,0},4,8,4,1,2,std::vector<std::uint8_t>(4*8*4,1)};
+    for(int z=0;z<4;++z)for(int y=0;y<8;++y){
+        left_cut.air[static_cast<std::size_t>((z*4+3)*8+y)]=0;
+        right_cut.air[static_cast<std::size_t>((z*4)*8+y)]=0;
+    }
+    auto staged_cross=cross_tile;
+    assert(staged_cross.replace_geometry(std::make_shared<const tp::Result>(tp::extract(left_cut)),true));
+    assert(staged_cross.replace_geometry(std::make_shared<const tp::Result>(tp::extract(right_cut)),true));
+    assert(staged_cross.mass()==64000&&staged_cross.column_mass(ka,3,1)==0&&staged_cross.column_mass(kb,0,1)==0);
+    for(const auto &interface:staged_cross.interfaces())
+        assert(interface.a.tile==interface.b.tile);
+    auto invalid_cross=cross_tile;
+    auto solid_cross=left_cut;solid_cross.revision=3;
+    std::fill(solid_cross.air.begin(),solid_cross.air.end(),0);
+    assert(!invalid_cross.replace_geometry(std::make_shared<const tp::Result>(tp::extract(solid_cross)),true));
+    assert(invalid_cross.encode()==original_cross);
+    std::cout<<"V3_HYBRID_I23_CROSS_TILE_BARRIER_PASS mass=64000 atomic_reject=1 portals_closed=1\n";
     // A solid wall deletes complete wet intervals. Only surviving
     // previously wet recipients can accept displaced mass.
     tp::Snapshot wall{{0,0,0},4,8,4,1,2,std::vector<std::uint8_t>(4*8*4,1)};

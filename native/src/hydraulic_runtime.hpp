@@ -227,7 +227,13 @@ class Runtime {
         }
     }
 public:
-    explicit Runtime(content::HydraulicProfile profile,bool integrated=false):profile_(std::move(profile)),domain_(profile_.types),integrated_mode_(integrated){}
+    explicit Runtime(content::HydraulicProfile profile,bool integrated=false):profile_(std::move(profile)),domain_(profile_.types),integrated_mode_(integrated){
+        // New hybrid worlds use the certified incremental source survey
+        // from their first frame. The legacy bootstrap's bounded finite
+        // basin fallback truncated water at rectangular tile boundaries.
+        // Existing bootstrap saves still use their explicit migration path.
+        if(integrated_mode_)integrated_=std::make_unique<IntegratedRuntime>(domain_);
+    }
     Runtime(content::HydraulicProfile profile,Domain domain):profile_(std::move(profile)),domain_(std::move(domain)){}
     Runtime(content::HydraulicProfile profile,const nlohmann::json& archive):profile_(std::move(profile)),domain_(profile_.types),integrated_mode_(true) {
         if(archive.at("schema")=="v3-hybrid-runtime-1")integrated_=IntegratedRuntime::decode(archive,profile_.types);
