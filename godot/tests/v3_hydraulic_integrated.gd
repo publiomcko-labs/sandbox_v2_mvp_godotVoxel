@@ -464,8 +464,10 @@ func _test() -> void:
     water.set_physics_process(false)
     runtime.player.global_position=Vector3(112,12,112) if ocean_stress else (Vector3(16,12,112) if remote_basin or sources else Vector3(-4,12,28))
     var camera: Camera3D=runtime.player.get_node("Camera3D")
-    camera.global_position=Vector3(112,60,128) if ocean_stress else Vector3(-4,48,48)
-    camera.look_at(Vector3(112,20,112) if ocean_stress else Vector3(-4,0,23),Vector3.UP)
+    # Keep the VoxelViewer's camera near the *current player*, including
+    # the remote-start and subsequent sea/lava travel fixtures.
+    camera.global_position=runtime.player.global_position+(Vector3(0,48,16) if ocean_stress else Vector3(0,36,20))
+    camera.look_at(runtime.player.global_position-Vector3(0,12,5),Vector3.UP)
     var deadline:=Time.get_ticks_msec()+(180000 if remote_basin or ocean_stress else 90000)
     var remote_empty_seen:=false
     var source_positioned:=true # new hybrid worlds survey finite basins directly
