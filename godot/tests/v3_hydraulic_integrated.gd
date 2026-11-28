@@ -205,7 +205,12 @@ func _lifecycle(runtime,water: Node3D,reopen: bool) -> void:
                 return
             await process_frame
     else:
-        if int(initial["cold_restores"])<=0 or int(initial["cold_evictions"])<10:
+        # A cold owner may now be viewed directly without taking a
+        # physics slot. Require either an exact restore or certified
+        # read-only cold coverage, and preserve the durable ledger.
+        var physical_restore: bool=int(initial["cold_restores"])>0
+        var visual_restore: bool=int(initial["cold_visual_tiles"])>0 and int(initial["cold_visual_reads"])>0
+        if (not physical_restore and not visual_restore) or int(initial["cold_evictions"])<10 or int(initial["litres"])!=int(initial["initial"])+int(initial["injected"])-int(initial["drained"]):
             _fail("cold reopen did not recover persisted owners "+str(initial))
             return
         print("V3_HYBRID_COLD_RUNTIME_PASS phase=reopen state=",initial," probe=",probe," column=",column)

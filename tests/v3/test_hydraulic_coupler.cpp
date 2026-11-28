@@ -284,6 +284,54 @@ int main(){
     auto isolated=OceanReach::extend("extended",2,8,1,roof_geometry,std::nullopt,{{previous.get(),&proof}});
     assert(isolated.compartments.empty());
     std::cout<<"V3_HYBRID_I22_OCEAN_CONNECTIVITY_PASS regions=121 hot=1 injected="<<extended.injected()<<" cave=excluded stale=excluded\n";
+    // I23: A fully roofed lower cavity remains dry until an actual
+    // geometric shaft is carved. Removing the roof must NOT teleport
+    // the surface water into the lower cave in the same edit frame:
+    // gravity-driven transit starts on the next physical ticks.
+    tp::Snapshot cave_before{{0,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+    auto air_at=[](tp::Snapshot& s,int x,int y,int z){
+        s.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+    };
+    for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=5;y<8;++y)
+        air_at(cave_before,x,y,z);
+    for(int y=1;y<3;++y){
+        air_at(cave_before,1,y,1);
+        air_at(cave_before,3,y,3);
+    }
+    auto cave_old=std::make_shared<const tp::Result>(tp::extract(cave_before));
+    const auto cave_key=cave_old->origin;
+    auto upper=tp::compartment_at(*cave_old,{1.5,6.5,1.5});
+    assert(upper);
+    Coupler cave_layers(types,1,1);
+    assert(cave_layers.publish(cave_old)&&cave_layers.seed(cave_key,*upper,0,8000)&&cave_layers.activate(cave_key));
+    assert(!cave_layers.sample({1.5,1.1,1.5},cave_key));
+    assert(!cave_layers.sample({3.5,1.1,3.5},cave_key));
+    auto cave_open=cave_before;cave_open.revision=2;
+    for(int y=3;y<5;++y)air_at(cave_open,1,y,1);
+    const auto cave_new=std::make_shared<const tp::Result>(tp::extract(cave_open));
+    assert(cave_layers.replace_geometry(cave_new,true)&&cave_layers.mass()==8000);
+    assert(!cave_layers.sample({1.5,1.1,1.5},cave_key)&&
+        !cave_layers.sample({3.5,1.1,3.5},cave_key));
+    // Reopening while the column is suspended in the new shaft must
+    // continue the same fall with identical millimetre steps and owner.
+    auto cave_reopened=Coupler::decode(cave_layers.encode(),types,{{cave_key,cave_new}});
+    assert(cave_reopened.encode()==cave_layers.encode());
+    for(int i=0;i<4;++i){
+        cave_layers.tick();cave_reopened.tick();
+        assert(cave_reopened.encode()==cave_layers.encode()&&cave_layers.mass()==8000);
+    }
+    auto midway=Coupler::decode(cave_layers.encode(),types,{{cave_key,cave_new}});
+    assert(midway.encode()==cave_layers.encode());
+    bool lower_wet=false;
+    for(int t=0;t<160;++t){
+        cave_layers.tick();midway.tick();
+        assert(midway.encode()==cave_layers.encode());
+        assert(cave_layers.mass()==8000);
+        assert(!cave_layers.sample({3.5,1.1,3.5},cave_key));
+        if(cave_layers.sample({1.5,1.1,1.5},cave_key))lower_wet=true;
+    }
+    assert(lower_wet);
+    std::cout<<"V3_HYBRID_I23_VERTICAL_CAVE_PASS dry_at_edit=1 lower_progressive=1 isolated_dry=1 mass=8000\n";
     // I2 local carve changes an existing floor and opens a formerly
     // solid horizontal column. Remap must not wet the remote cell.
     tp::Snapshot old{{0,0,0},4,8,2,1,1,std::vector<std::uint8_t>(4*8*2,0)};

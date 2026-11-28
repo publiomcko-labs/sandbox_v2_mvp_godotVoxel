@@ -52,7 +52,7 @@ class Coupler {
         for(const auto &c:local.columns()) {
             const auto &runs=g.column_runs.at(static_cast<std::size_t>(c.z*g.nx+c.x));
             const auto it=std::find_if(runs.begin(),runs.end(),[&](const auto &s){
-                return tp::span_floor_mm(g,s)==c.floor_mm&&(g.origin.y+s.top*g.step)*1000==c.ceiling_mm;
+                return tp::span_floor_mm(g,s)==c.target_floor_mm&&(g.origin.y+s.top*g.step)*1000==c.ceiling_mm;
             });
             if(it==runs.end())throw std::logic_error("R3 interval ownership");
             out.push_back(it->compartment);
@@ -68,7 +68,7 @@ class Coupler {
         const int z=b.face==2?0:b.face==3?t.geometry->nz-1:b.along;
         const auto &cells=t.local->columns();
         for(auto i:t.local->column_indices(x,z))if(
-            cells[i].floor_mm==b.bottom_mm&&cells[i].ceiling_mm==b.top_mm)return {t.geometry->origin,i,1};
+            cells[i].target_floor_mm==b.bottom_mm&&cells[i].ceiling_mm==b.top_mm)return {t.geometry->origin,i,1};
         throw std::logic_error("R3 boundary interval");
     }
     Owner at_anchor(const CoupledTile& t,core::Vec3 p)const {
@@ -77,7 +77,7 @@ class Coupler {
         if(!t.local)return {t.geometry->origin,s->compartment,0};
         const auto &cells=t.local->columns();
         for(auto i:t.local->column_indices(s->x,s->z))if(
-            cells[i].floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cells[i].ceiling_mm==(t.geometry->origin.y+s->top)*1000)
+            cells[i].target_floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cells[i].ceiling_mm==(t.geometry->origin.y+s->top)*1000)
             return {t.geometry->origin,i,1};
         throw std::logic_error("R3 ocean interval");
     }
@@ -188,6 +188,7 @@ class Coupler {
     }
     bool settled(const CoupledTile& t)const {
         const auto contents=collect(t);if(!contents)return false;
+        for(const auto &c:t.local->columns())if(c.falling())return false;
         const auto expected=project(t,*t.local,t.owners,*contents);if(!expected)return false;
         for(std::size_t i=0;i<t.owners.size();++i) {
             const auto &c=t.local->columns()[i];
@@ -311,7 +312,7 @@ public:
         if(t.local) {
             for(auto i:t.local->column_indices(s->x,s->z)) {
                 const auto &cell=t.local->columns()[i];
-                if(cell.floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cell.ceiling_mm==(k.y+s->top)*1000&&cell.litres&&p.y<cell.head())
+                if(cell.target_floor_mm==tp::span_floor_mm(*t.geometry,*s)&&cell.ceiling_mm==(k.y+s->top)*1000&&cell.litres&&p.y>=cell.floor()&&p.y<cell.head())
                     return std::tuple{cell.type,cell.litres,cell.head(),floor};
             }
             return {};
@@ -479,6 +480,7 @@ public:
         auto &t=tiles_.at(k);
         if(t.resident||!t.local)return false;
         auto contents=collect(t);if(!contents)return false;
+        for(const auto &c:t.local->columns())if(c.falling())return false;
         if(!contents->empty()){
             for(const auto &p:t.local->pipes())if(p.flux!=0||p.credit!=0)return false;
             const auto expected=project(t,*t.local,t.owners,*contents);if(!expected)return false;
@@ -577,13 +579,17 @@ public:
     nlohmann::json encode_tile(core::Region k)const {
         using J=nlohmann::json;
         const auto &t=tiles_.at(k);
-        J content=J::array(),pipes=J::array();
+        J content=J::array(),pipes=J::array(),falling=J::array();
         if(t.local){
-            for(std::size_t i=0;i<t.local->columns().size();++i){const auto &c=t.local->columns()[i];if(c.litres)content.push_back({i,types_.at(c.type).id,c.litres});}
+            for(std::size_t i=0;i<t.local->columns().size();++i){
+                const auto &c=t.local->columns()[i];
+                if(c.litres)content.push_back({i,types_.at(c.type).id,c.litres});
+                if(c.falling())falling.push_back({i,c.fall_start_mm,c.fall_ticks});
+            }
             for(const auto &p:t.local->pipes())pipes.push_back({p.flux,p.credit});
         }else for(const auto &[id,v]:t.aggregate)if(v.litres)content.push_back({id,types_.at(v.type).id,v.litres});
         J reach=J::array();for(const auto &[id,proof]:t.ocean_reach){(void)id;reach.push_back(proof.encode());}
-        return {{"ocean_reach",reach},{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
+        return {{"ocean_reach",reach},{"falling",falling},{"tile",{k.x,k.y,k.z}},{"revision",t.geometry->revision},{"epoch",t.epoch},{"local",t.local.has_value()},
             {"phase",static_cast<int>(t.phase)},{"resident",t.resident},{"stable",t.stable_ticks},{"content",content},{"pipes",pipes}};
     }
     bool can_archive(core::Region k)const {
@@ -648,6 +654,18 @@ public:
             auto &t=out.tiles_.at(k);
             if(row.at("local").get<bool>()) {
                 if(!out.activate(k))throw std::invalid_argument("R3 archive active budget");
+                if(row.contains("falling")){
+                    const auto &falling=row.at("falling");
+                    if(!falling.is_array()||falling.size()>t.local->columns().size())throw std::invalid_argument("R3 archive fall bounds");
+                    std::set<std::size_t> seen;
+                    for(const auto &v:falling){
+                        if(!v.is_array()||v.size()!=3)throw std::invalid_argument("R3 archive falling");
+                        const auto idx=v.at(0).get<std::size_t>();
+                        if(idx>=t.local->columns().size()||!seen.insert(idx).second||
+                            !t.local->restore_fall(idx,v.at(1).get<int>(),v.at(2).get<unsigned>()))
+                            throw std::invalid_argument("R3 archive falling state");
+                    }
+                }
                 for(const auto &v:row.at("content"))if(!t.local->receive(v.at(0).get<std::size_t>(),type(v.at(1)),v.at(2).get<Litres>()))
                     throw std::invalid_argument("R3 archive interval");
                 if(row.at("pipes").size()!=t.local->pipes().size())throw std::invalid_argument("R3 archive pipe count");

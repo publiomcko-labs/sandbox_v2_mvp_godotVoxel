@@ -7,6 +7,11 @@ struct Column {
     int x{},z{},floor_mm{},ceiling_mm{},area_m2=1;
     Litres litres{};
     std::size_t type=no_liquid;
+    // Gravity-driven descent of an already wet column into a newly
+    // excavated lower interval; target_floor_mm remains the SDF floor.
+    int target_floor_mm{},fall_start_mm{};
+    unsigned fall_ticks{};
+    bool falling()const{return litres>0&&floor_mm>target_floor_mm;}
     double floor()const{return floor_mm*0.001;}
     double ceiling()const{return ceiling_mm*0.001;}
     Litres capacity()const{return Litres(ceiling_mm-floor_mm)*area_m2;}
@@ -106,7 +111,8 @@ public:
         auto &indexes=column_index_;
         for(std::size_t i=0;i<g.column_runs.size();++i)for(const auto &s:g.column_runs[i]) {
             indexes[i].push_back(columns_.size());
-            columns_.push_back({s.x,s.z,topology::span_floor_mm(g,s),(g.origin.y+s.top*g.step)*1000,1,0,no_liquid});
+            const int actual_floor=topology::span_floor_mm(g,s);
+            columns_.push_back({s.x,s.z,actual_floor,(g.origin.y+s.top*g.step)*1000,1,0,no_liquid,actual_floor,actual_floor,0});
         }
         int top_mm=std::numeric_limits<int>::min();for(const auto &cell:columns_)top_mm=std::max(top_mm,cell.ceiling_mm);
         for(int z=0;z<g.nz;++z)for(int x=0;x<g.nx;++x)
@@ -152,6 +158,19 @@ public:
         if(amount<=0||amount>c.litres)return false;
         c.litres-=amount;initial_-=amount;if(!c.litres)c.type=no_liquid;return true;
     }
+    // Exact displacement at fixed 20Hz: g*t^2/2 (integer millimetres).
+    static int falling_floor(int target,int start,unsigned ticks) {
+        const auto n=std::min<std::uint64_t>(ticks,4096);
+        const auto displaced=(9810ULL*n*n)/800ULL;
+        return static_cast<int>(std::max<std::int64_t>(target,std::int64_t(start)-static_cast<std::int64_t>(displaced)));
+    }
+    bool restore_fall(std::size_t i,int start,unsigned ticks) {
+        auto &c=columns_.at(i);
+        if(start<=c.target_floor_mm||start>=c.ceiling_mm||ticks>4096)return false;
+        const int floor=falling_floor(c.target_floor_mm,start,ticks);
+        if(floor<=c.target_floor_mm||c.litres>c.area_m2*Litres(c.ceiling_mm-floor))return false;
+        c.floor_mm=floor;c.fall_start_mm=start;c.fall_ticks=ticks;return true;
+    }
     void restore_pipe(std::size_t i,double flux,double credit) {
         if(!std::isfinite(flux)||!std::isfinite(credit)||credit<0||credit>=1.0||
             std::abs(flux)>100000.0)throw std::invalid_argument("R3 pipe archive");
@@ -176,6 +195,16 @@ public:
         for(std::size_t i=0;i<columns_.size();++i)index[{columns_[i].x,columns_[i].z}].push_back(i);
         struct Residual {std::size_t old_index,type;Litres left;std::vector<std::size_t> targets;};
         std::vector<Residual> residuals;
+        struct FallWitness {int floor{},start{};unsigned ticks{};};
+        std::map<std::size_t,FallWitness> fall_witnesses;
+        auto witness=[&](std::size_t target,const Column& old){
+            const auto &next=columns_[target];
+            if(old.ceiling_mm!=next.ceiling_mm||old.floor_mm<=next.target_floor_mm)return;
+            const FallWitness v{old.floor_mm,old.falling()?old.fall_start_mm:old.floor_mm,
+                old.falling()?old.fall_ticks:0};
+            const auto it=fall_witnesses.find(target);
+            if(it==fall_witnesses.end()||v.floor<it->second.floor)fall_witnesses[target]=v;
+        };
         for(std::size_t old_index=0;old_index<previous.columns_.size();++old_index){
             const auto &old=previous.columns_[old_index];if(!old.litres)continue;
             Residual rem{old_index,old.type,old.litres,{}};
@@ -187,6 +216,7 @@ public:
                 if(!displace||wet>0)rem.targets.push_back(i);
                 const auto n=std::min({wet,rem.left,c.capacity()-c.litres});
                 if(n&&!receive(i,old.type,n))return false;
+                if(n)witness(i,old);
                 rem.left-=n;
             }
             residuals.push_back(std::move(rem));
@@ -194,6 +224,7 @@ public:
         for(auto &rem:residuals)for(auto i:rem.targets) {
             const auto n=std::min(rem.left,columns_[i].capacity()-columns_[i].litres);
             if(n&&!receive(i,rem.type,n))return false;
+            if(n)witness(i,previous.columns_[rem.old_index]);
             rem.left-=n;
         }
         if(displace&&std::any_of(residuals.begin(),residuals.end(),[](const auto &v){return v.left>0;})){
@@ -238,6 +269,9 @@ public:
             }
         }
         for(const auto &rem:residuals)if(rem.left)return false;
+        for(const auto &[i,w]:fall_witnesses){
+            if(!restore_fall(i,w.start,w.ticks)||columns_[i].floor_mm!=w.floor)return false;
+        }
         // Retain momentum only on identical intervals and openings.
         // Changed apertures restart their inertial state.
         using Key=std::tuple<int,int,int,int>;
@@ -259,6 +293,15 @@ public:
     Tick tick() {
         Tick out;
         for(int i=0;i<substeps;++i){const auto r=substep();out.moved+=r.moved;out.pressure_blocked+=r.pressure_blocked;}
+        for(auto &c:columns_)if(c.falling()){
+            const int old=c.floor_mm;
+            ++c.fall_ticks;
+            c.floor_mm=falling_floor(c.target_floor_mm,c.fall_start_mm,c.fall_ticks);
+            if(c.floor_mm!=old)out.moved+=c.litres;
+            if(c.floor_mm==c.target_floor_mm){c.fall_start_mm=c.floor_mm;c.fall_ticks=0;}
+        }else if(!c.litres&&c.floor_mm!=c.target_floor_mm){
+            c.floor_mm=c.target_floor_mm;c.fall_start_mm=c.floor_mm;c.fall_ticks=0;
+        }
         if(mass()!=initial_)throw std::logic_error("R2 mass ledger");
         return out;
     }
