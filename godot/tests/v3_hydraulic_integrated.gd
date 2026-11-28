@@ -396,8 +396,18 @@ func _test() -> void:
     var lifecycle: bool="--phase=lifecycle" in args or "--phase=lifecycle-reopen" in args
     var sources: bool="--phase=sources" in args or "--phase=sources-reopen" in args
     var barrier: bool="--phase=barrier" in args or "--phase=streaming" in args
+    var remote_basin: bool="--phase=remote-basin" in args or "--phase=remote-basin-reopen" in args
+    var remote_reopen: bool="--phase=remote-basin-reopen" in args
+    var old_spawn:=OS.get_environment("V3_CAVE_SPAWN")
+    if remote_basin:
+        OS.set_environment("V3_CAVE_SPAWN","16,12,112")
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
+    if remote_basin:
+        if old_spawn.is_empty():
+            OS.unset_environment("V3_CAVE_SPAWN")
+        else:
+            OS.set_environment("V3_CAVE_SPAWN",old_spawn)
     if not runtime.running:
         _fail("startup")
         return
@@ -407,16 +417,19 @@ func _test() -> void:
     var water: Node3D=runtime.world.get_node("Water")
     water.set_process(false)
     water.set_physics_process(false)
-    runtime.player.global_position=Vector3(-4,12,28)
+    runtime.player.global_position=Vector3(16,12,112) if remote_basin else Vector3(-4,12,28)
     var camera: Camera3D=runtime.player.get_node("Camera3D")
     camera.global_position=Vector3(-4,48,48)
     camera.look_at(Vector3(-4,0,23),Vector3.UP)
-    var deadline:=Time.get_ticks_msec()+90000
+    var deadline:=Time.get_ticks_msec()+(180000 if remote_basin else 90000)
+    var remote_empty_seen:=false
     var source_positioned:=not sources or "--phase=sources-reopen" in args
     while true:
         if not _frame(runtime,water,0):
             return
         var state: Dictionary=runtime.session.hydraulic_report()
+        if remote_basin and not remote_reopen and str(state.get("solver",""))=="hybrid" and not "hydro:pond" in state.get("source_ids",[]):
+            remote_empty_seen=true
         # Isolate late source discovery from the separate finite-basin
         # remote bootstrap limitation. The initial pond must be present
         # before moving, and neither late source may be pre-initialized.
@@ -446,6 +459,24 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if remote_basin:
+        if not remote_reopen and (not remote_empty_seen or int(initial.get("basin_completed",0))!=1 or int(initial.get("basin_surveyed_tiles",0))<=35 or int(initial.get("basin_initial_litres",0))+64000!=int(initial["initial"])):
+            _fail("remote finite basin certification "+str(initial))
+            return
+        if not "hydro:pond" in initial.get("source_ids",[]) or int(initial["tiles"])>96:
+            _fail("remote finite basin ownership "+str(initial))
+            return
+        var finite_mass:=int(initial["initial"])
+        runtime.player.global_position=Vector3(-4,12,28)
+        if not await _wait_source(runtime,water,"hydro:pond"):
+            return
+        var revisit: Dictionary=runtime.session.hydraulic_report()
+        if int(revisit["initial"])!=finite_mass or int(revisit["litres"])!=finite_mass+int(revisit["injected"])-int(revisit["drained"]) or runtime.session.hydraulic_column_mass(Vector3(-4.5,0,28.5))<=0:
+            _fail("remote finite basin revisit "+str(revisit))
+            return
+        print("V3_HYBRID_REMOTE_BASIN_PASS phase=",("reopen" if remote_reopen else "write")," initial=",finite_mass," state=",revisit)
+        runtime.request_close()
         return
     if barrier:
         await _barrier(runtime,water,"--phase=streaming" in args)

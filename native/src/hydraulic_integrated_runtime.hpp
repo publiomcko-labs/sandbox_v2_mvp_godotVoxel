@@ -4,6 +4,7 @@
 #include "core/hydraulic_worker.hpp"
 #include "core/hydraulic_hybrid_surface.hpp"
 #include "../../experiments/v3/hybrid/coupler.hpp"
+#include "../../experiments/v3/hybrid/finite_basin_survey.hpp"
 #include "persistence/hydraulic_region_store.hpp"
 #include <array>
 #include <godot_cpp/variant/array.hpp>
@@ -25,6 +26,10 @@ class IntegratedRuntime {
     std::set<std::string> sources_;
     std::map<std::string,std::set<core::Region>> source_windows_;
     std::set<core::Region> source_interest_;
+    std::map<std::string,experiment::FiniteBasinSurvey> basin_surveys_;
+    std::uint64_t basin_completed_{},basin_surveyed_tiles_{},basin_wet_tiles_{},basin_cold_seeds_{},basin_commit_max_us_{};
+    Litres basin_initial_litres_{};
+    bool finite_pending_=false;
     std::size_t visible_sources_pending_{};
     std::uint64_t nonresident_source_discoveries_{};
     double view_distance_=192.0;
@@ -83,8 +88,45 @@ class IntegratedRuntime {
         return it!=model_.tiles().end()&&!dirty_.contains(k)&&
             (provenance_.certifies(k,it->second.geometry->revision,rev)||(it->second.resident&&resident(tool,k)));
     }
+    // All reached ownership is preflighted on a copy of the bounded hot
+    // domain. Newly seeded non-hot regions become exact disk owners
+    // without ever consuming a physical slot. Session intent is the
+    // existing crash gate; a failed write poisons the cold store.
+    bool commit_basin(const experiment::FiniteBasinSurvey& survey,std::size_t type,std::uint64_t rev) {
+        const auto start=std::chrono::steady_clock::now();
+        auto staged=model_;
+        struct Record {core::Region key;nlohmann::json geometry,owner;Litres mass;};
+        std::vector<Record> records;
+        Litres total=0;
+        for(const auto &[k,contents]:survey.reached()){
+            const auto &g=survey.geometry().at(k);
+            if(!certified_geometry(k,*g,rev)||cold_contains(k))return false;
+            if(auto it=staged.tiles().find(k);it!=staged.tiles().end()){
+                if(it->second.local||it->second.geometry->revision!=g->revision)return false;
+                for(const auto &[id,amount]:contents)if(!staged.seed(k,id,type,amount))return false;
+            }else{
+                if(!cold_store_)return false;
+                auto row=staged.stage_cold_seed(g,type,contents);
+                if(!row)return false;
+                experiment::CoupledTile witness;witness.geometry=g;
+                records.push_back({k,encode_geometry(k,witness,true),std::move(row->first),row->second});
+            }
+            for(const auto &[id,amount]:contents){(void)id;total+=amount;}
+        }
+        if(staged.initial()-model_.initial()!=total||staged.mass()-model_.mass()!=total)return false;
+        try{
+            for(const auto &record:records)cold_store_->put(record.key,record.geometry,record.owner,record.mass);
+            if(cold_store_&&!cold_store_->consistent(staged.cold_count(),staged.cold_mass()))throw std::logic_error("finite basin cold ledger");
+            model_=std::move(staged);
+        }catch(...){if(cold_store_)cold_store_->poison();throw;}
+        cold_scan_center_.reset();
+        ++basin_completed_;basin_surveyed_tiles_+=survey.geometry().size();
+        basin_wet_tiles_+=survey.reached().size();basin_cold_seeds_+=records.size();basin_initial_litres_+=total;
+        basin_commit_max_us_=std::max(basin_commit_max_us_,static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
+        return true;
+    }
     void discover_sources(const nlohmann::json& rules,std::uint64_t rev,const godot::Ref<godot::VoxelTool>& tool,core::Vec3 position) {
-        source_interest_.clear();visible_sources_pending_=0;
+        source_interest_.clear();visible_sources_pending_=0;finite_pending_=false;
         for(const auto &rule:rules){
             const auto id=rule.at("id").get<std::string>();
             if(sources_.contains(id))continue;
@@ -95,14 +137,42 @@ class IntegratedRuntime {
             // Only an anchor/window is scheduled, not every tile in the view.
             const bool ocean=rule.at("source_kind")=="fixed_head_ocean";
             const bool in_view=std::hypot(anchor.x-position.x,anchor.z-position.z)<=view_distance_;
-            if(!in_view&&!ocean){source_windows_.erase(id);source_attempts_.erase(id);continue;}
+            if(!in_view&&!ocean){source_windows_.erase(id);source_attempts_.erase(id);basin_surveys_.erase(id);continue;}
             if(in_view)++visible_sources_pending_;
             const bool volume=rule.contains("volume_litres");
-            auto &window=source_windows_[id];
-            if(window.empty()){
-                if(ocean||volume)window.insert(k);
-                else for(int x=-1;x<=1;++x)for(int z=-1;z<=1;++z)window.insert({k.x+x*side,base,k.z+z*side});
+            // A finite level source is surveyed incrementally. Only the
+            // unresolved frontier is pinned, not the whole proof.
+            if(!ocean&&!volume){
+                finite_pending_=true;
+                auto survey=basin_surveys_.find(id);
+                if(survey!=basin_surveys_.end()&&survey->second.revision()!=rev){basin_surveys_.erase(survey);survey=basin_surveys_.end();}
+                if(survey!=basin_surveys_.end()){
+                    auto &job=survey->second;
+                    std::vector<core::Region> wanted(job.wanted().begin(),job.wanted().end());
+                    for(std::size_t n=0;n<std::min<std::size_t>(4,wanted.size());++n){
+                        const auto q=wanted[n];
+                        if(source_certified(q,rev,tool)&&certified_geometry(q,*model_.tiles().at(q).geometry,rev))
+                            job.offer(model_.tiles().at(q).geometry);
+                        else if(cold_contains(q)){
+                            auto g=decode_geometry(cold_store_->get(q).at("geometry"));
+                            if(certified_geometry(q,*g,rev))job.offer(std::move(g));
+                        }else source_interest_.insert(q);
+                    }
+                    job.step();
+                    if(job.invalid()){source_conflicts_.insert(id);source_diagnostics_[id]="finite basin invalid or open at world boundary";continue;}
+                    if(job.complete()){
+                        if(commit_basin(job,rule.at("slot").get<std::size_t>(),rev)){
+                            if(!resident(tool,k))++nonresident_source_discoveries_;
+                            sources_.insert(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);
+                            source_windows_.erase(id);source_attempts_.erase(id);basin_surveys_.erase(survey);
+                            if(in_view)--visible_sources_pending_;
+                        }else{source_conflicts_.insert(id);source_diagnostics_[id]="finite basin conflicts with existing owner or revision";}
+                    }
+                    continue;
+                }
             }
+            auto &window=source_windows_[id];
+            if(window.empty())window.insert(k);
             source_interest_.insert(window.begin(),window.end());
             if(!dirty_.empty()||!std::all_of(window.begin(),window.end(),[&](auto q){return source_certified(q,rev,tool);}))continue;
             // Retry on new certification, terrain revision or a bounded
@@ -134,17 +204,11 @@ class IntegratedRuntime {
             if(ocean)accepted=model_.ocean({id,k,*chosen,type,level,chosen->y,4});
             else if(volume)accepted=model_.seed(k,compartment_id,type,amount);
             else{
-                std::set<core::Region> frontier;
-                const auto result=model_.seed_surface_basin(k,compartment_id,type,level,base+height,window,frontier);
-                accepted=result==experiment::Coupler::BasinResult::seeded;
-                if(result==experiment::Coupler::BasinResult::frontier){
-                    bool expanded=false;
-                    for(auto q:frontier)if(window.size()<64&&std::abs(q.x-k.x)<=5*side&&std::abs(q.z-k.z)<=5*side)
-                        expanded=window.insert(q).second||expanded;
-                    source_interest_.insert(window.begin(),window.end());
-                    if(!expanded){source_conflicts_.insert(id);source_diagnostics_[id]="finite basin exceeds certified search budget";}
-                    continue;
-                }
+                if(!certified_geometry(k,g,rev))continue;
+                auto [job,inserted]=basin_surveys_.try_emplace(id,k,compartment_id,level,base+height,rev);
+                (void)inserted;
+                job->second.offer(model_.tiles().at(k).geometry);job->second.step();
+                continue;
             }
             if(accepted){if(!model_.tiles().at(k).resident)++nonresident_source_discoveries_;if(in_view)--visible_sources_pending_;if(ocean)ocean_changed(k);sources_.insert(id);source_windows_.erase(id);source_attempts_.erase(id);source_conflicts_.erase(id);source_diagnostics_.erase(id);}
             else {source_conflicts_.insert(id);source_diagnostics_[id]="wet/local owner or invalid capacity at certified anchor";}
@@ -475,7 +539,8 @@ public:
         if(provenance_.revision()!=rev)provenance_.invalidate(rev);
         view_distance_=std::clamp(view_distance,16.0,4096.0);
         discover_sources(rules,rev,tool,p);
-        advance_ocean(rev);
+        // Do not bulk-initialize an ocean over an uncommitted finite basin.
+        if(!finite_pending_)advance_ocean(rev);
         for(const auto &[k,t]:model_.tiles())if(t.resident&&(!physics_interested(k)||!resident(tool,k))){
             model_.set_resident(k,false);
             if(!dirty_.contains(k)&&model_.reclaim_suspended(k)){++suspended_reclaims_;++settles_;}
@@ -522,6 +587,7 @@ public:
         std::vector<core::Region> ordered(candidates.begin(),candidates.end());
         std::sort(ordered.begin(),ordered.end(),[&](auto a,auto b){
             if(dirty_.contains(a)!=dirty_.contains(b))return dirty_.contains(a);
+            if(finite_pending_&&source_interest_.contains(a)!=source_interest_.contains(b))return source_interest_.contains(a);
             return std::abs(a.x-center_.x)+std::abs(a.z-center_.z)<std::abs(b.x-center_.x)+std::abs(b.z-center_.z);
         });
         // Restore an exact persisted owner before acquiring any replacement
@@ -680,6 +746,11 @@ public:
         d["cold_tiles"]=static_cast<int64_t>(model_.cold_count());d["cold_litres"]=model_.cold_mass();
         d["cold_evictions"]=static_cast<int64_t>(cold_evictions_);d["cold_restores"]=static_cast<int64_t>(cold_restores_);
         d["cold_visual_tiles"]=static_cast<int64_t>(cold_visible_.size());d["cold_visual_reads"]=static_cast<int64_t>(cold_visual_reads_);
+        d["basin_completed"]=static_cast<int64_t>(basin_completed_);d["basin_surveyed_tiles"]=static_cast<int64_t>(basin_surveyed_tiles_);
+        d["basin_wet_tiles"]=static_cast<int64_t>(basin_wet_tiles_);d["basin_cold_seeds"]=static_cast<int64_t>(basin_cold_seeds_);
+        d["basin_initial_litres"]=basin_initial_litres_;d["basin_commit_max_us"]=static_cast<int64_t>(basin_commit_max_us_);
+        std::size_t surveyed=0,wanted=0;for(const auto &[id,job]:basin_surveys_){(void)id;surveyed+=job.geometry().size();wanted+=job.wanted().size();}
+        d["basin_survey_progress"]=static_cast<int64_t>(surveyed);d["basin_frontier_pending"]=static_cast<int64_t>(wanted);
         d["ocean_certifications"]=static_cast<int64_t>(ocean_certifications_);d["ocean_acquisitions"]=static_cast<int64_t>(ocean_acquisitions_);d["ocean_frontier_tiles"]=static_cast<int64_t>(ocean_interest_.size());d["ocean_checked_tiles"]=static_cast<int64_t>(ocean_examined_.size());
         auto samples=tick_samples_;std::sort(samples.begin(),samples.end());
         d["tick_p95_us"]=samples.empty()?0:static_cast<int64_t>(samples[(samples.size()*95-1)/100]);

@@ -337,6 +337,23 @@ public:
     // Atomic finite-source initialization on certified dry exposed
     // compartments. Discovery uses geometric openings even when the
     // tiles are not physics-resident; no exchange is enabled by seeding.
+    // Prepare a newly initialized finite owner directly in the cold ledger.
+    // The caller must durably write the returned record before publishing
+    // this staged Coupler. Never call on a region with an existing owner.
+    std::optional<std::pair<nlohmann::json,Litres>> stage_cold_seed(
+            std::shared_ptr<const tp::Result> g,std::size_t type,const std::map<Id,Litres>& contents) {
+        if(!g||tiles_.contains(g->origin)||contents.empty()||type>=types_.size()||
+            cold_count_==std::numeric_limits<std::uint64_t>::max())return std::nullopt;
+        Coupler isolated(types_,1,1);
+        if(!isolated.publish(g))return std::nullopt;
+        for(const auto &[id,amount]:contents)if(!isolated.seed(g->origin,id,type,amount))return std::nullopt;
+        const auto total=isolated.mass();
+        if(total>ledger_limit-initial_||total>2*ledger_limit-cold_mass_)return std::nullopt;
+        isolated.set_resident(g->origin,false);
+        auto row=isolated.encode_tile(g->origin);
+        initial_+=total;cold_mass_+=total;++cold_count_;verify();
+        return std::pair{std::move(row),total};
+    }
     enum class BasinResult { seeded, waiting, frontier, conflict };
     BasinResult seed_surface_basin(core::Region root,Id id,std::size_t type,double level,int ceiling,
             const std::set<core::Region>& window,std::set<core::Region>& frontier) {

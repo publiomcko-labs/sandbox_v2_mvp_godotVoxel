@@ -1,4 +1,5 @@
 #include "../../experiments/v3/hybrid/coupler.hpp"
+#include "../../experiments/v3/hybrid/finite_basin_survey.hpp"
 #include "core/hydraulic_provenance.hpp"
 #include <cassert>
 #include <iostream>
@@ -139,6 +140,33 @@ int main(){
     auto late_save=Coupler::decode(late.encode(),types,{{ka,ba},{kb,bb}});
     assert(late_save.encode()==late.encode());
     std::cout<<"V3_HYBRID_I17_LATE_BASIN_PASS mass="<<late.mass()<<"\n";
+    // Incremental closed-basin discovery across 121 regions, independent
+    // of the two-region hot limit. Unknown endpoints are not assumed dry.
+    auto narrow=[](int i){
+        tp::Snapshot s{{i*4,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
+        for(int z=1;z<=2;++z)for(int x=(i==0?1:0);x<=(i==120?2:3);++x)
+            for(int y=0;y<8;++y)s.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;
+        return std::make_shared<const tp::Result>(tp::extract(s));
+    };
+    auto first_basin=narrow(0);
+    FiniteBasinSurvey basin(first_basin->origin,first_basin->compartments.front().id,3,8,1);
+    Coupler surveyed_basin(types,1,2);
+    for(int i=0;i<=120;++i){
+        assert(!basin.complete()&&surveyed_basin.mass()==0);
+        assert(basin.offer(narrow(i)));basin.step();
+    }
+    for(int i=0;i<121&&!basin.complete();++i)basin.step();
+    assert(basin.complete()&&basin.reached().size()==121&&basin.geometry().size()==121);
+    std::vector<nlohmann::json> basin_rows;
+    for(const auto &[k,contents]:basin.reached()){
+        auto row=surveyed_basin.stage_cold_seed(basin.geometry().at(k),0,contents);
+        assert(row);basin_rows.push_back(row->first);
+    }
+    const auto basin_mass=static_cast<Litres>((121*4-2)*2*3000);
+    assert(surveyed_basin.tiles().empty()&&surveyed_basin.cold_count()==121&&surveyed_basin.mass()==basin_mass&&surveyed_basin.initial()==basin_mass);
+    auto basin_reopened=Coupler::decode(surveyed_basin.encode(),types,{});
+    assert(basin_reopened.restore_cold(first_basin,basin_rows.front())&&basin_reopened.mass()==basin_mass);
+    std::cout<<"V3_HYBRID_I22_FINITE_SURVEY_PASS regions=121 mass="<<basin_mass<<" hot=0\n";
     // A solid wall deletes complete wet intervals. Only surviving
     // previously wet recipients can accept displaced mass.
     tp::Snapshot wall{{0,0,0},4,8,4,1,2,std::vector<std::uint8_t>(4*8*4,1)};

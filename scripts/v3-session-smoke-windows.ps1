@@ -217,6 +217,23 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
         Get-Content $stderr
         if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_SOURCES_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw "Hybrid $phase failed" }
     }
+    $env:V3_WORLD_ID='hybrid_remote_basin_fixture'
+    $remoteInitial=$null
+    foreach ($phase in @('remote-basin','remote-basin-reopen')) {
+        $stdout=Join-Path $results "hybrid-$phase.stdout.log"
+        $stderr=Join-Path $results "hybrid-$phase.stderr.log"
+        $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_integrated.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+        $null=$p.Handle
+        if (!$p.WaitForExit(300000)) { $p.Kill(); $p.WaitForExit(); throw "Hybrid $phase timeout" }
+        $p.WaitForExit()
+        Get-Content $stdout
+        Get-Content $stderr
+        $marker=Select-String -LiteralPath $stdout -Pattern 'V3_HYBRID_REMOTE_BASIN_PASS phase=\S+ initial=(\d+)'
+        if ($p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw "Hybrid $phase failed" }
+        $observed=[long]$marker.Matches[0].Groups[1].Value
+        if ($phase -eq 'remote-basin') { $remoteInitial=$observed }
+        elseif ($remoteInitial -ne $observed) { throw 'Remote finite initial mass changed on reopen' }
+    }
     $env:V3_WORLD_ID='hybrid_barrier_fixture'
     $stdout=Join-Path $results 'hybrid-barrier.stdout.log'
     $stderr=Join-Path $results 'hybrid-barrier.stderr.log'
