@@ -280,6 +280,18 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
     Get-Content $stdout
     Get-Content $stderr
     if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_RESIDENT_SETTLE_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw 'Hybrid settle failed' }
+    # Real multi-layer cave: sealed dry chamber, four authoritative
+    # VoxelTool edits creating an open shaft, then gravity-driven flow.
+    $env:V3_WORLD_ID='hybrid_vertical_cave_fixture'
+    $stdout=Join-Path $results 'hybrid-vertical-cave.stdout.log'
+    $stderr=Join-Path $results 'hybrid-vertical-cave.stderr.log'
+    $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_integrated.gd','--','--phase=vertical-cave') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+    $null=$p.Handle
+    if (!$p.WaitForExit(240000)) { $p.Kill(); $p.WaitForExit(); throw 'Hybrid vertical cave timeout' }
+    $p.WaitForExit()
+    Get-Content $stdout
+    Get-Content $stderr
+    if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_VERTICAL_CAVE_GAME_PASS') -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw 'Hybrid vertical cave failed' }
     $env:V3_WORLD_ID='hybrid_barrier_fixture'
     $stdout=Join-Path $results 'hybrid-barrier.stdout.log'
     $stderr=Join-Path $results 'hybrid-barrier.stderr.log'

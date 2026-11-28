@@ -632,6 +632,84 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     print("V3_HYBRID_OCEAN_STRESS_PASS phase=",phase," visible=",ready["visible_wet_tiles"]," hot=",ready["tiles"]," cold_visual=",ready["cold_visual_tiles"]," meshes=",water.call("get_report")["meshes"]," reopened=",revisited)
     runtime.request_close()
 
+# Real VoxelTool carve: first create a sealed dry cavity below a wet
+# exposed surface, then cut overlapping vertical shaft sections.
+# The water may reach the lower interval only by fixed solver ticks.
+func _vertical_cave(runtime,water: Node3D) -> void:
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var chosen:=Vector3.ZERO
+    var origin: Vector3=runtime.player.global_position
+    for x in range(-11,-4):
+        for z in range(20,30):
+            var col:=Vector3(x+0.5,0,z+0.5)
+            if runtime.session.hydraulic_column_mass(col)<1000:
+                continue
+            if tool.get_voxel_f(Vector3i(x,-20,z))>=-0.5:
+                continue
+            var wet:=false
+            for y in range(-4,4):
+                if not runtime.session.hydraulic_at(Vector3(col.x,y+0.5,col.z)).is_empty():
+                    wet=true
+                    break
+            if wet:
+                chosen=Vector3(col.x,-20.0,col.z)
+                break
+        if chosen!=Vector3.ZERO:
+            break
+    if chosen==Vector3.ZERO:
+        _fail("vertical cave no wet over solid donor in source window")
+        return
+    var preserved: Dictionary=runtime.session.hydraulic_report()
+    var initial_mass:=int(preserved["initial"])
+    if not runtime.session.hydraulic_at(chosen).is_empty():
+        _fail("vertical cave dry baseline")
+        return
+    var edit_points: Array[Vector3]=[chosen,Vector3(chosen.x,-14.0,chosen.z),Vector3(chosen.x,-7.0,chosen.z),Vector3(chosen.x,-1.0,chosen.z)]
+    var radii: Array[float]=[2.5,5.0,5.0,5.0]
+    for i in range(edit_points.size()):
+        var before: Dictionary=runtime.session.hydraulic_report()
+        var accepted: String=runtime.submit_brush(edit_points[i],false,radii[i])
+        if accepted!="accepted":
+            _fail("vertical cave brush rejected step="+str(i)+" reason="+accepted+" "+str(before))
+            return
+        var after: Dictionary=runtime.session.hydraulic_report()
+        if int(after["litres"])!=int(before["litres"]) or int(after["initial"])!=initial_mass:
+            _fail("vertical cave edit not atomically conservative "+str(after))
+            return
+        var deadline:=Time.get_ticks_msec()+45000
+        while int(runtime.session.hydraulic_report()["pending_edit_tiles"])>0:
+            if not _frame(runtime,water,0):
+                return
+            if Time.get_ticks_msec()>deadline:
+                _fail("vertical cave edit publication step="+str(i)+" "+str(runtime.session.hydraulic_report()))
+                return
+            await process_frame
+    if tool.get_voxel_f(Vector3i(chosen.floor()))<=0.1 or not runtime.session.hydraulic_at(chosen).is_empty():
+        _fail("vertical cave before tick not physically dry "+str(runtime.session.hydraulic_report()))
+        return
+    var first_wet:=-1
+    for t in range(400):
+        if not _frame(runtime,water,50000000):
+            return
+        var state: Dictionary=runtime.session.hydraulic_report()
+        if int(state["litres"])!=int(state["initial"])+int(state["injected"])-int(state["drained"]) or int(state["initial"])!=initial_mass or int(state["blocked_tiles"])!=0:
+            _fail("vertical cave tick ledger "+str(state))
+            return
+        if first_wet<0 and not runtime.session.hydraulic_at(chosen).is_empty():
+            first_wet=t+1
+        if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
+            _fail("vertical cave isolated dry control flooded")
+            return
+        await process_frame
+        if first_wet>0 and t>=first_wet+15:
+            break
+    if first_wet<=0:
+        _fail("vertical cave actual shaft did not wet lower cavity "+str(runtime.session.hydraulic_report()))
+        return
+    print("V3_HYBRID_VERTICAL_CAVE_GAME_PASS first_wet_tick=",first_wet," position=",chosen," initial=",initial_mass," state=",runtime.session.hydraulic_report())
+    runtime.request_close()
+
 func _test() -> void:
     var args:=OS.get_cmdline_user_args()
     var reopen: bool="--phase=reopen" in args
@@ -642,6 +720,7 @@ func _test() -> void:
     var remote_reopen: bool="--phase=remote-basin-reopen" in args
     var ocean_stress: bool="--phase=ocean-stress" in args or "--phase=ocean-stress-reopen" in args
     var settle_live: bool="--phase=settle" in args
+    var vertical_cave: bool="--phase=vertical-cave" in args
     var cross_tile: bool="--phase=cross-tile" in args
     var old_spawn:=OS.get_environment("V3_CAVE_SPAWN")
     if remote_basin or sources:
@@ -697,6 +776,9 @@ func _test() -> void:
         return
     if cross_tile:
         await _cross_tile_live(runtime,water)
+        return
+    if vertical_cave:
+        await _vertical_cave(runtime,water)
         return
     if settle_live:
         await _settle_live(runtime,water)
