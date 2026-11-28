@@ -83,9 +83,9 @@ int main(){
         ps::HydraulicRegionStore cold(world,119,119000);
         const auto path=world/"hydraulic_regions/r_32_0.json";
         std::ifstream in(path,std::ios::binary);
-        const auto j=sandbox::content::strict_json(std::string(std::istreambuf_iterator<char>(in),{}));
-        assert(j.at("schema")=="hydraulic-cold-region-2"&&j.at("sha256").get<std::string>().size()==64);
-        auto corrupted=j;corrupted["geometry"]["revision"]=500;
+        const auto archived_record=sandbox::content::strict_json(std::string(std::istreambuf_iterator<char>(in),{}));
+        assert(archived_record.at("schema")=="hydraulic-cold-region-2"&&archived_record.at("sha256").get<std::string>().size()==64);
+        auto corrupted=archived_record;corrupted["geometry"]["revision"]=500;
         in.close();std::ofstream out(path,std::ios::binary|std::ios::trunc);
         out<<corrupted.dump();out.close();
         bool rejected_corruption=false;

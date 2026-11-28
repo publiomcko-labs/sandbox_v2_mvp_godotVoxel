@@ -442,13 +442,13 @@ func _test() -> void:
     var remote_reopen: bool="--phase=remote-basin-reopen" in args
     var ocean_stress: bool="--phase=ocean-stress" in args or "--phase=ocean-stress-reopen" in args
     var old_spawn:=OS.get_environment("V3_CAVE_SPAWN")
-    if remote_basin:
+    if remote_basin or sources:
         OS.set_environment("V3_CAVE_SPAWN","16,12,112")
     if ocean_stress:
         OS.set_environment("V3_CAVE_SPAWN","112,12,112")
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
-    if remote_basin or ocean_stress:
+    if remote_basin or ocean_stress or sources:
         if old_spawn.is_empty():
             OS.unset_environment("V3_CAVE_SPAWN")
         else:
@@ -462,7 +462,7 @@ func _test() -> void:
     var water: Node3D=runtime.world.get_node("Water")
     water.set_process(false)
     water.set_physics_process(false)
-    runtime.player.global_position=Vector3(112,12,112) if ocean_stress else (Vector3(16,12,112) if remote_basin else Vector3(-4,12,28))
+    runtime.player.global_position=Vector3(112,12,112) if ocean_stress else (Vector3(16,12,112) if remote_basin or sources else Vector3(-4,12,28))
     var camera: Camera3D=runtime.player.get_node("Camera3D")
     camera.global_position=Vector3(112,60,128) if ocean_stress else Vector3(-4,48,48)
     camera.look_at(Vector3(112,20,112) if ocean_stress else Vector3(-4,0,23),Vector3.UP)
