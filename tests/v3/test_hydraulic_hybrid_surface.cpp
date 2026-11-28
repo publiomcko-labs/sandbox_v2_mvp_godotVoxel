@@ -245,11 +245,11 @@ int main(){
     const auto deep_build=hybrid::build(deep_front);
     double deep_area=0;
     for(std::size_t i=0;i<deep_build.materials.at(0).size();i+=3){
-        const auto &v=deep_build.materials.at(0);
-        deep_area+=std::abs((v[i+1].x-v[i].x)*(v[i+2].z-v[i].z)-
-            (v[i+1].z-v[i].z)*(v[i+2].x-v[i].x))*0.5;
+        const auto &deep_vertices=deep_build.materials.at(0);
+        deep_area+=std::abs((deep_vertices[i+1].x-deep_vertices[i].x)*(deep_vertices[i+2].z-deep_vertices[i].z)-
+            (deep_vertices[i+1].z-deep_vertices[i].z)*(deep_vertices[i+2].x-deep_vertices[i].x))*0.5;
         for(std::size_t k=0;k<3;++k)
-            assert(v[i+k].x>=0&&v[i+k].x<=1&&v[i+k].z>=0&&v[i+k].z<=1);
+            assert(deep_vertices[i+k].x>=0&&deep_vertices[i+k].x<=1&&deep_vertices[i+k].z>=0&&deep_vertices[i+k].z<=1);
     }
     assert(deep_area>0.25&&deep_area<1.0);
     std::cout<<"V3_HYBRID_I25_DEEP_FRONT_CONTOUR_PASS area="<<deep_area<<" footprint=bounded\\n";
