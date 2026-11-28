@@ -180,6 +180,10 @@ int main(){
     std::set<Region> all;for(const auto &[k,g]:known){(void)g;all.insert(k);}
     verify_cache(all);
     const auto before=incremental.input_rebuilds();verify_cache({});assert(before==incremental.input_rebuilds());
+    // Repeating an unchanged wet primary invalidation must not rebuild
+    // any adjacent presentation input or change the visible result.
+    verify_cache({{0,0,0}});
+    assert(incremental.input_rebuilds()==before);
     make_primary({0,0,0},2.2);verify_cache({{0,0,0}});
     primary.erase({4,0,4});verify_cache({{4,0,4}});
     known.erase({2,0,2});verify_cache({{2,0,2}});

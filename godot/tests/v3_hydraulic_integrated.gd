@@ -538,6 +538,32 @@ func _settle_live(runtime,water: Node3D) -> void:
     print("V3_HYBRID_RESIDENT_SETTLE_PASS ticks=",last["ticks"]," settles=",last["settles"]," hot=",last["local_active"]," mass=",last["litres"])
     runtime.request_close()
 
+# World-space diagnosis of the conspicuous square cut in high-head
+# viewport evidence. This uses the authoritative VoxelTool, not an
+# inferred water mask, and runs only for GPU screenshots outside timing.
+func _ocean_shore_diagnostic(runtime) -> void:
+    if OS.get_environment("V3_GPU_CAPTURE_ROOT").is_empty():
+        return
+    var tool: VoxelTool=runtime.terrain.get_voxel_tool()
+    tool.channel=VoxelBuffer.CHANNEL_SDF
+    var camera: Camera3D=runtime.player.get_node("Camera3D")
+    var probes: Array=[]
+    for y in [300.0,400.0,520.0]:
+        for x in [635.0,640.0,645.0,875.0,900.0,915.0]:
+            var pixel:=Vector2(x,y)
+            var ray_origin:=camera.project_ray_origin(pixel)
+            var ray:=camera.project_ray_normal(pixel)
+            if absf(ray.y)<0.01:
+                continue
+            var at_head:=ray_origin+ray*((30.0-ray_origin.y)/ray.y)
+            var s: Variant=null
+            var loaded:=tool.is_area_editable(AABB(at_head-Vector3.ONE,Vector3(2,2,2)))
+            if loaded:
+                s=tool.get_voxel_f(Vector3i(at_head.floor()))
+            var wet: Dictionary=runtime.session.hydraulic_at(at_head-Vector3(0,0.05,0))
+            probes.append({"pixel":[x,y],"at_head":[at_head.x,at_head.y,at_head.z],"loaded":loaded,"sdf":s,"wet":wet})
+    print("V3_HYBRID_OCEAN_SHORE_SDF_DIAG ",JSON.stringify(probes))
+
 func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     var deadline:=Time.get_ticks_msec()+180000
     var reached:=false
@@ -564,6 +590,7 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     print("V3_HYBRID_OCEAN_SOURCE_ROOT_PASS litres=",source_root_mass)
     if not await _capture("08-ocean-wide"):
         return
+    _ocean_shore_diagnostic(runtime)
     # Explicit fixed-head sink is physically connected to the same
     # volume as the higher source. Verify real drain transfer over ticks,
     # not just registration or a synthetic ledger.

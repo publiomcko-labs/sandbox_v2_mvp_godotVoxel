@@ -402,12 +402,23 @@ public:
                 out.insert({k.x+dx*side,k.y,k.z+dz*side});
             return out;
         };
+        std::set<core::Region> effective;
         for(auto k:changed){
             ++primary_rebuilds_;
-            if(auto in=primary(k))primary_.insert_or_assign(k,std::move(*in));
-            else primary_.erase(k);
+            if(auto in=primary(k)){
+                const auto old=primary_.find(k);
+                // An aggregate or local tick can change exact litres
+                // without changing the centi-metre visual head, layer or
+                // immutable geometry. Skip the entire dependent halo in
+                // this case: the displayed Input is byte-equivalent.
+                if(old!=primary_.end()&&old->second.same(*in))continue;
+                primary_.insert_or_assign(k,std::move(*in));
+            }else primary_.erase(k);
+            // Dry geometry-only changes still invalidate bank support.
+            effective.insert(k);
         }
-        const auto membership=ring(changed);
+        if(effective.empty())return wanted_;
+        const auto membership=ring(effective);
         for(auto k:membership) {
             if(primary_.contains(k)){wanted_.try_emplace(k,primary_.at(k));continue;}
             auto g=geometry(k);
