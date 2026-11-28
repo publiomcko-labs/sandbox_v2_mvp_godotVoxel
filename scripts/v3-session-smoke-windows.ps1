@@ -175,6 +175,7 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
     $env:V3_WORLD_ROOT=Join-Path $results 'hybrid-integrated-worlds'
     $env:V3_WORLD_ID='hybrid_integrated_fixture'
     New-Item -ItemType Directory -Force $env:V3_WORLD_ROOT | Out-Null
+    $hybridInitial=$null
     $hybridMass=$null
     foreach ($phase in @('write','reopen')) {
         $stdout=Join-Path $results "hybrid-integrated-$phase.stdout.log"
@@ -189,8 +190,15 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
         $marker=Select-String -LiteralPath $stdout -Pattern "V3_HYBRID_INTEGRATED_PASS phase=$phase mass=(\d+)"
         if ($p.ExitCode -ne 0 -or !$marker -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw "Hybrid integrated $phase failed" }
         $observed=[int64]$marker.Matches[0].Groups[1].Value
-        if ($phase -eq 'write') { $hybridMass=$observed }
-        elseif ($hybridMass -ne $observed) { throw 'Hybrid mass changed on reopen' }
+        $ledgerMatch=[regex]::Match($marker.Line, '"initial":\s*(\d+),\s*"injected":\s*(\d+),\s*"drained":\s*(\d+)')
+        if (!$ledgerMatch.Success) { throw "Hybrid $phase missing exact source ledger" }
+        $initial=[int64]$ledgerMatch.Groups[1].Value
+        $injected=[int64]$ledgerMatch.Groups[2].Value
+        $drained=[int64]$ledgerMatch.Groups[3].Value
+        if ($observed -ne ($initial+$injected-$drained)) { throw "Hybrid $phase mass ledger mismatch" }
+        if ($phase -eq 'write') { $hybridInitial=$initial; $hybridMass=$observed }
+        elseif ($hybridInitial -ne $initial) { throw 'Hybrid finite initial mass changed on reopen' }
+        elseif ($observed -lt $hybridMass -and $drained -eq 0) { throw 'Hybrid unexplained mass loss on reopen' }
     }
     # Separate actual terrain lifecycle, no changes to the breach fixture.
     $env:V3_WORLD_ID='hybrid_lifecycle_fixture'
