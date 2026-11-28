@@ -45,7 +45,7 @@ class IntegratedRuntime {
     std::set<core::Region> pending_survey_,pending_stream_;
     std::optional<StreamSnapshotJob> stream_job_;
     StreamBlockCache stream_cache_;
-    std::uint64_t stream_steps_{},stream_cached_blocks_{},stream_max_step_us_{},stream_retry_frames_{};
+    std::uint64_t stream_steps_{},stream_cached_blocks_{},stream_max_step_us_{},stream_retry_frames_{},pristine_stream_starts_{};
     std::uint64_t visual_survey_tiles_{},post_edit_survey_tiles_{},suspended_reclaims_{};
     std::uint64_t stream_survey_tiles_{},stream_found_blocks_{},stream_generated_blocks_{},stream_read_failures_{};
     std::vector<std::uint64_t> tick_samples_,voxel_copy_samples_,classification_samples_;
@@ -76,7 +76,10 @@ class IntegratedRuntime {
         if(std::abs(k.x-center_.x)>view_distance_+side||std::abs(k.z-center_.z)>view_distance_+side)return false;
         for(auto d:{core::Region{0,0,0},core::Region{-16,0,0},core::Region{16,0,0},core::Region{0,0,-16},core::Region{0,0,16}}) {
             core::Region n{k.x+d.x,base,k.z+d.z};
-            if(model_.tiles().contains(n)&&(model_.tile_mass(n)||model_.tiles().at(n).local))return true;
+            // Stable aggregate ocean mass is not a local flow front.
+            // A neighboring ACTIVE local solver is the only physical
+            // expansion trigger; ocean topology/visualization is read-only.
+            if(auto it=model_.tiles().find(n);it!=model_.tiles().end()&&it->second.local)return true;
         }
         return false;
     }
@@ -606,14 +609,21 @@ public:
         acquire_cold_visual(rev);
         // Drop a partial snapshot when its certificate or interest changes.
         if(stream_job_&&(!stream.valid()||stream_job_->durable_revision()!=stream.durable_revision||
-            !interested(stream_job_->key())||!provenance_.certifies(stream_job_->key(),stream_job_->revision(),rev)||
-            resident(tool,stream_job_->key())))stream_job_.reset();
+            !interested(stream_job_->key())||!provenance_.certifies_halo(stream_job_->key(),stream_job_->revision(),rev)))stream_job_.reset();
         if(stream_retry_frames_)--stream_retry_frames_;
         bool acquired=false;
         if(pending_.size()<2)for(int pass=0;pass<2&&!acquired;++pass){
             if(pass==1&&stream_job_){
                 const auto begin=std::chrono::steady_clock::now();
-                stream_job_->step(&stream_cache_);++stream_steps_;
+                // Main-thread work is bounded by elapsed time, not a
+                // single block per frame. Cached 16^3 blocks can advance
+                // together; generating a new block stops the batch after
+                // its first expensive step. This reuses Voxel Tools'
+                // canonical stream and generator, never a second terrain.
+                for(int batch=0;batch<8&&!stream_job_->done();++batch){
+                    stream_job_->step(&stream_cache_);++stream_steps_;
+                    if(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-begin).count()>=4000)break;
+                }
                 if(stream_job_->done()){
                     const auto k=stream_job_->key();const auto wanted_revision=stream_job_->revision();
                     const auto stats=stream_job_->stats();stream_found_blocks_+=stats.found;stream_generated_blocks_+=stats.generated;stream_cached_blocks_+=stats.cached;
@@ -634,11 +644,16 @@ public:
             // A certified hot owner used only as an ocean witness does not
             // require another live snapshot every frame.
             if(it!=model_.tiles().end()&&!physics_interested(k)&&certified_geometry(k,*it->second.geometry,rev))continue;
-            const bool survey=!loaded&&pass==1&&it==model_.tiles().end()&&!dirty_.contains(k)&&provenance_.pristine(k,rev);
-            const bool archived=!loaded&&pass==1&&!survey&&!stream_retry_frames_&&stream.valid()&&
-                provenance_.certifies(k,stream.durable_revision,rev)&&
-                (it==model_.tiles().end()||dirty_.contains(k)||it->second.geometry->render_sdf.empty());
-            if((pass==0&&!loaded)||(pass==1&&!survey&&!archived))continue;
+            // Prefer a durable, revision- and halo-certified read of the
+            // existing VoxelStream/generator for unchanged geometry.
+            // A live unsaved terrain edit never takes this path.
+            const bool stream_safe=!stream_retry_frames_&&stream.valid()&&!dirty_.contains(k)&&
+                provenance_.certifies_halo(k,stream.durable_revision,rev)&&
+                (it==model_.tiles().end()||it->second.geometry->render_sdf.empty());
+            const bool survey=!loaded&&pass==1&&!stream_safe&&it==model_.tiles().end()&&
+                provenance_.pristine(k,rev);
+            const bool archived=pass==1&&stream_safe;
+            if((pass==0&&(!loaded||stream_safe))||(pass==1&&!survey&&!archived))continue;
             if(it==model_.tiles().end()&&model_.tiles().size()>=model_.tile_limit()) {
                 bool can_reclaim=false;for(const auto &[q,t]:model_.tiles()){(void)t;if(reclaimable(q,true)){can_reclaim=true;break;}}
                 if(!can_reclaim)continue;
@@ -647,6 +662,7 @@ public:
             const auto wanted_revision=survey?0:archived?stream.durable_revision:dirty_.contains(k)?dirty_.at(k):it!=model_.tiles().end()?it->second.geometry->revision:rev;
             if(archived){
                 stream_job_.emplace(stream,godot::Vector3i(k.x,k.y,k.z),godot::Vector3i(side,height,side),wanted_revision);
+                ++pristine_stream_starts_;
                 acquired=true;break;
             }
             SnapshotTiming timing;
@@ -746,6 +762,7 @@ public:
         d["stream_read_failures"]=static_cast<int64_t>(stream_read_failures_);
         d["stream_cached_blocks"]=static_cast<int64_t>(stream_cached_blocks_);d["stream_steps"]=static_cast<int64_t>(stream_steps_);
         d["stream_max_step_us"]=static_cast<int64_t>(stream_max_step_us_);
+        d["pristine_stream_starts"]=static_cast<int64_t>(pristine_stream_starts_);
         d["provenance_complete"]=provenance_.complete();d["edited_provenance_tiles"]=static_cast<int64_t>(provenance_.size());
         d["surface_primary_rebuilds"]=static_cast<int64_t>(surface_cache_.primary_rebuilds());d["surface_input_rebuilds"]=static_cast<int64_t>(surface_cache_.input_rebuilds());
         d["local_active"]=static_cast<int64_t>(model_.active());d["activations"]=static_cast<int64_t>(activations_);d["settles"]=static_cast<int64_t>(settles_);

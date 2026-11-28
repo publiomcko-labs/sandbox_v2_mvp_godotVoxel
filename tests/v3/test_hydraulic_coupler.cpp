@@ -21,6 +21,14 @@ int main(){
     restored.record(3,{safe_key});
     assert(!restored.complete()&&!restored.pristine(edit_key,3));
     assert(!EditProvenance::decode(nlohmann::json(nullptr),1).pristine(safe_key,1));
+    EditProvenance halo_proof;
+    assert(halo_proof.certifies_halo({0,-32,0},0,0));
+    halo_proof.record(1,{{16,-32,0}});
+    assert(halo_proof.certifies({0,-32,0},0,1));
+    assert(!halo_proof.certifies_halo({0,-32,0},0,1));
+    assert(halo_proof.certifies_halo({0,-32,0},1,1));
+    assert(!halo_proof.certifies_halo({16,-32,0},0,1));
+    std::cout<<"V3_HYBRID_I24_STREAM_HALO_PASS stale_neighbor_rejected=1 durable_reenabled=1\n";
     std::cout<<"V3_HYBRID_I15_PROVENANCE_PASS\n";
     const auto a=flat(0),b=flat(4),c=flat(8);
     const auto ka=a->origin,kb=b->origin,kc=c->origin;

@@ -26,6 +26,14 @@ public:
         const auto it=edited_.find(k);
         return it==edited_.end()||geometry_revision>=it->second;
     }
+    // A render/SDF copy uses a one-voxel halo. A durable block snapshot
+    // is safe only when every intersected neighbor has been committed at
+    // or before the durable revision, not merely the central tile.
+    bool certifies_halo(core::Region k,std::uint64_t geometry_revision,std::uint64_t world_revision)const {
+        for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz)
+            if(!certifies({k.x+dx*16,k.y,k.z+dz*16},geometry_revision,world_revision))return false;
+        return true;
+    }
     void invalidate(std::uint64_t revision){complete_=false;revision_=revision;edited_.clear();}
     void record(std::uint64_t revision,const std::set<core::Region>& keys){
         if(!complete_||revision_==UINT64_MAX||revision!=revision_+1||keys.empty()){

@@ -537,7 +537,7 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
             return
         var state: Dictionary=runtime.session.hydraulic_report()
         var render: Dictionary=water.call("get_report")
-        if "wide_sea:head" in state.get("source_ids",[]) and "wide_sea:z_sink" in state.get("source_ids",[]) and int(state.get("visible_wet_tiles",0))>96 and int(state.get("cold_visual_tiles",0))>=5 and int(state.get("tiles",1000))<=96 and int(render.get("meshes",0))>96 and bool(water.get("_hybrid_ready")):
+        if "wide_sea:head" in state.get("source_ids",[]) and "wide_sea:z_sink" in state.get("source_ids",[]) and int(state.get("visible_wet_tiles",0))>96 and int(state.get("cold_visual_tiles",0))>=5 and int(state.get("tiles",1000))<=96 and int(state.get("active_tiles",1000))<64 and int(render.get("meshes",0))>96 and bool(water.get("_hybrid_ready")):
             reached=true
             break
         await process_frame
@@ -548,7 +548,7 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
     # The source tile itself must be physically wet at head 30.
     # Previously it was deliberately excluded, leaving a conspicuous
     # 16x16m square of dry terrain in an otherwise connected ocean.
-    var source_root_mass:=runtime.session.hydraulic_column_mass(Vector3(112.5,0,112.5))
+    var source_root_mass: int=int(runtime.session.hydraulic_column_mass(Vector3(112.5,0,112.5)))
     if source_root_mass<=0:
         _fail("ocean source root square hole "+str(ready))
         return
@@ -588,7 +588,7 @@ func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
             return
         await process_frame
     var revisited: Dictionary=runtime.session.hydraulic_report()
-    if int(revisited["litres"])!=int(revisited["initial"])+int(revisited["injected"])-int(revisited["drained"]) or int(revisited["tiles"])>96:
+    if int(revisited["litres"])!=int(revisited["initial"])+int(revisited["injected"])-int(revisited["drained"]) or int(revisited["tiles"])>96 or int(revisited["active_tiles"])>=64:
         _fail("ocean revisit ledger or hot limit "+str(revisited))
         return
     if not await _capture("09-ocean-revisit"):
