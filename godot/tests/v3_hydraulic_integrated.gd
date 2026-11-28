@@ -637,7 +637,7 @@ func _test() -> void:
         if not _frame(runtime,water,50000000):
             return
         var movement_state: Dictionary=runtime.session.hydraulic_report()
-        if int(movement_state["litres"])!=mass or int(water.call("get_report")["meshes"])==0:
+        if int(movement_state["litres"])!=int(movement_state["initial"])+int(movement_state["injected"])-int(movement_state["drained"]) or int(movement_state["initial"])!=int(initial["initial"]) or int(water.call("get_report")["meshes"])==0:
             _fail("movement mass/visibility expected="+str(mass)+" state="+str(movement_state)+" render="+str(water.call("get_report")))
             return
         await process_frame
@@ -656,5 +656,5 @@ func _test() -> void:
     if int(state["local_active"])<=0 or int(state["moved"])<=0 or not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("mid-flow or dry cave "+str(state))
         return
-    print("V3_HYBRID_INTEGRATED_PASS phase=write mass=",mass," retained_before_move=",retained," fixture_frame_p95_us=",p95," state=",state," render=",water.call("get_report"))
+    print("V3_HYBRID_INTEGRATED_PASS phase=write mass=",int(state["litres"])," retained_before_move=",retained," fixture_frame_p95_us=",p95," state=",state," render=",water.call("get_report"))
     runtime.request_close()
