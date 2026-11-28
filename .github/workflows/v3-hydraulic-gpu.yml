@@ -61,7 +61,7 @@ jobs:
   interactive-gpu:
     needs: validate-candidate
     runs-on: [self-hosted, interactive-gpu]
-    timeout-minutes: 12
+    timeout-minutes: 18
     defaults:
       run:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
@@ -120,6 +120,20 @@ jobs:
           if (!(Select-String -LiteralPath $stdout -SimpleMatch 'V3_HYBRID_PROGRESSIVE_PASS')) { throw 'Progressive front fixture missing' }
           if (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SHADER ERROR:|SCRIPT ERROR:|V3_HYDRAULIC_RUNTIME_FAIL:|V3_HYBRID_INTEGRATED_FAIL:') { throw 'Graphical errors detected' }
           if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 7) { throw 'Expected seven integrated game viewport captures' }
+          # GPU stress validates real visible wet coverage beyond the
+          # physical hot budget, not just a synthetic C++ counter.
+          $env:V3_MOD_ROOT=Join-Path $root 'examples/v3/hybrid_ocean_stress_mods'
+          $env:V3_WORLD_ID='h22_ocean_stress_gpu'
+          $stressOut=Join-Path $capture 'ocean-stress.stdout.log'
+          $stressErr=Join-Path $capture 'ocean-stress.stderr.log'
+          $s=Start-Process -FilePath $editor -ArgumentList @('--path',('"'+$project+'"'),'--rendering-method','gl_compatibility','--resolution','1280x720','--position','80,80','--max-fps','30','--script','res://tests/v3_hydraulic_integrated.gd','--','--phase=ocean-stress') -PassThru -RedirectStandardOutput $stressOut -RedirectStandardError $stressErr
+          $null=$s.Handle
+          if (!$s.WaitForExit(360000)) { $s.Kill(); $s.WaitForExit(); throw 'Ocean stress GPU timeout' }
+          $s.WaitForExit()
+          Get-Content $stressOut
+          Get-Content $stressErr
+          if ($s.ExitCode -ne 0 -or !(Select-String -LiteralPath $stressOut -SimpleMatch 'V3_HYBRID_OCEAN_STRESS_PASS phase=write') -or !(Select-String -LiteralPath $stressOut -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS')) { throw 'Ocean stress GPU failed' }
+          if (@(Get-ChildItem -LiteralPath $capture -Filter '*.png' -File).Count -ne 9) { throw 'Expected seven standard and two ocean captures' }
           Write-Host 'V3_GPU_CAPTURE_ARTIFACT_READY'
       - uses: actions/upload-artifact@v4
         if: always()

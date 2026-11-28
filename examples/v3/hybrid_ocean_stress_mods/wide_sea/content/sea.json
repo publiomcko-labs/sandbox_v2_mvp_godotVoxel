@@ -1,0 +1,14 @@
+{
+  "id": "wide_sea:head",
+  "type": "liquid_source_rule",
+  "data": {
+    "liquid": "hydro:water",
+    "source_kind": "fixed_head_ocean",
+    "anchor_m": [
+      112,
+      24,
+      112
+    ],
+    "level_m": 30
+  }
+}

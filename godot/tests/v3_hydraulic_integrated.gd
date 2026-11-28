@@ -390,6 +390,44 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
     print("V3_HYBRID_BARRIER_PASS mass=",mass," center=",center," state=",state)
     runtime.request_close()
 
+func _ocean_stress(runtime,water: Node3D,phase: String) -> void:
+    var deadline:=Time.get_ticks_msec()+180000
+    var reached:=false
+    while Time.get_ticks_msec()<deadline:
+        if not _frame(runtime,water,0):
+            return
+        var state: Dictionary=runtime.session.hydraulic_report()
+        var render: Dictionary=water.call("get_report")
+        if "wide_sea:head" in state.get("source_ids",[]) and int(state.get("visible_wet_tiles",0))>96 and int(state.get("cold_visual_tiles",0))>=5 and int(state.get("tiles",1000))<=96 and int(render.get("meshes",0))>96 and bool(water.get("_hybrid_ready")):
+            reached=true
+            break
+        await process_frame
+    var ready: Dictionary=runtime.session.hydraulic_report()
+    if not reached or int(ready["litres"])!=int(ready["initial"])+int(ready["injected"])-int(ready["drained"]):
+        _fail("ocean visible >96 coverage or ledger "+str(ready)+" render="+str(water.call("get_report")))
+        return
+    if not await _capture("08-ocean-wide"):
+        return
+    var origin: Vector3=runtime.player.global_position
+    runtime.player.global_position=origin+Vector3(128,0,0)
+    for i in range(60):
+        if not _frame(runtime,water,0):
+            return
+        await process_frame
+    runtime.player.global_position=origin
+    for i in range(60):
+        if not _frame(runtime,water,0):
+            return
+        await process_frame
+    var revisited: Dictionary=runtime.session.hydraulic_report()
+    if int(revisited["litres"])!=int(revisited["initial"])+int(revisited["injected"])-int(revisited["drained"]) or int(revisited["tiles"])>96:
+        _fail("ocean revisit ledger or hot limit "+str(revisited))
+        return
+    if not await _capture("09-ocean-revisit"):
+        return
+    print("V3_HYBRID_OCEAN_STRESS_PASS phase=",phase," visible=",ready["visible_wet_tiles"]," hot=",ready["tiles"]," cold_visual=",ready["cold_visual_tiles"]," meshes=",water.call("get_report")["meshes"]," reopened=",revisited)
+    runtime.request_close()
+
 func _test() -> void:
     var args:=OS.get_cmdline_user_args()
     var reopen: bool="--phase=reopen" in args
@@ -398,12 +436,15 @@ func _test() -> void:
     var barrier: bool="--phase=barrier" in args or "--phase=streaming" in args
     var remote_basin: bool="--phase=remote-basin" in args or "--phase=remote-basin-reopen" in args
     var remote_reopen: bool="--phase=remote-basin-reopen" in args
+    var ocean_stress: bool="--phase=ocean-stress" in args or "--phase=ocean-stress-reopen" in args
     var old_spawn:=OS.get_environment("V3_CAVE_SPAWN")
     if remote_basin:
         OS.set_environment("V3_CAVE_SPAWN","16,12,112")
+    if ocean_stress:
+        OS.set_environment("V3_CAVE_SPAWN","112,12,112")
     var runtime=load("res://scenes/v3_hydraulic_main.tscn").instantiate()
     root.add_child(runtime)
-    if remote_basin:
+    if remote_basin or ocean_stress:
         if old_spawn.is_empty():
             OS.unset_environment("V3_CAVE_SPAWN")
         else:
@@ -417,11 +458,11 @@ func _test() -> void:
     var water: Node3D=runtime.world.get_node("Water")
     water.set_process(false)
     water.set_physics_process(false)
-    runtime.player.global_position=Vector3(16,12,112) if remote_basin else Vector3(-4,12,28)
+    runtime.player.global_position=Vector3(112,12,112) if ocean_stress else (Vector3(16,12,112) if remote_basin else Vector3(-4,12,28))
     var camera: Camera3D=runtime.player.get_node("Camera3D")
-    camera.global_position=Vector3(-4,48,48)
-    camera.look_at(Vector3(-4,0,23),Vector3.UP)
-    var deadline:=Time.get_ticks_msec()+(180000 if remote_basin else 90000)
+    camera.global_position=Vector3(112,60,128) if ocean_stress else Vector3(-4,48,48)
+    camera.look_at(Vector3(112,20,112) if ocean_stress else Vector3(-4,0,23),Vector3.UP)
+    var deadline:=Time.get_ticks_msec()+(180000 if remote_basin or ocean_stress else 90000)
     var remote_empty_seen:=false
     var source_positioned:=not sources or "--phase=sources-reopen" in args
     while true:
@@ -459,6 +500,9 @@ func _test() -> void:
         return
     if not runtime.session.hydraulic_at(Vector3(-4,-30,28)).is_empty():
         _fail("isolated dry cavity")
+        return
+    if ocean_stress:
+        await _ocean_stress(runtime,water,("reopen" if "--phase=ocean-stress-reopen" in args else "write"))
         return
     if remote_basin:
         if not remote_reopen and (not remote_empty_seen or int(initial.get("basin_completed",0))!=1 or int(initial.get("basin_surveyed_tiles",0))<=35 or int(initial.get("basin_initial_litres",0))+64000!=int(initial["initial"])):

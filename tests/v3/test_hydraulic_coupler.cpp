@@ -218,6 +218,27 @@ int main(){
     assert(archived_view&&archived_view->first.ocean_reach.at("extended").encode()==proof.encode());
     assert(reopened_ocean.restore_cold(previous,archived_ocean)&&reopened_ocean.mass()==extended.mass());
     assert(reopened_ocean.tiles().at(previous->origin).ocean_reach.at("extended").matches(*previous,1));
+    // A source-connected path must be recertified at a newer revision.
+    // Pristine receiver after an unrelated edit is eligible, while an
+    // actually edited receiver is not (the runtime provenance gate).
+    auto root2=OceanReach::extend("extended",2,8,2,*a,a->compartments.front().id,{});
+    assert(!root2.compartments.empty());
+    auto after_edit_geometry=flat(4,2);
+    auto post_edit=OceanReach::extend("extended",2,8,2,*after_edit_geometry,std::nullopt,{{a.get(),&root2}});
+    assert(post_edit.compartments.size()==1);
+    assert(OceanReach::extend("extended",2,8,2,*after_edit_geometry,std::nullopt,{{a.get(),&proof}}).compartments.empty());
+    EditProvenance post_provenance;
+    post_provenance.record(1,{{0,-32,0}});
+    post_provenance.record(2,{{16,-32,0}});
+    assert(!post_provenance.pristine({16,-32,0},2)&&post_provenance.pristine({32,-32,0},2));
+    Coupler post_coupler(types,1,2);
+    assert(post_coupler.publish(a)&&post_coupler.ocean({"extended",ka,{0.5,0.1,0.5},0,2,0,1}));
+    assert(post_coupler.publish(after_edit_geometry));
+    assert(post_coupler.remember_ocean(root2,2));
+    assert(post_coupler.acquire_ocean(post_edit,2,true));
+    assert(post_coupler.mass()==32000&&post_coupler.injected()==32000);
+    assert(!post_coupler.acquire_ocean(post_edit,1,true));
+    std::cout<<"V3_HYBRID_I22_POST_EDIT_REACH_PASS fresh_proof=1 stale_rejected=1 pristine_gate=1\n";
     tp::Snapshot roof{{484,0,0},4,8,4,1,1,std::vector<std::uint8_t>(4*8*4,0)};
     for(int z=0;z<4;++z)for(int x=0;x<4;++x)for(int y=0;y<2;++y)
         roof.air[static_cast<std::size_t>((z*4+x)*8+y)]=1;

@@ -264,12 +264,11 @@ class IntegratedRuntime {
                     if(proof.compartments==previous->second.compartments)continue;
                 }
                 if(proof.compartments.empty())continue;
-                // The anchor remains a physical source/sink. Only pristine
-                // newly reached aggregate regions may be initialized at
-                // fixed head. After any edit, use flow until a pristine-path
-                // witness can independently certify initialization. This is
-                // deliberately conservative, not final large-world behavior.
-                if(rev==0&&k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
+                // A same-revision source path certifies every submerged
+                // portal. Pristine target tiles can be acquired even after
+                // unrelated terrain edits; edited owners retain real mass
+                // and must fill by flow, never by reinitialization.
+                if(k!=source.tile&&!it->second.local&&provenance_.pristine(k,rev)){
                     if(!model_.acquire_ocean(proof,rev,true))continue;
                     ++ocean_acquisitions_;
                 }else if(!model_.remember_ocean(proof,rev))continue;
@@ -287,7 +286,9 @@ class IntegratedRuntime {
                 for(auto q:proof.frontier(g)){
                     if(!core::valid_point({double(q.x),double(q.y),double(q.z)})||
                         model_.tiles().contains(q)||cold_visible_.contains(q)||ocean_examined_.contains(q))continue;
-                    if(!visible(q)&&(distance(q)>=distance(g.origin)||ocean_examined_.size()>=128))continue;
+                    // Spatial interest, not a fixed number of wet tiles, bounds
+                    // the proof work; per-frame acquisition is still capped.
+                    if(!visible(q)&&distance(q)>=distance(g.origin))continue;
                     frontier.try_emplace(q,g.origin);
                 }
             }
@@ -759,13 +760,15 @@ public:
         d["wet_preflights"]=static_cast<int64_t>(wet_preflights_);d["wet_preflight_rejections"]=static_cast<int64_t>(wet_preflight_rejections_);d["construction_commits"]=static_cast<int64_t>(construction_commits_);
         d["edit_group_revision"]=static_cast<int64_t>(revision_);
         Array group;for(auto k:group_)group.push_back(Vector3i(k.x,k.y,k.z));d["edit_group_tiles"]=group;
-        int64_t active=0,near_count=0,wet=0,intervals=0,local_bytes=0;
+        int64_t active=0,near_count=0,wet=0,hot_wet=0,intervals=0,local_bytes=0;
         for(const auto &[k,t]:model_.tiles()){
             if(t.resident){++active;if(std::abs(k.x-center_.x)<=16&&std::abs(k.z-center_.z)<=16)++near_count;}
-            if(model_.tile_mass(k))++wet;
+            if(model_.tile_mass(k)){++hot_wet;if(visible(k))++wet;}
             if(t.local){intervals+=static_cast<int64_t>(t.local->columns().size());local_bytes+=static_cast<int64_t>(t.local->bytes()+t.owners.capacity()*sizeof(Id));}
         }
-        d["active_tiles"]=active;d["near_active_tiles"]=near_count;d["visible_wet_tiles"]=wet+static_cast<int64_t>(cold_visible_.size());d["local_intervals"]=intervals;d["local_bytes"]=local_bytes;
+        d["active_tiles"]=active;d["near_active_tiles"]=near_count;
+        d["hot_wet_tiles"]=hot_wet;d["hot_tile_limit"]=static_cast<int64_t>(model_.tile_limit());
+        d["visible_wet_tiles"]=wet+static_cast<int64_t>(cold_visible_.size());d["local_intervals"]=intervals;d["local_bytes"]=local_bytes;
         return d;
     }
     nlohmann::json encode()const {

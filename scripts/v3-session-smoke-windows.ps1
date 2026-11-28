@@ -234,6 +234,23 @@ if ($env:GITHUB_REF_NAME -eq 'exp/v3-hydraulic-hybrid') {
         if ($phase -eq 'remote-basin') { $remoteInitial=$observed }
         elseif ($remoteInitial -ne $observed) { throw 'Remote finite initial mass changed on reopen' }
     }
+    # Isolated mod-first high-head source, never modify historical mods.
+    $previousMods=$env:V3_MOD_ROOT
+    $env:V3_MOD_ROOT=Join-Path $root 'examples/v3/hybrid_ocean_stress_mods'
+    $env:V3_WORLD_ID='hybrid_ocean_stress_fixture'
+    foreach ($phase in @('ocean-stress','ocean-stress-reopen')) {
+        $stdout=Join-Path $results "hybrid-$phase.stdout.log"
+        $stderr=Join-Path $results "hybrid-$phase.stderr.log"
+        $p=Start-Process -FilePath $editor -ArgumentList @('--headless','--path',('"'+$project+'"'),'--script','res://tests/v3_hydraulic_integrated.gd','--',"--phase=$phase") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow
+        $null=$p.Handle
+        if (!$p.WaitForExit(360000)) { $p.Kill(); $p.WaitForExit(); throw "Hybrid $phase timeout" }
+        $p.WaitForExit()
+        Get-Content $stdout
+        Get-Content $stderr
+        $expectedPhase=if ($phase -eq 'ocean-stress') { 'write' } else { 'reopen' }
+        if ($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $stdout -SimpleMatch "V3_HYBRID_OCEAN_STRESS_PASS phase=$expectedPhase") -or !(Select-String -LiteralPath $stdout -SimpleMatch 'V3_RUNTIME_CLEAN_CLOSE_PASS') -or (Select-String -LiteralPath @($stdout,$stderr) -Pattern 'SCRIPT ERROR:|V3_HYBRID_INTEGRATED_FAIL:')) { throw "Hybrid $phase failed" }
+    }
+    $env:V3_MOD_ROOT=$previousMods
     $env:V3_WORLD_ID='hybrid_barrier_fixture'
     $stdout=Join-Path $results 'hybrid-barrier.stdout.log'
     $stderr=Join-Path $results 'hybrid-barrier.stderr.log'
