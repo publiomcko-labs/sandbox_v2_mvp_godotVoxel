@@ -201,7 +201,12 @@ inline Batch build(Input input,CachedTile* cached=nullptr) {
             // even for a deep cell facing a verified open/dry recipient;
             // otherwise neighbouring 1m cells expose square steps.
             // A solid bank is still clipped by the actual terrain SDF.
-            return (sum-0.15*open)/(wet_count+open);
+            // Interpolate the wet/dry front at shared half-cell edges.
+            // One dry neighbor must change the sign of the boundary
+            // sample; otherwise a deep wet cell still draws the full
+            // axis-aligned square and exposes stair-step shorelines.
+            // Clip stays strictly inside its real wet 1m ownership.
+            return (sum-0.24*open)/(wet_count+open);
         };
         for(const auto &cell:out.input.cells) {
             std::array<Vertex,4> vertices;

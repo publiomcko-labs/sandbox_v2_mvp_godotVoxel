@@ -251,7 +251,7 @@ int main(){
         for(std::size_t k=0;k<3;++k)
             assert(deep_vertices[i+k].x>=0&&deep_vertices[i+k].x<=1&&deep_vertices[i+k].z>=0&&deep_vertices[i+k].z<=1);
     }
-    assert(deep_area>0.25&&deep_area<1.0);
+    assert(deep_area>0.25&&deep_area<0.75);
     std::cout<<"V3_HYBRID_I25_DEEP_FRONT_CONTOUR_PASS area="<<deep_area<<" footprint=bounded\\n";
     // Uniform adjacent shallow centers: on their common edge the
     // subcell surface must retain a shared interval, not a point.
