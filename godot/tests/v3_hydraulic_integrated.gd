@@ -542,10 +542,10 @@ func _test() -> void:
                 return
             await process_frame
         var after: Dictionary=runtime.session.hydraulic_report()
-        if int(after["litres"])!=mass or int(after["ticks"])<=reopened_ticks:
+        if int(after["litres"])!=int(after["initial"])+int(after["injected"])-int(after["drained"]) or int(after["initial"])!=int(initial["initial"]) or int(after["ticks"])<=reopened_ticks:
             _fail("reopen ledger/ticks")
             return
-        print("V3_HYBRID_INTEGRATED_PASS phase=reopen mass=",mass," state=",after)
+        print("V3_HYBRID_INTEGRATED_PASS phase=reopen mass=",int(after["litres"])," state=",after)
         runtime.request_close()
         return
     if not await _capture("01-initial"):
@@ -606,7 +606,7 @@ func _test() -> void:
         if not _frame(runtime,water,50000000):
             return
         var state: Dictionary=runtime.session.hydraulic_report()
-        if int(state["litres"])!=mass or int(state["blocked_tiles"])>0:
+        if int(state["litres"])!=int(state["initial"])+int(state["injected"])-int(state["drained"]) or int(state["initial"])!=int(initial["initial"]) or int(state["blocked_tiles"])>0:
             _fail("flow ledger or remap blocked "+str(state))
             return
         if first_near<0 and runtime.session.hydraulic_column_mass(near)>=20:
@@ -624,7 +624,7 @@ func _test() -> void:
     if first_near<=0 or first_far<=first_near:
         _fail("front did not progress near="+str(first_near)+" far="+str(first_far)+" "+str(runtime.session.hydraulic_report()))
         return
-    print("V3_HYBRID_PROGRESSIVE_PASS threshold_l=20 near_tick=",first_near," far_tick=",first_far," mass=",mass)
+    print("V3_HYBRID_PROGRESSIVE_PASS threshold_l=20 near_tick=",first_near," far_tick=",first_far," mass=",int(runtime.session.hydraulic_report()["litres"]))
     if not await _capture("05-filled"):
         return
     if not _surface_evidence(runtime,water,camera,breach["center"]):
