@@ -318,6 +318,12 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
     if not accepted:
         _fail("no admissible wet construction "+str(runtime.session.hydraulic_report()))
         return
+    # An accepted terrain edit has no source transaction and may not
+    # create or destroy a litre, regardless of later ocean acquisition.
+    var edited: Dictionary=runtime.session.hydraulic_report()
+    if int(edited["litres"])!=mass:
+        _fail("construction changed mass without a source "+str(edited))
+        return
     var spawn: Vector3=runtime.player.global_position
     var origin:=_tile(center)
     if streaming:
@@ -362,7 +368,7 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
         await process_frame
     if streaming:
         var offline: Dictionary=runtime.session.hydraulic_report()
-        if int(offline["stream_survey_tiles"])<1 or int(offline["stream_found_blocks"])<1 or int(offline["stream_steps"])<2 or int(offline["litres"])!=mass:
+        if int(offline["stream_survey_tiles"])<1 or int(offline["stream_found_blocks"])<1 or int(offline["stream_steps"])<2 or int(offline["litres"])!=int(offline["initial"])+int(offline["injected"])-int(offline["drained"]):
             _fail("stream publication "+str(offline))
             return
         print("V3_HYBRID_STREAM_PUBLICATION_PASS ",offline)
@@ -376,7 +382,7 @@ func _barrier(runtime,water: Node3D,streaming: bool=false) -> void:
                 return
             await process_frame
     var blocked: Dictionary=runtime.session.hydraulic_report()
-    if int(blocked["litres"])!=mass or int(blocked["construction_commits"])!=1 or int(blocked["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty() or tool.get_voxel_f(Vector3i(center.floor()))>=0:
+    if int(blocked["litres"])!=int(blocked["initial"])+int(blocked["injected"])-int(blocked["drained"]) or int(blocked["initial"])!=int(initial["initial"]) or int(blocked["construction_commits"])!=1 or int(blocked["blocked_tiles"])!=0 or not runtime.session.hydraulic_at(center).is_empty() or tool.get_voxel_f(Vector3i(center.floor()))>=0:
         _fail("barrier displacement "+str(blocked))
         return
     for i in range(25):
